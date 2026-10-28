@@ -1,0 +1,28 @@
+{
+  "flow": "tests/eval/fixtures/guard-notify.json",
+  "description": "需求：任务完成后发通知，但测试模式不能真发",
+  "cases": [
+    {
+      "id": "notify-guarded",
+      "requirement": "发信必须在 DRY_RUN 守卫内",
+      "expect": [
+        { "op": "guardContains", "id": "2", "nodes": ["3"] },
+        { "op": "edge", "from": "2", "to": "4" }
+      ]
+    },
+    {
+      "id": "notify-target",
+      "requirement": "收件人来自变量，不能写死",
+      "expect": [
+        { "op": "param", "id": "3", "name": "SendTo", "equals": "{{variables.AlertTo}}" }
+      ]
+    },
+    {
+      "id": "skip-hint",
+      "requirement": "被跳过时要有可见提示",
+      "expect": [
+        { "op": "action", "id": "4", "padHint": "Display.ShowMessageDialog.ShowMessage" }
+      ]
+    }
+  ]
+}

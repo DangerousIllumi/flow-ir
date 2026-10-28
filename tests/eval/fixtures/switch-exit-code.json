@@ -1,0 +1,78 @@
+{
+  "name": "run-script-three-way",
+  "description": "跑一个脚本，按退出码三路分支（合成样例）",
+  "trigger": { "type": "schedule", "config": { "time": "09:00" } },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "ScriptPath", "type": "string", "default": "C:\\Temp\\job.cmd" },
+    { "name": "WorkDir", "type": "string", "default": "C:\\Temp" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3", "label": "= 0" },
+    { "from": "2", "to": "4", "label": "= 2" },
+    { "from": "2", "to": "5", "label": "默认" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "运行脚本",
+      "type": "action",
+      "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand",
+      "intent": "run-job",
+      "params": {
+        "DOSCommandOrApplication": "cmd.exe /c \"\"{{variables.ScriptPath}}\"\"",
+        "WorkingDirectory": "{{variables.WorkDir}}"
+      },
+      "output_map": { "ExitCode": "ExitCode" },
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "按退出码分支",
+      "type": "switch",
+      "pad_hint": "SWITCH",
+      "switch": {
+        "expression": "ExitCode",
+        "cases": [
+          { "case": "= 0", "body": ["3"] },
+          { "case": "= 2", "body": ["4"] }
+        ],
+        "default": ["5"]
+      }
+    },
+    {
+      "id": "3",
+      "label": "成功",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "完成", "Title": "结果", "Icon": "Information",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "OkButton" }
+    },
+    {
+      "id": "4",
+      "label": "有差异",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "有差异", "Title": "结果", "Icon": "Warning",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "DiffButton" }
+    },
+    {
+      "id": "5",
+      "label": "异常",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "异常", "Title": "结果", "Icon": "ErrorIcon",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "FailButton" }
+    }
+  ]
+}

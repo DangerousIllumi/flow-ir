@@ -51,6 +51,16 @@ jobs:
         shell: powershell
         run: git clone --depth 1 https://github.com/JoeG592/pad-robin-action-kb.git pad-robin-action-kb
 
+      - name: 设计质量评估集（结构断言）
+        run: node tools\pad-robin\eval-flow.js tests\eval
+
+      - name: 准入网关（只读）
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\pad-sync\pad-admit.ps1 `
+            -FlowFile tools\flow-drawio\example-flow.json
+          if ($LASTEXITCODE -ne 0) { throw "准入检查失败（退出码 $LASTEXITCODE）" }
+
       - name: 示例流程 → Robin → 静态校验
         shell: powershell
         run: |

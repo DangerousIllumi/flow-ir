@@ -1,0 +1,40 @@
+{
+  "name": "normalize-text",
+  "description": "读取一个文本文件，原样写到另一个文件（合成样例）",
+  "trigger": { "type": "manual" },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "InputFile", "type": "string", "default": "C:\\Temp\\input.txt" },
+    { "name": "OutputFile", "type": "string", "default": "C:\\Temp\\output.txt" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "读取源文件",
+      "type": "action",
+      "pad_hint": "File.ReadTextFromFile.ReadText",
+      "params": {
+        "File": "{{variables.InputFile}}",
+        "Encoding": "UTF8"
+      },
+      "output_map": { "Content": "FileContent" },
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "写到目标文件",
+      "type": "action",
+      "pad_hint": "File.WriteText",
+      "params": {
+        "File": "{{variables.OutputFile}}",
+        "TextToWrite": "{{1.FileContent}}",
+        "IfFileExists": "Overwrite",
+        "AppendNewLine": false,
+        "Encoding": "UTF8"
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@
     "type": "schedule",
     "config": { "dayOfMonth": 3 }
   },
+  "budget": { "maxLoop": 1, "note": "示例流程无轮询；仅演示结构" },
   "variables": [
     { "name": "ManagerEmail", "type": "string", "default": "manager@company.com", "description": "经理邮箱", "required": true },
     { "name": "SenderFilter", "type": "string", "default": "finance@company.com", "description": "对账单发件人", "required": true },
@@ -43,6 +44,7 @@
       "id": "3",
       "type": "sap.export",
       "pad_hint": "Scripting.RunVBScript.RunVBScript",
+      "intent": "sap-export",
       "label": "运行 SAP MB51 导出脚本",
       "params": {
         "VBScriptCode": "WScript.Echo \"MB51 exported to {{variables.ExcelPath}}\""
@@ -127,16 +129,6 @@
         "Body": "{{variables.Month}} 对账已完成，详见附件。",
         "IsBodyHtml": false
       },
-      "outputs": [],
-      "next": ["10"],
-      "branch": null
-    },
-    {
-      "id": "10",
-      "type": "mail.close",
-      "pad_hint": "Outlook.Close",
-      "label": "关闭 Outlook",
-      "params": {},
       "outputs": [],
       "next": [],
       "branch": null

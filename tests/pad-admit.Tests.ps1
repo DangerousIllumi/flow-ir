@@ -68,4 +68,66 @@ Describe 'pad-admit 策略评估' {
         $r2[0].status | Should Be 'pass'
     }
 
+    It 'intent 匹配：改掉参数名也拦得住' {
+        $pol = [pscustomobject]@{
+            defaultEffect = 'allow'
+            rules = @([pscustomobject]@{
+                id = 'migo'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
+                when = [pscustomobject]@{ dryRun = $true; intent = 'sap-migo' }
+                effect = 'deny'; reason = 'DRY_RUN 下禁止 MIGO'
+            })
+        }
+        $ctx = @{ env = 'prod'; dryRun = $true; registered = @{} }
+        # 参数名随便改，只要 intent 还在就命中
+        $flow = [pscustomobject]@{ nodes = @([pscustomobject]@{
+            id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-migo'
+            params = [pscustomobject]@{ DOSCommandOrApplication = 'whatever.exe' }
+        }) }
+        (@(Invoke-AdmitPolicy $flow $pol $ctx))[0].code | Should Be 'POLICY_DENY'
+
+        # intent 改名后不再命中
+        $flow2 = [pscustomobject]@{ nodes = @([pscustomobject]@{
+            id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'other'
+            params = [pscustomobject]@{ DOSCommandOrApplication = 'whatever.exe' }
+        }) }
+        (@(Invoke-AdmitPolicy $flow2 $pol $ctx))[0].status | Should Be 'pass'
+    }
+
+    It '被 DRY_RUN 守卫包住的副作用，dryRun 规则不再命中' {
+        $pol = [pscustomobject]@{
+            defaultEffect = 'allow'
+            rules = @([pscustomobject]@{
+                id = 'migo'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
+                when = [pscustomobject]@{ dryRun = $true; intent = 'sap-migo' }
+                effect = 'deny'; reason = 'DRY_RUN 下禁止 MIGO'
+            })
+        }
+        $ctx = @{ env = 'prod'; dryRun = $true; registered = @{} }
+        $migo = [pscustomobject]@{
+            id = 'm'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-migo'
+            params = [pscustomobject]@{ DOSCommandOrApplication = 'cscript' }
+        }
+        # 守卫内：测试模式本来就不会执行，准入放行
+        $guarded = [pscustomobject]@{ nodes = @(
+            [pscustomobject]@{ id = 'g'; pad_hint = 'GUARD'; when = "DryRun <> $'''1'''"; body = @('m'); elseBody = @() },
+            $migo
+        ) }
+        (@(Invoke-AdmitPolicy $guarded $pol $ctx))[0].status | Should Be 'pass'
+        # 守卫外：同样条件就应被拒
+        $bare = [pscustomobject]@{ nodes = @($migo) }
+        (@(Invoke-AdmitPolicy $bare $pol $ctx))[0].code | Should Be 'POLICY_DENY'
+    }
+
+    It '未声明 budget、脚本动作缺 intent 时直接失败' {
+        $flow = [pscustomobject]@{ nodes = @([pscustomobject]@{
+            id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'
+            params = [pscustomobject]@{ DOSCommandOrApplication = 'x' }
+        }) }
+        $checks = @(Invoke-AdmitChecks -Flow $flow -FlowName 'demo' -Config $null -Kb $null `
+            -RobinPath $null -AcceptancePath $null -RequirementsPath $null -Policy $null `
+            -ApprovePath $null -Paths @{ Repo = $repo; FlowFile = 'x'; ConfigFile = $null })
+        (@($checks | Where-Object { $_.id -eq 'BUDGET' }))[0].status | Should Be 'fail'
+        (@($checks | Where-Object { $_.id -eq 'INTENT' }))[0].status | Should Be 'fail'
+    }
+
 }

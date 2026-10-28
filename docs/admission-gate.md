@@ -23,12 +23,12 @@
 | 5 | EDGE | `flow.json` | `edges` 覆盖 `next/branch` 推导、无悬空/重复 | `EDGE_DRIFT` / `EDGE_DANGLING` / `EDGE_DUPLICATE` | `tools/flow-drawio/check-flow.js` |
 | 6 | BOUNDED | `flow.json` | 循环有明确上界，无无界 `LOOP WHILE` | `UNBOUNDED_LOOP` | 部分（人工检查） |
 | 7 | POLICY | `policy.json` + 运行上下文 | 无 `deny`；`ask` 有有效批准 | `POLICY_DENY` / `POLICY_ASK` | 新增 |
-| 8 | BUDGET | 预算声明 + 预检结果 | 最坏情况在预算内；未知项按超限处理 | `BUDGET_UNKNOWN` / `BUDGET_EXCEEDED` | 新增 |
+| 8 | BUDGET | 预算声明 + 预检结果 | 最坏情况在预算内；未声明按超限处理 | `BUDGET_EXCEEDED` / `BUDGET_UNKNOWN` | `pad-admit.ps1`（`flow.budget`，未声明即 fail） |
 | 9 | ACCEPTANCE | `*.acceptance.json` | JSON 合法、检查类型已知、占位符可解析 | `ACCEPTANCE_INVALID` | `PadAcceptance.psm1` |
 | 10 | CONFIG | `config/*.json` + schema | schema 校验通过 | `CONFIG_INVALID` | `pad-deploy.ps1` |
 | 11 | PREFLIGHT | 机器环境 | PAD/Python/SAP/Outlook/目录齐全 | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
 | 12 | FINGERPRINT | 三个文件的 SHA256 | 与批准记录一致 | `FINGERPRINT_MISMATCH` | 部分（发布后哈希校验） |
-| 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | 新增（建议） |
+| 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
 
 ## 3. 执行阶段
 
@@ -43,7 +43,7 @@
 ```json
 {
   "ok": false,
-  "flow": "example-flow",
+  "flow": "sample",
   "fingerprint": "sha256:...",
   "checks": [
     {

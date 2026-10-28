@@ -76,6 +76,10 @@ function Test-RuleWhen($Rule, $Node, [hashtable]$Ctx) {
     if ($null -ne $w.registered) {
         if ([bool]$w.registered -ne [bool]$Ctx.registered.ContainsKey([string]$Node.pad_hint)) { return $false }
     }
+    if ($null -ne $w.intent) {
+        if (-not $Node) { return $false }
+        if ([string]$w.intent -ne [string]$Node.intent) { return $false }
+    }
     if ($null -ne $w.paramsMatch) {
         if (-not $Node) { return $false }
         foreach ($p in $w.paramsMatch.PSObject.Properties) {
@@ -89,6 +93,35 @@ function Test-RuleWhen($Rule, $Node, [hashtable]$Ctx) {
     return $true
 }
 
+# 收集若干 node id 的全部下游（含 next、branch、loop、switch、guard 的 body）
+# 用于判断「某个副作用是否已被 DRY_RUN 守卫包住」；用 visited 防回边死循环
+function Get-DescendantIds($Flow, [string[]]$Ids) {
+    $byId = @{}
+    foreach ($n in @($Flow.nodes)) { $byId[[string]$n.id] = $n }
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $stack = New-Object System.Collections.Generic.Stack[string]
+    foreach ($i in $Ids) { if ($i) { $stack.Push([string]$i) } }
+    while ($stack.Count -gt 0) {
+        $id = $stack.Pop()
+        if (-not $seen.Add($id)) { continue }
+        $n = $byId[$id]
+        if (-not $n) { continue }
+        foreach ($x in @($n.next)) { if ($x) { $stack.Push([string]$x) } }
+        if ($n.branch) {
+            foreach ($x in @($n.branch.trueBody) + @($n.branch.falseBody)) { if ($x) { $stack.Push([string]$x) } }
+        }
+        if ($n.loop -and $n.loop.body) { foreach ($x in @($n.loop.body)) { if ($x) { $stack.Push([string]$x) } } }
+        if ($n.switch) {
+            foreach ($c in @($n.switch.cases)) { foreach ($x in @($c.body)) { if ($x) { $stack.Push([string]$x) } } }
+            foreach ($x in @($n.switch.default)) { if ($x) { $stack.Push([string]$x) } }
+        }
+        if ($n.pad_hint -eq 'GUARD') {
+            foreach ($x in @($n.body) + @($n.elseBody)) { if ($x) { $stack.Push([string]$x) } }
+        }
+    }
+    return $seen
+}
+
 # 策略评估：固定 deny → ask → allow；同层取第一条命中；全部未命中按 defaultEffect
 # 返回 { checks, hits }，checks 里最多一条 POLICY 结论
 function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended) {
@@ -97,6 +130,16 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
     $actionNodes = @($Flow.nodes | Where-Object {
         $_.pad_hint -and $CONTROL_HINTS -notcontains [string]$_.pad_hint
     })
+
+    # 被 DRY_RUN 守卫包住的节点集合：这些副作用在测试模式下本来就不会执行，
+    # 因此「dryRun 相关的 deny 规则」对它们不成立（否则一开 DRY_RUN 就被准入拦死）
+    $guardRoots = @($Flow.nodes | Where-Object {
+        $_.pad_hint -eq 'GUARD' -and ([string]$_.when) -match 'DryRun'
+    } | ForEach-Object { @($_.body) + @($_.elseBody) })
+    $guarded = @{}
+    if ($guardRoots.Count -gt 0) {
+        foreach ($id in (Get-DescendantIds $Flow $guardRoots)) { $guarded[$id] = $true }
+    }
 
     $denies = @()
     $asks = @()
@@ -107,6 +150,8 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
             if ([string]$rule.resource -ne 'action') { continue }
             if (-not (Test-GlobMatch ([string]$rule.match) ([string]$node.pad_hint))) { continue }
             if (-not (Test-RuleWhen $rule $node $Ctx)) { continue }
+            # 被 DRY_RUN 守卫包住的副作用在测试模式下不会执行，dryRun 类规则对它们不成立
+            if ($rule.when -and $rule.when.dryRun -eq $true -and $guarded.ContainsKey([string]$node.id)) { continue }
             $hit = [ordered]@{ rule = $rule; node = [string]$node.id; hint = [string]$node.pad_hint }
             switch ([string]$rule.effect) {
                 'deny' { $denies += $hit }
@@ -168,7 +213,10 @@ function Invoke-AdmitChecks {
         }
 
         # 2 ARGS
+        # 未知参数 = 硬失败（生成器也会拒绝）；缺必填但 KB 无默认值只提醒：
+        # 生成器会跳过该参数，PAD 实际接受（golden 示例同样省略），不宜阻断
         $argErrs = @()
+        $argWarns = @()
         foreach ($n in $actionNodes) {
             $act = $kbMap[[string]$n.pad_hint]
             if (-not $act) { continue }
@@ -182,13 +230,16 @@ function Invoke-AdmitChecks {
                 if ($p.required -ne $true) { continue }
                 # 句柄类参数由生成器从 Launch 动作自动接上，flow.json 里本来就不写
                 if ([string]$p.type -match '(Instance|Handle)$' -or [string]$p.type -eq 'Browser') { continue }
+                if ($null -ne $p.default) { continue }
                 if ($paramNames -notcontains [string]$p.name) {
-                    $argErrs += "节点 $($n.id) 缺少必填参数 $($p.name)"
+                    $argWarns += "节点 $($n.id) 未写必填参数 $($p.name)（KB 无默认值，生成时会省略）"
                 }
             }
         }
         if ($argErrs.Count -gt 0) {
             $checks += New-AdmitCheck 'ARGS' 'fail' 'UNKNOWN_PARAM' '参数与 KB 不一致' $argErrs
+        } elseif ($argWarns.Count -gt 0) {
+            $checks += New-AdmitCheck 'ARGS' 'warn' 'MISSING_PARAM' '部分必填参数未显式给出（生成时省略）' $argWarns
         } else {
             $checks += New-AdmitCheck 'ARGS' 'pass' 'OK' '参数名与必填项齐全' @()
         }
@@ -272,7 +323,7 @@ function Invoke-AdmitChecks {
             $checks += New-AdmitCheck 'BUDGET' 'pass' 'OK' '在预算声明内' @()
         }
     } else {
-        $checks += New-AdmitCheck 'BUDGET' 'warn' 'BUDGET_UNKNOWN' 'flow.json 未声明 budget，预算未知' @()
+        $checks += New-AdmitCheck 'BUDGET' 'fail' 'BUDGET_UNKNOWN' 'flow.json 未声明 budget，预算未知（未知按超限处理）' @()
     }
 
     # 9 ACCEPTANCE
@@ -375,7 +426,7 @@ function Invoke-AdmitChecks {
         ([string]$_.pad_hint -like 'Scripting.RunDOSCommand*' -or [string]$_.pad_hint -like 'Scripting.RunVBScript*') -and -not $_.intent
     })
     if ($noIntent.Count -gt 0) {
-        $checks += New-AdmitCheck 'INTENT' 'warn' 'MISSING_INTENT' '通用脚本动作缺少 intent 标签，策略只能靠参数名识别' `
+        $checks += New-AdmitCheck 'INTENT' 'fail' 'MISSING_INTENT' '通用脚本动作缺少 intent 标签，策略只能靠参数名识别（改名即绕过）' `
             @($noIntent | ForEach-Object { "节点 $($_.id) $($_.pad_hint)" })
     } else {
         $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' '通用脚本动作都有 intent' @()

@@ -198,7 +198,18 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 副作用（发信、过账、删文件）必须放在 `guard` 节点里，用 `DryRun <> $'''1'''` 守卫；
 这既是运行时开关，也是准入网关识别"这段副作用可被跳过"的依据。
 
-- 必须同时产出三件套：`flow.json`（含 `acceptance` 声明）、`flows/<name>.requirements.json`（环境依赖）、`tests/eval/<name>.cases.json`（结构断言）
+**必填声明（缺一项准入就失败）**
+
+- `budget`：至少给 `maxLoop`（循环最多几次）。未声明按超限处理，直接拒绝。
+- `intent`：每个 `Scripting.RunDOSCommand*` / `RunVBScript*` 节点必须写语义标签（如 `sap-migo`、`mb51-export`、`reconcile`）。
+  策略按 intent 匹配副作用，改名参数绕不过去。
+
+```json
+"budget": { "maxLoop": 7 },
+{ "id": "43", "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand", "intent": "sap-migo", ... }
+```
+
+- 必须同时产出三件套：`flow.json`（含 `acceptance` / `budget` 声明）、`flows/<name>.requirements.json`（环境依赖）、`tests/eval/<name>.cases.json`（结构断言）
 - 只生成 flow.json + 流程图 + 上述声明，不生成 Robin 代码
 ```
 

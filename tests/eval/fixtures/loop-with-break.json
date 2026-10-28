@@ -1,0 +1,53 @@
+{
+  "name": "loop-with-break",
+  "description": "有界循环，满足条件就提前跳出（合成样例）",
+  "trigger": { "type": "schedule", "config": { "time": "08:00" } },
+  "budget": { "maxLoop": 5 },
+  "variables": [
+    { "name": "Threshold", "type": "number", "default": 3 }
+  ],
+  "edges": [
+    { "from": "1", "to": "2", "label": "循环体" },
+    { "from": "1", "to": "4", "label": "结束循环" },
+    { "from": "2", "to": "3", "label": "是" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "最多重试 5 次",
+      "type": "loop",
+      "pad_hint": "LOOP",
+      "loop": { "kind": "fromto", "index": "Idx", "from": 1, "to": 5, "step": 1, "body": ["2"] },
+      "next": ["4"]
+    },
+    {
+      "id": "2",
+      "label": "达到阈值就停",
+      "type": "if",
+      "pad_hint": "IF",
+      "params": { "Condition": "Idx >= Threshold" },
+      "branch": { "trueBody": ["3"], "falseBody": [] }
+    },
+    {
+      "id": "3",
+      "label": "跳出循环",
+      "type": "break",
+      "pad_hint": "EXIT LOOP"
+    },
+    {
+      "id": "4",
+      "label": "完成提示",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "循环结束",
+        "Title": "完成",
+        "Icon": "Information",
+        "Buttons": "OK",
+        "DefaultButton": "Button1",
+        "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "DoneButton" }
+    }
+  ]
+}
