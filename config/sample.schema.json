@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "sample 部署配置",
+  "description": "flows/sample.robin 的部署参数。pad-deploy.ps1 用本文件校验 config 并做变量替换；标了 x-robin-escape 的字段在写入 .robin 时会把单反斜杠转成双反斜杠转义形式。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "PAD_ROOT",
+    "PYTHON_EXE",
+    "RECIPIENT_EMAIL",
+    "SUBJECT_FILTER",
+    "MAIL_FOLDER",
+    "MAIL_ACCOUNT",
+    "SAP_DESCRIPTION",
+    "SAP_CLIENT",
+    "SAP_USERNAME",
+    "SAP_LANGUAGE",
+    "REMINDER_SUBJECT",
+    "DRY_RUN"
+  ],
+  "properties": {
+    "PAD_ROOT": {
+      "type": "string",
+      "description": "PAD 部署根目录（盘符开头的绝对路径，用单反斜杠，结尾不要带反斜杠）",
+      "pattern": "^[A-Za-z]:\\\\(?:[^\\\\]+\\\\)*[^\\\\]+$",
+      "x-robin-escape": true
+    },
+    "PYTHON_EXE": {
+      "type": "string",
+      "description": "python.exe 的完整路径",
+      "pattern": "(?i)^[A-Za-z]:\\\\(?:[^\\\\]+\\\\)*[^\\\\]+\\.exe$",
+      "x-robin-escape": true
+    },
+    "RECIPIENT_EMAIL": {
+      "type": "string",
+      "description": "报表发件人 / 催办邮件收件人邮箱",
+      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    },
+    "SUBJECT_FILTER": {
+      "type": "string",
+      "description": "报表邮件的主题关键词",
+      "minLength": 1
+    },
+    "MAIL_FOLDER": {
+      "type": "string",
+      "description": "Outlook 里接收报表的文件夹名",
+      "minLength": 1
+    },
+    "MAIL_ACCOUNT": {
+      "type": "string",
+      "description": "Outlook 发收邮件用的账号邮箱",
+      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    },
+    "SAP_DESCRIPTION": {
+      "type": "string",
+      "description": "SAP 登录条目描述（SAP Logon 里显示的名称）",
+      "minLength": 1
+    },
+    "SAP_CLIENT": {
+      "type": "string",
+      "description": "SAP 集团号（3 位数字）",
+      "pattern": "^\\d{3}$"
+    },
+    "SAP_USERNAME": {
+      "type": "string",
+      "description": "SAP 用户名（工号）",
+      "minLength": 1
+    },
+    "SAP_LANGUAGE": {
+      "type": "string",
+      "description": "SAP 登录语言",
+      "pattern": "^[A-Za-z]{1,2}$"
+    },
+    "REMINDER_SUBJECT": {
+      "type": "string",
+      "description": "催办邮件主题",
+      "minLength": 1
+    },
+    "DRY_RUN": {
+      "type": "string",
+      "description": "1=测试模式（跳过 MIGO/MB51/核对与发信），0=正常生产",
+      "enum": ["0", "1"]
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{"event":"robin.execution.start","durationInMilliseconds":0,"eventData":{"padFlowInfo":{"runId":"aaaaaaaa-1111-2222-3333-444444444444"}}}
+{"event":"outlook.actionexecution.success","durationInMilliseconds":1200,"eventData":{"robinActionInfo":{"module":"Outlook","action":"LaunchOutlook"}}}
+{"event":"sap.actionexecution.success","durationInMilliseconds":3400,"eventData":{"robinActionInfo":{"module":"SAP","action":"RunTransaction"}}}
+{"event":"robin.execution.success","durationInMilliseconds":9000,"eventData":{"padFlowInfo":{"runId":"aaaaaaaa-1111-2222-3333-444444444444"}}}

@@ -1,0 +1,15 @@
+# NOTICE
+
+本仓库（Workflow Graphics Engineering / nlg-workflow）以 MIT 许可发布，见 `LICENSE`。
+
+## 第三方组件
+
+| 组件 | 许可 | 说明 |
+|---|---|---|
+| `pad-robin-action-kb`（JoeG592） | MIT | PAD Robin 动作知识库。**不随本仓库分发**：`setup.ps1` 会用 `git clone` 拉取，CI 里也是临时 clone。仓库内的 `pad-robin-action-kb/` 目录被 `.gitignore` 排除，因此本仓库的 MIT 许可不覆盖该第三方内容，其许可以上游仓库为准。 |
+| `elkjs`（kieler/elkjs） | EPL-2.0 | 流程图自动布局，仅作为 `npm` 依赖引入，不复制源码。 |
+
+## 未被包含的内容
+
+- Microsoft Power Automate Desktop (PAD) 的运行时与文档：由用户自行安装，不属于本仓库。
+- 业务流程数据（报表、SAP 导出、邮件内容、真实账号/路径）：不入库。

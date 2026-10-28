@@ -1,0 +1,14 @@
+{
+  "PAD_ROOT": "D:\\RPA\\PAD",
+  "PYTHON_EXE": "C:\\Program Files\\Python313\\python.exe",
+  "RECIPIENT_EMAIL": "sender@example.com",
+  "SUBJECT_FILTER": "示例报表",
+  "MAIL_FOLDER": "收件箱",
+  "MAIL_ACCOUNT": "me@example.com",
+  "SAP_DESCRIPTION": "SAP - PRD",
+  "SAP_CLIENT": "100",
+  "SAP_USERNAME": "SAP_USER",
+  "SAP_LANGUAGE": "ZH",
+  "REMINDER_SUBJECT": "【催办】示例报表 今日未收到",
+  "DRY_RUN": "0"
+}

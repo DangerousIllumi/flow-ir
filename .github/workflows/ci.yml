@@ -1,0 +1,53 @@
+# CI：纯合成数据，不触碰 SAP / Outlook / Excel / PAD
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Pester 3.4（与本项目 PowerShell 5.1 的语法一致）
+        shell: powershell
+        run: Install-Module Pester -RequiredVersion 3.4.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Pester（逐个文件，任一失败即失败）
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 3.4.0 -Force
+          Write-Host "Pester version=$((Get-Module Pester).Version)"
+          $failed = 0
+          Get-ChildItem tests\*.Tests.ps1 | ForEach-Object {
+            Write-Host "=== $($_.Name) ==="
+            $r = Invoke-Pester -Script $_.FullName -PassThru
+            Write-Host "passed=$($r.PassedCount) failed=$($r.FailedCount)"
+            $failed += $r.FailedCount
+          }
+          if ($failed -gt 0) { throw "Pester failed cases: $failed" }
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 拉取动作知识库（生成器与静态校验依赖它）
+        shell: powershell
+        run: git clone --depth 1 https://github.com/JoeG592/pad-robin-action-kb.git pad-robin-action-kb
+
+      - name: 示例流程 → Robin → 静态校验
+        shell: powershell
+        run: |
+          node tools\pad-robin\flow-to-robin.js tools\flow-drawio\example-flow.json "$env:RUNNER_TEMP\example.robin" --no-check
+          if ($LASTEXITCODE -ne 0) { throw "生成失败" }
+          node tools\pad-robin\check.js "$env:RUNNER_TEMP\example.robin"
+
+      - name: 生成器与对比器单元测试
+        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js

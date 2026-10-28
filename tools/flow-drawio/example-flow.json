@@ -1,0 +1,145 @@
+{
+  "name": "monthly-reconciliation",
+  "description": "月度对账：从邮箱读取对账单附件，提取发票号和金额，跟SAP导出核对，差异标红后发邮件给经理",
+  "trigger": {
+    "type": "schedule",
+    "config": { "dayOfMonth": 3 }
+  },
+  "variables": [
+    { "name": "ManagerEmail", "type": "string", "default": "manager@company.com", "description": "经理邮箱", "required": true },
+    { "name": "SenderFilter", "type": "string", "default": "finance@company.com", "description": "对账单发件人", "required": true },
+    { "name": "Month", "type": "string", "default": "2026-09", "description": "对账月份", "required": true },
+    { "name": "VbsPath", "type": "string", "default": "C:\\PAD\\Scripts\\MB51_导出.vbs", "description": "SAP导出VBS路径", "required": true },
+    { "name": "ExcelPath", "type": "string", "default": "C:\\PAD\\MB51\\export.xlsx", "description": "SAP导出Excel路径", "required": true }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "type": "mail.launch",
+      "pad_hint": "Outlook.Launch",
+      "label": "启动 Outlook",
+      "params": {},
+      "outputs": ["OutlookInstance"],
+      "next": ["2"],
+      "branch": null
+    },
+    {
+      "id": "2",
+      "type": "mail.search",
+      "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments",
+      "label": "检索对账单邮件并保存附件",
+      "params": {
+        "MarkAsRead": true,
+        "MailFolder": "收件箱",
+        "FromContains": "{{variables.SenderFilter}}",
+        "SubjectContains": "对账单",
+        "SaveAttachmentsInto": "C:\\PAD\\Attachments"
+      },
+      "outputs": ["RetrievedEmails"],
+      "next": ["3"],
+      "branch": null
+    },
+    {
+      "id": "3",
+      "type": "sap.export",
+      "pad_hint": "Scripting.RunVBScript.RunVBScript",
+      "label": "运行 SAP MB51 导出脚本",
+      "params": {
+        "VBScriptCode": "WScript.Echo \"MB51 exported to {{variables.ExcelPath}}\""
+      },
+      "outputs": [],
+      "next": ["4"],
+      "branch": null
+    },
+    {
+      "id": "4",
+      "type": "excel.launch",
+      "pad_hint": "Excel.LaunchExcel.LaunchAndOpen",
+      "label": "打开 SAP 导出的 Excel",
+      "params": {
+        "Path": "{{variables.ExcelPath}}",
+        "Visible": false
+      },
+      "outputs": ["ExcelInstance"],
+      "next": ["5"],
+      "branch": null
+    },
+    {
+      "id": "5",
+      "type": "excel.read",
+      "pad_hint": "Excel.ReadFromExcel.ReadAllCells",
+      "label": "读取 Excel 全部数据",
+      "params": {
+        "FirstLineIsHeader": true
+      },
+      "outputs": ["ExcelData"],
+      "next": ["6"],
+      "branch": null
+    },
+    {
+      "id": "6",
+      "type": "branch",
+      "pad_hint": "IF",
+      "label": "有差异吗",
+      "params": { "Condition": "ExcelData.Count > 0" },
+      "next": ["8"],
+      "branch": {
+        "condition": "ExcelData.Count > 0",
+        "true": "7",
+        "false": "8",
+        "body": ["7"]
+      }
+    },
+    {
+      "id": "7",
+      "type": "excel.color",
+      "pad_hint": "Excel.SetColor.SetColorRangePredefined",
+      "label": "差异行标红",
+      "params": {
+        "StartRow": 2,
+        "EndRow": "ExcelData.Count + 1",
+        "StartColumn": 1,
+        "EndColumn": 5,
+        "ColorName": "Red"
+      },
+      "outputs": [],
+      "next": ["8"],
+      "branch": null
+    },
+    {
+      "id": "8",
+      "type": "excel.close",
+      "pad_hint": "Excel.CloseExcel.CloseAndSave",
+      "label": "保存并关闭 Excel",
+      "params": {},
+      "outputs": [],
+      "next": ["9"],
+      "branch": null
+    },
+    {
+      "id": "9",
+      "type": "mail.send",
+      "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
+      "label": "发对账结果邮件给经理",
+      "params": {
+        "SendTo": "{{variables.ManagerEmail}}",
+        "Subject": "{{variables.Month}} 对账结果",
+        "Body": "{{variables.Month}} 对账已完成，详见附件。",
+        "IsBodyHtml": false
+      },
+      "outputs": [],
+      "next": ["10"],
+      "branch": null
+    },
+    {
+      "id": "10",
+      "type": "mail.close",
+      "pad_hint": "Outlook.Close",
+      "label": "关闭 Outlook",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null
+    }
+  ]
+}

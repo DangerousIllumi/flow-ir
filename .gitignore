@@ -1,0 +1,38 @@
+# 真实配置（含真实邮箱、SAP 账号、系统描述），只保留 *.example.json 与 *.schema.json
+config/*.json
+!config/*.example.json
+!config/*.schema.json
+
+# PAD 部署/发布产物（内含已替换的真实值）
+flows/*.deployed.robin
+flows/deploy_diff.json
+manifest.jsonl
+snapshots/
+
+# PAD 动作知识库：仅以引用方式保留来源，不入库
+pad-robin-action-kb/
+
+
+
+# 运行告警日志（失败告警只落盘，不对外发送）
+logs/
+
+# Node 依赖（仅流程图 ELK 布局用）
+node_modules/
+
+# Python 缓存
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 运行产物与日志（测试用的合成样本除外）
+Results/
+*.log
+!tests/fixtures/telemetry/*.log
+migo_plan.json
+migo_plan_info.txt
+migo_posted.jsonl
+migo201.csv
+migo501.csv
+reconcile_export_path.txt
+reconcile_report_path.txt
