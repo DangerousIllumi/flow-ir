@@ -1,0 +1,83 @@
+{
+  "name": "no-match-early-exit",
+  "description": "轮询收件箱，收到就提前结束；一直没收到才提示（合成样例）",
+  "trigger": { "type": "schedule", "config": { "time": "09:00" } },
+  "budget": { "maxLoop": 3 },
+  "variables": [
+    { "name": "MailAccount", "type": "string", "default": "" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3", "label": "循环体" },
+    { "from": "2", "to": "6", "label": "结束循环" },
+    { "from": "3", "to": "4" },
+    { "from": "4", "to": "5", "label": "是" },
+    { "from": "6", "to": "7", "label": "是" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "启动 Outlook",
+      "type": "action",
+      "pad_hint": "Outlook.Launch",
+      "params": {},
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "最多查 3 次",
+      "type": "loop",
+      "pad_hint": "LOOP",
+      "loop": { "kind": "fromto", "index": "Idx", "from": 1, "to": 3, "step": 1, "body": ["3"] },
+      "next": ["6"]
+    },
+    {
+      "id": "3",
+      "label": "查未读邮件",
+      "type": "action",
+      "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmails",
+      "params": {
+        "MailFolder": "收件箱",
+        "EmailsToRetrieve": "Unread",
+        "MarkAsRead": true,
+        "ReadBodyAsHtml": false,
+        "Account": "{{variables.MailAccount}}"
+      },
+      "output_map": { "Messages": "RetrievedEmails" },
+      "next": ["4"]
+    },
+    {
+      "id": "4",
+      "label": "收到就停",
+      "type": "if",
+      "pad_hint": "IF",
+      "params": { "Condition": "RetrievedEmails.Count > 0" },
+      "branch": { "trueBody": ["5"], "falseBody": [] }
+    },
+    {
+      "id": "5",
+      "label": "提前结束轮询",
+      "type": "break",
+      "pad_hint": "EXIT LOOP"
+    },
+    {
+      "id": "6",
+      "label": "一直没收到",
+      "type": "if",
+      "pad_hint": "IF",
+      "params": { "Condition": "RetrievedEmails.Count = 0" },
+      "branch": { "trueBody": ["7"], "falseBody": [] }
+    },
+    {
+      "id": "7",
+      "label": "提示未收到",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "未收到邮件", "Title": "提示", "Icon": "Warning",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "NoMailButton" }
+    }
+  ]
+}
