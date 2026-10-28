@@ -70,8 +70,13 @@ Describe 'pad-schedule 纯函数测试' {
         $s.args | Should Match '"C:\\Workflow Graphics Engineering\\pad-sync.ps1"'
     }
 
-    It '工作日判断：reconcile.py 不存在时直接报错，不会误判为工作日' {
-        { Test-TodayWorkday 'python' 'C:\nope\reconcile.py' 'C:\nope\cal.xlsx' } | Should Throw
+    It '工作日判断：脚本缺失时按周一至周五兜底，并标记 fallback' {
+        $r = Test-TodayWorkday 'python' 'C:\nope\workday.py' 'C:\nope\cal.xlsx'
+        $r.fallback | Should Be $true
+        $r.calendarOk | Should Be $false
+        # 兜底结果应与"今天是不是周一到周五"一致
+        $expect = ((Get-Date).DayOfWeek -ne 'Saturday' -and (Get-Date).DayOfWeek -ne 'Sunday')
+        $r.workday | Should Be $expect
     }
 
     It '解析 PAD_SYNC_RESULT：取最后一行，缺失时返回空' {
