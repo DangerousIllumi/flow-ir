@@ -4,7 +4,7 @@
 #   中国有法定节假日和调休（节假日不上班、周末可能补班），周一到周五的规则
 #   会在春节、国庆照常跑，也会漏掉调休上班的周末。
 #   因此默认改为「每天 09:00 触发 → 运行时先查日历 → 不是工作日就直接退出」。
-#   日历切换点：reconcile.py 的 --is-workday（与核对本身使用同一份日历，口径一致）。
+#   日历切换点：tools\workday\workday.py 的 --is-workday（通用件，与核对脚本共用同一份日历逻辑）。
 #
 # 为什么用 Windows 任务计划而不是云端 Recurrence：
 #   attended 模式本身要求「机器开机 + 用户已登录」，云端 Recurrence 同样要求机器在线，
@@ -40,7 +40,8 @@ param(
     # 工作日历与解释器（默认取 C:\PAD 下的日历、Python313）
     [string]$CalendarPath,
     [string]$PythonExe,
-    [string]$ReconcileScript,
+    # 工作日判断脚本（通用件；默认 tools\workday\workday.py，找不到时按周一至周五兜底）
+    [string]$WorkdayScript,
     # 运行后验收判据与部署配置（可选；生产定时运行建议带上）
     [string]$AcceptanceFile,
     [string]$ConfigFile,
@@ -97,6 +98,7 @@ function New-ScheduleActionSpec {
         [string]$CalendarPath,
         [string]$AcceptanceFile,
         [string]$ConfigFile,
+        [string]$WorkdayScript,
         [int]$RunTimeoutSec = 4200
     )
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
@@ -108,6 +110,7 @@ function New-ScheduleActionSpec {
             '-PadSyncPath', ('"' + $PadSyncPath + '"'),
             '-PythonExe', ('"' + $PythonExe + '"'),
             '-CalendarPath', ('"' + $CalendarPath + '"'))
+        if ($WorkdayScript) { $argList += @('-WorkdayScript', ('"' + $WorkdayScript + '"')) }
     } else {
         $argList += '-RunOnly'
     }
@@ -117,14 +120,23 @@ function New-ScheduleActionSpec {
     return [ordered]@{ exe = 'powershell.exe'; args = ($argList -join ' ') }
 }
 
-# 查日历判断今天是否工作日。返回 [ordered]@{ workday; calendarOk }
-function Test-TodayWorkday([string]$PythonExe, [string]$ReconcileScript, [string]$CalendarPath) {
-    if (-not (Test-Path $ReconcileScript)) { throw "找不到 reconcile.py：$ReconcileScript" }
-    $out = & $PythonExe $ReconcileScript --is-workday --calendar $CalendarPath 2>&1 | Out-String
-    if ($out -notmatch 'WORKDAY=(\d)') { throw "工作日判断失败：$($out.Trim())" }
+# 查日历判断今天是否工作日。返回 [ordered]@{ workday; calendarOk; fallback }
+# 找不到 workday.py 时不让定时任务直接失败：按周一至周五兜底并在结果里标记 fallback
+function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$CalendarPath) {
+    $isWeekday = ((Get-Date).DayOfWeek -ne 'Saturday' -and (Get-Date).DayOfWeek -ne 'Sunday')
+    if (-not $WorkdayScript -or -not (Test-Path $WorkdayScript)) {
+        Log "警告：找不到工作日脚本（$WorkdayScript），按周一至周五兜底"
+        return [ordered]@{ workday = $isWeekday; calendarOk = $false; fallback = $true }
+    }
+    $out = & $PythonExe $WorkdayScript --is-workday --calendar $CalendarPath 2>&1 | Out-String
+    if ($out -notmatch 'WORKDAY=(\d)') {
+        Log "警告：工作日判断失败，按周一至周五兜底：$($out.Trim())"
+        return [ordered]@{ workday = $isWeekday; calendarOk = $false; fallback = $true }
+    }
     return [ordered]@{
         workday = ($Matches[1] -eq '1')
         calendarOk = ($out -notmatch 'CALENDAR_OK=0')
+        fallback = $false
     }
 }
 
@@ -206,12 +218,12 @@ if (-not $NoMain) {
         # ── 运行入口（任务计划实际调用的分支） ──
         if ($RunIfWorkday) {
             $result.action = 'run-if-workday'
-            if (-not $ReconcileScript) { $ReconcileScript = Join-Path $script:RepoRoot 'tools\reconcile\reconcile.py' }
+            if (-not $WorkdayScript) { $WorkdayScript = Join-Path $script:RepoRoot 'tools\workday\workday.py' }
             if (-not $PythonExe) { $PythonExe = 'C:\Program Files\Python313\python.exe' }
             if (-not $CalendarPath) { $CalendarPath = 'C:\PAD\2026_PAD工作日日历.xlsx' }
             if (-not $PadSyncPath) { $PadSyncPath = Join-Path $here 'pad-sync.ps1' }
 
-            $wd = Test-TodayWorkday $PythonExe $ReconcileScript $CalendarPath
+            $wd = Test-TodayWorkday $PythonExe $WorkdayScript $CalendarPath
             if (-not $wd.calendarOk) { Log "警告：工作日历不可用，已按周一至周五兜底（$CalendarPath）" }
             if (-not $wd.workday) {
                 Log "今天不是工作日，本次跳过（日历：$CalendarPath）"
@@ -297,13 +309,14 @@ if (-not $NoMain) {
         $gate = -not $IgnoreCalendar
         if (-not $PythonExe) { $PythonExe = 'C:\Program Files\Python313\python.exe' }
         if (-not $CalendarPath) { $CalendarPath = 'C:\PAD\2026_PAD工作日日历.xlsx' }
-        if (-not $ReconcileScript) { $ReconcileScript = Join-Path $script:RepoRoot 'tools\reconcile\reconcile.py' }
+        if (-not $WorkdayScript) { $WorkdayScript = Join-Path $script:RepoRoot 'tools\workday\workday.py' }
 
         $at = ConvertTo-ScheduleTime $Time
         if ($gate) {
             $spec = New-ScheduleActionSpec -ScriptPath $PSCommandPath -FlowName $FlowName `
                 -AllowProd:$AllowProd -WorkdayGate `
                 -PadSyncPath $PadSyncPath -PythonExe $PythonExe -CalendarPath $CalendarPath `
+                -WorkdayScript $WorkdayScript `
                 -AcceptanceFile $AcceptanceFile -ConfigFile $ConfigFile -RunTimeoutSec $RunTimeoutSec
             Log ("触发：每天 {0:HH:mm}，运行时按工作日历判断（日历：{1}）" -f $at, $CalendarPath)
         } else {

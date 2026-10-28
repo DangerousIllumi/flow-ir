@@ -27,6 +27,20 @@ Agent B（代码生成器）──查表填空──▶ output.txt（Robin 脚�
 | Git | 任意 | 克隆知识库 | https://git-scm.com/download/win |
 | Power Automate Desktop | 最新 | 执行 Robin 脚本 | Microsoft Store 搜索 |
 
+## 依赖关系
+
+| 依赖 | 必需 | 用途 | 获取方式 |
+|---|---|---|---|
+| Node.js ≥ 18 | 是 | 生成器、静态校验、流程图、评估集 | nodejs.org |
+| Git | 是 | 克隆动作知识库 | git-scm.com |
+| Power Automate Desktop | 是（要跑 PAD 时） | 执行 Robin 脚本 | Microsoft Store |
+| `pad-robin-action-kb` | 是 | 动作 Schema（生成器精确查表） | `setup.ps1` 自动 clone；MIT 第三方，**不入库** |
+| Python 3.x + openpyxl | 否 | 工作日历判断（`tools/workday`）、调度 | python.org |
+| AI 编程助手（任意） | 否 | 把自然语言需求写成 `flow.json` | 自备；本仓库只提供提示词与 Skill，不含模型 |
+
+> 说明：`flow.json → .robin` 这一段是确定性的，不需要模型；「需求 → flow.json」这一段依赖 AI 助手或人工，
+> 本仓库只提供契约（schema、`pad_hint` 必须存在于 KB）与尺子（`tests/eval`）。
+
 ## 快速开始
 
 ```powershell
