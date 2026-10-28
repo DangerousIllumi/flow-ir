@@ -79,10 +79,20 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Continue'
-          node tools\pad-robin\flow-to-robin.js tools\flow-drawio\example-flow.json "$env:RUNNER_TEMP\example.robin" --no-check
-          if ($LASTEXITCODE -ne 0) { throw "生成失败" }
-          node tools\pad-robin\check.js "$env:RUNNER_TEMP\example.robin"
-          if ($LASTEXITCODE -ne 0) { throw "静态校验失败" }
+          $gen = (& node tools\pad-robin\flow-to-robin.js tools\flow-drawio\example-flow.json "$env:RUNNER_TEMP\example.robin" --no-check 2>&1 | Out-String)
+          $c1 = $LASTEXITCODE
+          Write-Host "--- 生成 code=$c1 ---"; Write-Host $gen
+          if ($c1 -ne 0) {
+            Write-Host "::error title=生成失败::$($gen -replace "`r?`n", ' | ')"
+            throw "生成失败（$c1）"
+          }
+          $chk = (& node tools\pad-robin\check.js "$env:RUNNER_TEMP\example.robin" 2>&1 | Out-String)
+          $c2 = $LASTEXITCODE
+          Write-Host "--- 校验 code=$c2 ---"; Write-Host $chk
+          if ($c2 -ne 0) {
+            Write-Host "::error title=静态校验失败::$($chk -replace "`r?`n", ' | ')"
+            throw "静态校验失败（$c2）"
+          }
 
       - name: 生成器与对比器单元测试
         run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js
