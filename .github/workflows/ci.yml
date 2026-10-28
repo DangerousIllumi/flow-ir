@@ -1,4 +1,6 @@
 # CI：纯合成数据，不触碰 SAP / Outlook / Excel / PAD
+# 注意：run: 的脚本正文必须是纯 ASCII。GitHub 把脚本落盘为无 BOM 的 .ps1，
+# Windows PowerShell 会按 ANSI 解码，中文会破坏语法（历史踩坑）。
 name: CI
 
 on:
@@ -15,17 +17,16 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # PadConfigure 的探查用例需要真实的 python.exe（缺失时 Pester 3.4 没有 skip 语义，会判失败）
+      # PadConfigure 的探查用例需要真实的 python.exe；探查里还会 import openpyxl
       - name: 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      # 前置探查会 import openpyxl 验证解释器可用，runner 默认没装
       - name: 安装 Python 依赖
         run: python -m pip install --upgrade pip openpyxl
 
-      - name: 安装 Pester 3.4（与本项目 PowerShell 5.1 的语法一致）
+      - name: 安装 Pester 3.4（与 PowerShell 5.1 的语法一致）
         shell: powershell
         run: Install-Module Pester -RequiredVersion 3.4.0 -Force -Scope CurrentUser -SkipPublisherCheck
 
@@ -69,11 +70,9 @@ jobs:
       - name: 准入网关（只读）
         shell: powershell
         run: |
-          # Actions 的 powershell 包装默认 $ErrorActionPreference=Stop，原生命令往 stderr 写就会被当成异常
           $ErrorActionPreference = 'Continue'
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\pad-sync\pad-admit.ps1 `
-            -FlowFile tools\flow-drawio\example-flow.json
-          if ($LASTEXITCODE -ne 0) { throw "准入检查失败（退出码 $LASTEXITCODE）" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\pad-sync\pad-admit.ps1 -FlowFile tools\flow-drawio\example-flow.json
+          if ($LASTEXITCODE -ne 0) { throw "admit gate failed: $LASTEXITCODE" }
 
       - name: 示例流程 → Robin → 静态校验
         shell: powershell
@@ -81,17 +80,19 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $gen = (& node tools\pad-robin\flow-to-robin.js tools\flow-drawio\example-flow.json "$env:RUNNER_TEMP\example.robin" --no-check 2>&1 | Out-String)
           $c1 = $LASTEXITCODE
-          Write-Host "--- 生成 code=$c1 ---"; Write-Host $gen
+          Write-Host "--- generate code=$c1 ---"
+          Write-Host $gen
           if ($c1 -ne 0) {
-            Write-Host "::error title=生成失败::$($gen -replace "`r?`n", ' | ')"
-            throw "生成失败（$c1）"
+            Write-Host "::error title=generate failed::$($gen -replace "`r?`n", ' | ')"
+            throw "generate failed: $c1"
           }
           $chk = (& node tools\pad-robin\check.js "$env:RUNNER_TEMP\example.robin" 2>&1 | Out-String)
           $c2 = $LASTEXITCODE
-          Write-Host "--- 校验 code=$c2 ---"; Write-Host $chk
+          Write-Host "--- static check code=$c2 ---"
+          Write-Host $chk
           if ($c2 -ne 0) {
-            Write-Host "::error title=静态校验失败::$($chk -replace "`r?`n", ' | ')"
-            throw "静态校验失败（$c2）"
+            Write-Host "::error title=static check failed::$($chk -replace "`r?`n", ' | ')"
+            throw "static check failed: $c2"
           }
 
       - name: 生成器与对比器单元测试
