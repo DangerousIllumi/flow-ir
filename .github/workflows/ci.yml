@@ -69,6 +69,8 @@ jobs:
       - name: 准入网关（只读）
         shell: powershell
         run: |
+          # Actions 的 powershell 包装默认 $ErrorActionPreference=Stop，原生命令往 stderr 写就会被当成异常
+          $ErrorActionPreference = 'Continue'
           powershell -NoProfile -ExecutionPolicy Bypass -File tools\pad-sync\pad-admit.ps1 `
             -FlowFile tools\flow-drawio\example-flow.json
           if ($LASTEXITCODE -ne 0) { throw "准入检查失败（退出码 $LASTEXITCODE）" }
@@ -76,9 +78,11 @@ jobs:
       - name: 示例流程 → Robin → 静态校验
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Continue'
           node tools\pad-robin\flow-to-robin.js tools\flow-drawio\example-flow.json "$env:RUNNER_TEMP\example.robin" --no-check
           if ($LASTEXITCODE -ne 0) { throw "生成失败" }
           node tools\pad-robin\check.js "$env:RUNNER_TEMP\example.robin"
+          if ($LASTEXITCODE -ne 0) { throw "静态校验失败" }
 
       - name: 生成器与对比器单元测试
         run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js
