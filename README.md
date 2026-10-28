@@ -27,6 +27,15 @@ Agent B（代码生成器）──查表填空──▶ output.txt（Robin 脚�
 | Git | 任意 | 克隆知识库 | https://git-scm.com/download/win |
 | Power Automate Desktop | 最新 | 执行 Robin 脚本 | Microsoft Store 搜索 |
 
+## 用 AI 一句话开始（3 步）
+
+1. Fork / clone 本仓库，用任意 AI 编程助手打开——它会先读到根目录的 [AGENTS.md](AGENTS.md)
+2. 把 [prompts/nl-to-flow.md](prompts/nl-to-flow.md) 里那段话发给它，末尾写上你的需求
+3. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 粘进 PAD 画布
+
+> 前提：跑过一次 `.\setup.ps1`（拉动作知识库）。「需求 → flow.json」由 AI 完成，
+> 之后每一步都是确定性的，任何一步不过都不会放行。
+
 ## 文档
 
 - [从一句话到可运行流程：示例与打分](docs/nl-to-flow-guide.md)
