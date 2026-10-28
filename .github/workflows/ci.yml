@@ -31,14 +31,22 @@ jobs:
           Import-Module Pester -RequiredVersion 3.4.0 -Force
           Write-Host "Pester version=$((Get-Module Pester).Version)"
           $failed = 0
+          $failLines = @()
           Get-ChildItem tests\*.Tests.ps1 | ForEach-Object {
             Write-Host "=== $($_.Name) ==="
             $r = Invoke-Pester -Script $_.FullName -PassThru
             Write-Host "passed=$($r.PassedCount) failed=$($r.FailedCount)"
             $r.TestResult | Where-Object { -not $_.Passed } | ForEach-Object {
-              Write-Host "FAIL: $($_.Name) :: $($_.FailureMessage)"
+              $line = "[$($_.Describe)] $($_.Name) :: $($_.FailureMessage)"
+              Write-Host "FAIL: $line"
+              Write-Host "::error title=Pester failure::$line"
+              $failLines += $line
             }
             $failed += $r.FailedCount
+          }
+          if ($failLines.Count -gt 0) {
+            "## Pester failures" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            $failLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
           if ($failed -gt 0) { throw "Pester failed cases: $failed" }
 
