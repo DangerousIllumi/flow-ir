@@ -60,8 +60,8 @@ param(
     [switch]$VerifyCanvas,
     # 注入前强制跑静态校验；-SkipStaticCheck 仅用于紧急排查
     [switch]$SkipStaticCheck,
-    # 注入前的准入网关：report=只提示（默认）/ enforce=阻断 / off=不跑
-    [ValidateSet('report', 'enforce', 'off')][string]$AdmitMode = 'report',
+    # 准入网关：enforce=失败即阻断（默认）/ report=只提示 / off=不跑
+    [ValidateSet('report', 'enforce', 'off')][string]$AdmitMode = 'enforce',
     # flow.json；不传时按 -AcceptanceFile 的兄弟文件自动推导
     [string]$FlowFile,
     # 运行后按验收判据检查产物（需同时提供 -ConfigFile）
@@ -104,6 +104,50 @@ $script:Result = [ordered]@{
 }
 
 function Write-Log([string]$msg) { Write-Host "[pad-sync] $msg" }
+
+# 准入网关（注入前 / 运行前都跑）
+#   report  = 只把问题记进 warnings，继续
+#   enforce = 有 fail 或 ask 就抛错，阻断注入与运行（默认）
+# 定时任务走 -RunOnly，所以必须放在分支之外，否则夜间运行会绕过门禁
+function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]$AcceptanceFileArg) {
+    if ($AdmitMode -eq 'off') { return $true }
+    $flowPath = $FlowFileArg
+    if (-not $flowPath -and $AcceptanceFileArg) {
+        $guess = $AcceptanceFileArg -replace '\.acceptance\.json$', '.json'
+        if (Test-Path -LiteralPath $guess) { $flowPath = $guess }
+    }
+    if (-not $flowPath) { return $true }
+
+    $script:Result.stage = 'admit'
+    $admitArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+        (Join-Path $PSScriptRoot 'pad-admit.ps1'), '-FlowFile', $flowPath, '-Unattended')
+    if ($ConfigFileArg) { $admitArgs += @('-ConfigFile', $ConfigFileArg) }
+    if ($AcceptanceFileArg) { $admitArgs += @('-AcceptanceFile', $AcceptanceFileArg) }
+    $admitOut = & powershell @admitArgs *>&1 | Out-String
+    $hits = @($admitOut -split "`r?`n" | Where-Object { $_ -match '^PAD_ADMIT_RESULT=' })
+    $admit = $null
+    if ($hits.Count -gt 0) {
+        try { $admit = $hits[$hits.Count - 1].Substring('PAD_ADMIT_RESULT='.Length) | ConvertFrom-Json }
+        catch { $admit = $null }
+    }
+    if (-not $admit) {
+        $script:Result.warnings += '准入网关未返回可解析结果'
+        return $true
+    }
+
+    $fails = @($admit.checks | Where-Object { $_.status -eq 'fail' })
+    $asks = @($admit.checks | Where-Object { $_.status -eq 'ask' })
+    foreach ($f in $fails) { $script:Result.warnings += "准入 $($f.id) $($f.code)：$($f.message)" }
+    foreach ($a in $asks) { $script:Result.warnings += "准入 $($a.id) 待批准：$($a.message)" }
+    if ($fails.Count -gt 0 -or $asks.Count -gt 0) {
+        $msg = "准入网关：失败 $($fails.Count) / 待批 $($asks.Count)"
+        if ($AdmitMode -eq 'enforce') { throw "$msg（enforce 模式，已阻断）" }
+        Write-Log "$msg（report 模式，继续）"
+        return $true
+    }
+    Write-Log "准入网关通过（$(@($admit.checks).Count) 项）"
+    return $true
+}
 
 # ── 收集（设计器本地运行）：读机器人遥测日志 ──────────────────
 # 设计器内“运行”不写 Console\Scripts\<flow>\Runs\<runId>\Actions.log，
@@ -200,48 +244,15 @@ try {
     if (-not $RunId) { $RunId = [Guid]::NewGuid().ToString() }
     $script:Result.runId = $RunId
 
+    # 准入网关：RunOnly（定时任务）也跑，避免夜间运行绕过门禁
+    [void](Invoke-AdmitGate $FlowFile $ConfigFile $AcceptanceFile)
+
     if (-not $RunOnly) {
         if (-not $RobinFile -or -not (Test-Path $RobinFile)) { throw "找不到 .robin 文件：$RobinFile" }
         $text = [IO.File]::ReadAllText((Resolve-Path $RobinFile), [Text.Encoding]::UTF8)
         if (-not $text.Trim()) { throw '.robin 文件内容为空' }
 
-        # ── 准入网关：默认报告模式，只把问题记进 warnings，不阻断注入 ──
-        $admitFlow = $FlowFile
-        if (-not $admitFlow -and $AcceptanceFile) {
-            $guess = $AcceptanceFile -replace '\.acceptance\.json$', '.json'
-            if (Test-Path -LiteralPath $guess) { $admitFlow = $guess }
-        }
-        if ($AdmitMode -ne 'off' -and $admitFlow) {
-            $script:Result.stage = 'admit'
-            $admitArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                (Join-Path $PSScriptRoot 'pad-admit.ps1'), '-FlowFile', $admitFlow, '-Unattended')
-            if ($ConfigFile) { $admitArgs += @('-ConfigFile', $ConfigFile) }
-            if ($AcceptanceFile) { $admitArgs += @('-AcceptanceFile', $AcceptanceFile) }
-            $admitOut = & powershell @admitArgs *>&1 | Out-String
-            $hits = @($admitOut -split "`r?`n" | Where-Object { $_ -match '^PAD_ADMIT_RESULT=' })
-            $admit = $null
-            if ($hits.Count -gt 0) {
-                try {
-                    $admit = $hits[$hits.Count - 1].Substring('PAD_ADMIT_RESULT='.Length) | ConvertFrom-Json
-                } catch { $admit = $null }
-            }
-            if ($admit) {
-                $fails = @($admit.checks | Where-Object { $_.status -eq 'fail' })
-                $asks = @($admit.checks | Where-Object { $_.status -eq 'ask' })
-                foreach ($f in $fails) { $script:Result.warnings += "准入 $($f.id) $($f.code)：$($f.message)" }
-                foreach ($a in $asks) { $script:Result.warnings += "准入 $($a.id) 待批准：$($a.message)" }
-                if ($fails.Count -gt 0 -or $asks.Count -gt 0) {
-                    $msg = "准入网关：失败 $($fails.Count) / 待批 $($asks.Count)"
-                    if ($AdmitMode -eq 'enforce') { throw "$msg（enforce 模式，已阻断注入）" }
-                    Write-Log "$msg（report 模式，继续注入）"
-                } else {
-                    Write-Log "准入网关通过（$(@($admit.checks).Count) 项）"
-                }
-            } else {
-                $script:Result.warnings += '准入网关未返回可解析结果'
-            }
-        }
-
+        # 准入网关已在主流程开头跑过（RunOnly 也覆盖），这里只做静态校验
         # V 模型 G2：静态校验不通过就不进设计器，避免坏脚本污染画布
         if (-not $SkipStaticCheck) {
             $script:Result.stage = 'static-check'
