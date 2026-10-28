@@ -210,6 +210,7 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 ```
 
 - 必须同时产出三件套：`flow.json`（含 `acceptance` / `budget` 声明）、`flows/<name>.requirements.json`（环境依赖）、`tests/eval/<name>.cases.json`（结构断言）
+- 完整示例（一句话 → flow.json → 四项校验 → 打分）见 `docs/nl-to-flow-guide.md`
 - 只生成 flow.json + 流程图 + 上述声明，不生成 Robin 代码
 ```
 

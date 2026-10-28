@@ -27,6 +27,11 @@ Agent B（代码生成器）──查表填空──▶ output.txt（Robin 脚�
 | Git | 任意 | 克隆知识库 | https://git-scm.com/download/win |
 | Power Automate Desktop | 最新 | 执行 Robin 脚本 | Microsoft Store 搜索 |
 
+## 文档
+
+- [从一句话到可运行流程：示例与打分](docs/nl-to-flow-guide.md)
+- [Agent A/B 设计](docs/agent-prompts.md) · [Robin 语法参考](docs/robin-format-reference.md) · [脚本规范](docs/script-standards.md)
+
 ## 依赖关系
 
 | 依赖 | 必需 | 用途 | 获取方式 |
