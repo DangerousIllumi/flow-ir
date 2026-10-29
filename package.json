@@ -1,7 +1,7 @@
 {
-  "name": "pad-rpa-toolkit-tools",
+  "name": "nl2pad-tools",
   "private": true,
-  "description": "PAD RPA 工具链的 Node 依赖（目前只用于流程图 ELK 布局）",
+  "description": "nl2pad 的 Node 依赖（目前只用于流程图 ELK 布局）",
   "devDependencies": {
     "elkjs": "^0.12.0"
   }

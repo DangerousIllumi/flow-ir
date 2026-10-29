@@ -153,7 +153,8 @@ if ($okExit -eq 0 -and $badExit -ne 0) {
 # ── 4. 创建工程目录结构 ──────────────────────────────────────
 Write-Step "4/4 创建工程目录结构"
 
-$dirs = @("flows", "outputs", "docs")
+# flows/ 放你（或 AI 助手）写的 flow.json；生成的 .robin 默认写在仓库根目录
+$dirs = @("flows")
 foreach ($d in $dirs) {
     $path = Join-Path $WorkDir $d
     if (-not (Test-Path $path)) {
@@ -175,16 +176,17 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "目录结构：" -ForegroundColor Cyan
 Write-Host "  $WorkDir\"
-Write-Host "  ├── pad-robin-action-kb\   Agent B 知识库（动作 + 类型 + 校验器）"
-Write-Host "  ├── scripts\               环境检查脚本"
-Write-Host "  ├── docs\                  框架文档（Agent 提示词 + Robin 手册）"
-Write-Host "  ├── flows\                 你设计的流程定义（flow.json）"
-Write-Host "  └── outputs\               Agent B 生成的 Robin 脚本"
+Write-Host "  ├── pad-robin-action-kb\   动作知识库（1,086 个动作 + 类型 + 校验器）"
+Write-Host "  ├── AGENTS.md              AI 助手的入口手册"
+Write-Host "  ├── prompts\               可整段粘给 AI 的提示词"
+Write-Host "  ├── skills\                设计规则与脚本红线"
+Write-Host "  ├── tools\                 编译器 / 校验 / 准入 / 部署 / 定时"
+Write-Host "  └── flows\                 你（或 AI）写的 flow.json"
 Write-Host ""
 Write-Host "下一步：" -ForegroundColor Yellow
-Write-Host "  1. 用编辑器或 AI 编程助手打开本文件夹"
-Write-Host "  2. 参考 docs\agent-prompts.md 配置 Agent A（设计器）和 Agent B（代码生成器）"
-Write-Host "  3. 设计流程后，Agent B 生成 output.txt，复制到 PAD 画布粘贴"
+Write-Host "  1. 用任意 AI 编程助手打开本目录——它会先读到 AGENTS.md"
+Write-Host "  2. 把 prompts\nl-to-flow.md 那段话粘给它，末尾写你的需求"
+Write-Host "  3. 它跑完 生成 → 静态校验 → 准入 后，把 out.robin 粘进 PAD 画布"
 Write-Host ""
 if ($SkipDrawIO) {
     Write-Host "提示：如需可拖拽编辑的流程图，运行：" -ForegroundColor Gray

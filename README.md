@@ -1,212 +1,203 @@
-# Workflow Graphics Engineering
+# nl2pad
 
-用自然语言设计流程 → Agent 生成可粘贴到 Power Automate Desktop 的 Robin 脚本。
+**用一句话生成 Power Automate Desktop 工作流。**
 
-## 架构
+自然语言 → `flow.json`（唯一设计源）→ `.robin`（可直接粘进 PAD 画布）→ 校验 · 准入 · 发布 · 验收。
 
-```
-用户自然语言
-    │
-    ▼
-Agent A（流程设计器）──生成──▶ flow.json + 流程图
-    │                              │
-    │                         人工评审/修改
-    │                              │
-    ▼                              ▼
-Agent B（代码生成器）──查表填空──▶ output.txt（Robin 脚本）
-                                   │
-                                   ▼
-                          复制 → PAD 画布 Ctrl+V 粘贴
-```
+> 面向两类人：想让 AI 帮忙做 RPA 的业务同事，和要接手/扩展这套工具的开发者。
 
-## 前置条件
+---
 
-| 组件 | 版本 | 用途 | 下载 |
-|---|---|---|---|
-| Node.js | ≥ 18 | 运行 check-flows.js 校验器 | https://nodejs.org/ |
-| Git | 任意 | 克隆知识库 | https://git-scm.com/download/win |
-| Power Automate Desktop | 最新 | 执行 Robin 脚本 | Microsoft Store 搜索 |
+## 它能做到什么，做不到什么
 
-## 用 AI 一句话开始（3 步）
+先说边界，避免误解。
 
-1. Fork / clone 本仓库，用任意 AI 编程助手打开——它会先读到根目录的 [AGENTS.md](AGENTS.md)
-2. 把 [prompts/nl-to-flow.md](prompts/nl-to-flow.md) 里那段话发给它，末尾写上你的需求
-3. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 粘进 PAD 画布
+| 能做 | 怎么做到的 |
+|---|---|
+| 把「每月 3 号从邮箱取对账单，和系统核对，不一致的发邮件给经理」写成一版**可评审的结构化定义**（`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
+| 把定义**确定性地编译**成 `.robin` 脚本 | `flow-to-robin.js` 查动作知识库填空，动作/参数写错直接拒绝产出 |
+| 编译前**静态校验**：语法、变量是否定义、`edges` 与结构是否漂移 | `check.js` / `check-flows.js` / `lint-robin.js` |
+| **准入**：动作是否注册、是否需要 UI 选择器、预算、策略 deny/ask/allow | `pad-admit.ps1`（13 项，只读） |
+| 副作用**可跳过**：发信、过账、删文件的 `guard` + `DRY_RUN` | 生成器 + 策略双层保证 |
+| 注入设计器、发布、回滚、定时、遥测、产物验收 | `tools/pad-sync/` |
 
-> 前提：跑过一次 `.\setup.ps1`（拉动作知识库）。「需求 → flow.json」由 AI 完成，
-> 之后每一步都是确定性的，任何一步不过都不会放行。
+| 做不到 | 说明 |
+|---|---|
+| 自己听懂自然语言 | 仓库里没有 NL 解析器；「需求 → `flow.json`」这一步由**你配的 AI 助手**完成，本仓库提供的是提示词、契约和尺子 |
+| 替你录制 UI 元素 | 需要选择器的动作（部分网页/桌面自动化）必须人工在 PAD 里录制，生成器会明确拒绝 |
+| 生成 SAP 的 VBS 脚本 | 事务码导出/过账这类 VBS 是录制产物，不随仓库分发 |
+| 替你按下生产发布 | `pad-deploy` / `pad-release` 会触发真实运行，必须人来确认 |
 
-## 文档
+**一句话结论**：`AI 助手 + 本仓库 + 动作知识库` 三者齐了，才是「自然语言 → 可运行 PAD 流」的闭环；缺了 AI，就只能从 `flow.json` 这一步开始。
 
-- [从一句话到可运行流程：示例与打分](docs/nl-to-flow-guide.md)
-- [Agent A/B 设计](docs/agent-prompts.md) · [Robin 语法参考](docs/robin-format-reference.md) · [脚本规范](docs/script-standards.md)
+---
 
-## 依赖关系
+## 两个公开库的分工
 
-| 依赖 | 必需 | 用途 | 获取方式 |
-|---|---|---|---|
-| Node.js ≥ 18 | 是 | 生成器、静态校验、流程图、评估集 | nodejs.org |
-| Git | 是 | 克隆动作知识库 | git-scm.com |
-| Power Automate Desktop | 是（要跑 PAD 时） | 执行 Robin 脚本 | Microsoft Store |
-| `pad-robin-action-kb` | 是 | 动作 Schema（生成器精确查表） | `setup.ps1` 自动 clone；MIT 第三方，**不入库** |
-| Python 3.x + openpyxl | 否 | 工作日历判断（`tools/workday`）、调度 | python.org |
-| AI 编程助手（任意） | 否 | 把自然语言需求写成 `flow.json` | 自备；本仓库只提供提示词与 Skill，不含模型 |
+| 仓库 | 提供什么 | 是否必需 |
+|---|---|---|
+| **本仓库** | 中间表示（`flow.json`）、编译器、静态校验、准入网关、发布/回滚/定时、提示词与 Skill、评估集 | 是 |
+| [pad-robin-action-kb](https://github.com/JoeG592/pad-robin-action-kb) | 1,086 个 PAD 动作的真实 `actionId` / 参数名 / 输出名 / 粘贴样例 | **是**（`setup.ps1` 自动克隆，不入本库） |
 
-> 说明：`flow.json → .robin` 这一段是确定性的，不需要模型；「需求 → flow.json」这一段依赖 AI 助手或人工，
-> 本仓库只提供契约（schema、`pad_hint` 必须存在于 KB）与尺子（`tests/eval`）。
+知识库是「动作不许编」的唯一依据：生成器只认里面存在的三段式 `actionId` 和真实参数名，查不到就拒绝产出。
 
-## 快速开始
+---
 
-```powershell
-.\setup.ps1                  # 安装依赖 + 克隆动作知识库 + 建目录
-.\scripts\check-env.ps1      # 环境体检（PAD / Python / SAP / Outlook / 目录）
-```
+## 环境要求
 
-设计一个流程后，按顺序跑：
+| 依赖 | 必需 | 用途 |
+|---|---|---|
+| Node.js ≥ 18 | 是 | 生成器、静态校验、流程图、评估集 |
+| Git | 是 | 克隆动作知识库 |
+| PowerShell 5.1+ | 是 | 准入 / 部署 / 发布 / 定时 |
+| Power Automate Desktop（Windows） | 要跑流时必需 | 执行 `.robin` |
+| Python 3.x + openpyxl | 否 | 工作日历判断、验收里的 Excel 判据 |
+| AI 编程助手（任意） | 否 | 把自然语言写成 `flow.json` |
+
+> 许可提示：运行桌面流本身需要 PAD 的相应许可（Premium 或 Windows 11 默认环境的个人版）。
+> 编辑器里的「流程图模式」「流检查器」不是单独的付费功能。
+
+---
+
+## 3 步上手（有 AI 助手）
 
 ```powershell
-node tools\flow-drawio\flow-to-drawio.js flows\<name>.json flows\<name>.drawio   # 生成可评审画布
-node tools\pad-robin\flow-to-robin.js flows\<name>.json output.robin             # 生成 Robin 脚本
-node tools\pad-robin\check.js output.robin                                       # 静态校验
-.\tools\pad-sync\pad-admit.ps1 -FlowFile flows\<name>.json -ConfigFile config\<name>.json   # 准入检查（只读）
+git clone https://github.com/DangerousIllumi/nlg-workflow-toolkit.git nl2pad
+cd nl2pad
+.\setup.ps1            # 安装 Node 依赖 + 克隆动作知识库
 ```
 
-配置从示例复制，填入你自己的账号与路径（示例文件不含任何真实凭据）：
+1. 用任意 AI 编程助手打开这个目录——它会先读到 [AGENTS.md](AGENTS.md)。
+2. 把 [prompts/nl-to-flow.md](prompts/nl-to-flow.md) 里那段话整段粘给它，末尾写你的需求。
+3. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布，`Ctrl+V`。
+
+交付标准写在 AGENTS.md 第 6 节：生成器 0 error、`check.js` 0 errors、准入 0 fail，
+并且明确告诉你哪些部分需要人工补（UI 元素 / 脚本 / 账号）。
+
+---
+
+## 不用 AI 也能用（从 `flow.json` 开始）
 
 ```powershell
-Copy-Item config\sample.example.json config\<name>.json
+# 1) 画评审图（可选）
+node tools\flow-drawio\flow-to-drawio.js flows\<name>.json flows\<name>.drawio
+
+# 2) 编译
+node tools\pad-robin\flow-to-robin.js flows\<name>.json out.robin
+
+# 3) 静态校验（0 errors 才能继续）
+node tools\pad-robin\check.js out.robin
+
+# 4) 流程卫生（未读输出 / 未用变量 / IF 嵌套过深）
+node tools\pad-robin\lint-robin.js out.robin
+
+# 5) 准入（只读，0 fail 才能交付）
+.\tools\pad-sync\pad-admit.ps1 -FlowFile flows\<name>.json -RobinFile out.robin
+
+# 6) 结构评估（可选：需求级断言）
+node tools\pad-robin\eval-flow.js tests\eval\<name>.cases.json
 ```
 
-许可：MIT，见 [LICENSE](LICENSE)；第三方组件与不随仓库分发的内容见 [NOTICE](NOTICE)。
+`flow.json` 的写法见 [docs/agent-prompts.md](docs/agent-prompts.md)，
+可抄的 9 个合成样例在 [tests/eval/fixtures](tests/eval/fixtures)。
 
-## 安装步骤
-
-### 第 1 步：把本文件夹复制到本地
-
-将本目录（`deploy-package`）内的**所有内容**复制到：
-
-```
-C:\Workflow Graphics Engineering\
-```
-
-复制后根目录应该有：`setup.ps1`、`README.md`、`HANDOVER.md`、`scripts\`、`docs\`。
-
-> 文档只放在 `docs\` 一处（`agent-prompts.md`、`robin-format-reference.md`），根目录**不要**再放同名副本，否则会改一处、读另一处。
-
-### 第 2 步：检查环境
-
-在 `C:\Workflow Graphics Engineering` 文件夹空白处，**按住 Shift + 右键** → 选"在此处打开 PowerShell 窗口"。
-
-运行：
+### 上线链路（需要 PAD 真机）
 
 ```powershell
-.\scripts\check-env.ps1
+Copy-Item config\sample.example.json config\<name>.json   # 填自己的账号与路径（示例不含真实凭据）
+.\tools\pad-sync\pad-deploy.ps1 -FlowName <PAD 流程名> -SourceRobin flows\<name>.robin -ConfigFile config\<name>.json -AllowProd -SkipConfirm -PublishOnly
 ```
 
-如果有 [FAIL] 项，先装好缺失组件再继续。装完可能需要**关闭并重开 PowerShell** 让 PATH 生效。
+`pad-deploy` 会替换 `{{KEY}}` 占位符、注入设计器、发布并校验哈希；`pad-release` 在此基础上加
+「测试摘要 → 人工确认（三哈希指纹）→ 快照」，`pad-rollback` 可从快照回退。
 
-### 第 3 步：安装框架
+跑完想单独核对产物（不碰 PAD、只读）：
 
 ```powershell
-.\setup.ps1
+.\tools\pad-sync\pad-verify.ps1 -AcceptanceFile flows\<name>.acceptance.json -ConfigFile config\<name>.json
 ```
 
-脚本会：
-1. 检查 Node.js / Git
-2. 克隆 `pad-robin-action-kb`（Agent B 的知识库，约 37MB）
-3. 验证 `check-flows.js` 可用
-4. 安装 Node 依赖 `elkjs`（流程图 ELK 布局用）
-5. 创建工程目录
+---
 
-看到 `框架安装完成！` 即成功。
+## 三条硬规则
 
-### 第 4 步（可选）：安装可拖拽流程图工具 next-ai-draw-io
+违反其中任何一条，工具会直接拒绝，不会产出半成品：
 
-```powershell
-.\setup.ps1 -SkipDrawIO:$false
-```
+1. **动作不许编**：`pad_hint` 必须是知识库里真实存在的三段式 `actionId`。
+2. **参数不许造**：`params` 的键必须是该动作 `input_params` 里的真实参数名。
+3. **副作用必须可跳过**：发信、过账、删文件放进 `guard`（条件 `DryRun <> $'''1'''`），
+   `flow.json` 必须声明 `budget`；`RunDOSCommand*` / `RunVBScript*` 节点必须带 `intent`。
 
-> 不装也行，流程图可用 Mermaid 文本代替；只是不能拖拽编辑。
+## 契约文件
+
+| 文件 | 回答的问题 |
+|---|---|
+| `flows/<name>.json` | 流程长什么样（节点、边、参数、变量） |
+| `flows/<name>.requirements.json` | 跑之前环境该有什么（目录、文件、可执行文件） |
+| `flows/<name>.acceptance.json` | 跑完了怎么算成功（产物存在/更新/内容匹配） |
+| `tests/eval/<name>.cases.json` | 需求里必须成立的结构断言（可当回归测试） |
+
+验收判据支持 `fileExists` / `globNewerThan` / `pair` / `json` / `jsonl` / `logState`，
+由 `tools/pad-sync/PadAcceptance.psm1` 执行，不依赖 PAD 自己报没报错。
+
+---
 
 ## 目录结构
 
 ```
-C:\Workflow Graphics Engineering\
-├── setup.ps1                    安装脚本
-├── README.md                    本说明
-├── HANDOVER.md                  会话交接 / 恢复清单（新会话 AI 先读）
-├── scripts\
-│   └── check-env.ps1            环境检查
-├── docs\                        框架文档（唯一归属地）
-│   ├── agent-prompts.md             Agent A/B 的完整提示词
-│   └── robin-format-reference.md    Robin 语法速查
-├── pad-robin-action-kb\         Agent B 知识库（setup.ps1 克隆）
-│   ├── PAD_Robin_ActionKB.json      1,086 个动作的粘贴验证模板
-│   ├── PAD_Robin_TypeReference.json 44 种参数类型写法
-│   ├── PROMPT.md                    Agent B 系统提示词
-│   ├── rules\robin-rules.json       24 条实测规则
-│   └── marketing\video\tools\check-flows.js   粘贴前自检器
-├── flows\                       你设计的流程定义（flow.json）
-└── outputs\                     Agent B 生成的 Robin 脚本
+.
+├── AGENTS.md                  AI 助手的入口手册（先读这个）
+├── prompts/nl-to-flow.md      可整段粘给 AI 的提示词
+├── skills/
+│   ├── pad-flow-designer/     需求 → flow.json 的设计规则
+│   └── pad-robin-coder/       写脚本时的红线清单
+├── tools/
+│   ├── flow-drawio/           flow.json ↔ .drawio，edges 一致性校验
+│   ├── pad-robin/             编译器、静态校验、流程卫生、比对、结构评估
+│   ├── pad-sync/              准入、部署、发布、回滚、定时、注入运行、遥测、验收、修复
+│   └── workday/               工作日历判断（通用件）
+├── config/                    部署配置的 schema 与示例（不含真实凭据）
+├── docs/                      设计文档、Robin 语法、准入网关说明
+├── tests/                     Pester 套件 + 设计质量评估集 + 遥测样例
+└── .github/workflows/ci.yml   Windows 上跑 pytest / Pester / Node / 生成一致性
 ```
 
-## 使用流程
+---
 
-### 1. 配置 Agent
+## 设计原则
 
-用任意支持本地提示词的 AI 编程助手打开 `C:\Workflow Graphics Engineering`，参考 `docs\agent-prompts.md`：
-- 创建 Agent A「流程设计器」，粘贴其系统提示词
-- 创建 Agent B「代码生成器」，粘贴其系统提示词
+- **唯一设计源**：`flow.json` 是唯一可编辑的源；`.robin` 是产物，改它下次就会被覆盖。
+  CI 里有硬断言「重新生成的结果 == 仓库里的脚本」。
+- **确定性优先**：编译阶段不调用模型，只查表；模型只出现在「写 `flow.json`」这一步。
+- **失败要早**：能在编译前挡住的错误（动作名、参数名、悬空引用、无界循环、策略命中），
+  绝不留到 PAD 运行时。
+- **副作用可回退**：先 `DRY_RUN` 跑通分支，再走真实运行；上线有快照与回滚。
 
-### 2. 设计流程（Agent A）
-
-对 Agent A 说你的需求，例如：
-> 每月3号从邮箱读取带对账单附件的邮件，提取发票号和金额，跟SAP核对，不一致的做成Excel发邮件给经理
-
-Agent A 会生成 `flows\你的流程名\flow.json` + 流程图。
-
-在 draw.io（或 Mermaid）中评审、拖拽调整。改完保存，告诉 Agent A「调整完成」。
-
-### 3. 生成代码（Agent B）
-
-对 Agent B 说：
-> 读取 flows/xxx/flow.json，生成 PAD 代码
-
-Agent B 会：
-- 从 `pad-robin-action-kb` 查表填空
-- 用 `check-flows.js` 自检
-- 输出到 `outputs\xxx.txt`
-
-### 4. 粘贴到 PAD
-
-1. 记事本打开 `outputs\xxx.txt`
-2. 全选 → 复制
-3. 在 PAD 新建流程 → 画布上 `Ctrl+V`
-4. 检查有无报错，填写占位参数（如邮箱地址、文件路径）
-5. 运行
+---
 
 ## 常见问题
 
-**Q: 粘贴后画布空白，没报错？**
-A: 说明脚本里有语法错误被 PAD 静默丢弃了。运行检查器：
-```powershell
-node pad-robin-action-kb\marketing\video\tools\check-flows.js pad-robin-action-kb\PAD_Robin_ActionKB.json outputs\xxx.txt
-```
-合法输出 `OK  ... 0 errors`（退出码 0）；非法输出 `BAD ... M errors  line X: ...`（退出码 1）。
+**粘进画布后一片空白、也没报错？**
+多半是语法被 PAD 静默丢弃。跑 `node tools\pad-robin\check.js out.robin`，它会指出第几行、哪个标识符。
 
-**Q: git clone 失败？**
-A: 可能网络问题。手动到 https://github.com/JoeG592/pad-robin-action-kb 下载 ZIP，解压到 `pad-robin-action-kb\` 目录。
+**`git clone` 知识库失败？**
+到 <https://github.com/JoeG592/pad-robin-action-kb> 下载 ZIP，解压到 `pad-robin-action-kb\` 即可。
 
-**Q: PowerShell 提示「无法加载文件，因为在此系统上禁止运行脚本」？**
-A: 以管理员身份打开 PowerShell，运行：
+**PowerShell 提示「在此系统上禁止运行脚本」？**
+
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
-然后重开 PowerShell。
 
-## 参考资料
+**改 `.robin` 后线上就漂了？**
+正常：`.robin` 是产物。要改就改 `flow.json` 再重新生成；设计器里的「应用修复」同理，不要点。
 
-- Agent 提示词：`docs\agent-prompts.md`
-- Robin 语法手册：`docs\robin-format-reference.md`
-- PAD 知识库：`pad-robin-action-kb\`
-- 流程图工具：https://github.com/DayuanJiang/next-ai-draw-io
+**能跑在 Linux/CI 上吗？**
+编译、校验、评估集、画布生成都可以；注入 PAD、运行、发布必须 Windows + 已装 PAD。
+
+---
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。第三方组件、以及不随本仓库分发的内容（动作知识库等）见 [NOTICE](NOTICE)。
+安全问题请按 [SECURITY.md](SECURITY.md) 反馈；贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
