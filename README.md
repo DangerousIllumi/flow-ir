@@ -95,12 +95,9 @@ cd flow-ir
 **关键一步：在已打开这个目录的 AI 编程助手里，第一句话这样发**（只贴链接、不打开目录，AI 看不到 `AGENTS.md`）：
 
 ```text
-按仓库里的 AGENTS.md 与 prompts/nl-to-flow.md 执行：
-先跑 .\setup.ps1（若提示“禁止运行脚本”，改用
-powershell -ExecutionPolicy Bypass -File .\setup.ps1），
-再把我下面的需求写成 flows/<name>.json，并走完 生成 → 静态校验 → 准入。
+读 AGENTS.md，按 prompts/nl-to-flow.md 执行：先跑 .\setup.ps1，再把下面的需求写成 flows/<name>.json，走完 生成 → 静态校验 → 准入。
 
-我的需求：<在这里写，例如：每天把 D:\inbox 下的 CSV 复制到 D:\archive，同名覆盖，结束后弹窗提示数量>
+需求：<在这里写，例如：每天把 D:\inbox 下的 CSV 复制到 D:\archive，同名覆盖，结束后弹窗提示数量>
 ```
 
 发完只需要等它跑：
