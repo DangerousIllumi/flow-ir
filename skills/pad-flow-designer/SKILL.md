@@ -68,6 +68,9 @@ node tools/flow-drawio/drawio-to-flow.js flows/<name>.drawio flows/<name>.json f
 | `unused-var` | `SET` 声明了变量，但从未引用 | 派生路径只声明真正用到的；删掉模板残留 |
 | `nested-if` | IF 嵌套超过 3 层 | 改成**守卫式提前退出**：整段包进 `LOOP 1 TO 1` 的一次性执行块，每个失败分支弹窗后直接 `EXIT LOOP`，后续步骤平铺在块内，不再写「IF 失败 ELSE 继续」的层层嵌套 |
 
+> 一次性执行块的**索引变量要复用已有的那个**（例如轮询计数）：PAD 的 For 循环必须给一个变量，
+> 另起 `StageIdx` 这类只用一次的变量，设计器的流检查器会报「未使用变量」。
+
 单独检查：`node tools/pad-robin/lint-robin.js out.robin`
 
 > 设计器里那条「应用修复」按钮**不要点**：它直接改画布，`flow.json` 不变，
