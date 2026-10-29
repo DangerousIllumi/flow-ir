@@ -1,8 +1,11 @@
-# nl2pad
+# flow-ir
 
 **用一句话生成 Power Automate Desktop 工作流。**
 
 自然语言 → `flow.json`（唯一设计源）→ `.robin`（可直接粘进 PAD 画布）→ 校验 · 准入 · 发布 · 验收。
+
+> 名字里的 **IR** 指 `flow.json` 这个中间表示：需求先落成 IR，再由确定性编译器产出各引擎的脚本。
+> 目前只有 PAD 一个后端；要加别的引擎（另一款 RPA、云端流、Python/VBS），加后端即可，IR 与门禁不用动。
 
 > 面向两类人：想让 AI 帮忙做 RPA 的业务同事，和要接手/扩展这套工具的开发者。
 
@@ -41,6 +44,20 @@
 
 知识库是「动作不许编」的唯一依据：生成器只认里面存在的三段式 `actionId` 和真实参数名，查不到就拒绝产出。
 
+## 编译后端（引擎）
+
+`flow.json` 是前端，后端负责把它变成某个平台能跑的脚本。目前只有一个。
+
+| 后端 | 状态 | 产物 |
+|---|---|---|
+| Power Automate Desktop | **已实现** | `.robin`，粘贴进画布即可 |
+| 其它 RPA（如 UiPath / Automation Anywhere） | 未实现 | — |
+| Power Automate 云端流 | 未实现 | — |
+| Python / VBS 脚本 | 未实现（现阶段由 AI 直接写，不进 IR） | — |
+
+新增后端的接口约定：**只读 `flow.json`**，输出目标脚本；必须复用同一套静态校验与准入规则，
+不允许在后端里偷偷绕开「动作/参数不许编」「副作用可跳过」这两条。
+
 ---
 
 ## 环境要求
@@ -62,8 +79,8 @@
 ## 3 步上手（有 AI 助手）
 
 ```powershell
-git clone https://github.com/DangerousIllumi/nlg-workflow-toolkit.git nl2pad
-cd nl2pad
+git clone https://github.com/DangerousIllumi/flow-ir.git flow-ir
+cd flow-ir
 .\setup.ps1            # 安装 Node 依赖 + 克隆动作知识库
 ```
 

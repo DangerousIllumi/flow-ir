@@ -3,7 +3,7 @@
 > 用法：在 IDE 里打开本仓库（或你 fork 的副本），把下面整段复制给 AI，末尾写上你的需求。
 
 ```text
-我在用 nlg-workflow-toolkit 这个仓库。请按仓库里的 AGENTS.md 帮我做一条 PAD 工作流。
+我在用 flow-ir 这个仓库。请按仓库里的 AGENTS.md 帮我做一条 PAD 工作流。
 
 步骤：
 1. 先读仓库根目录的 AGENTS.md；如果需要，执行 .\setup.ps1 和 .\scripts\check-env.ps1（只做一次）。

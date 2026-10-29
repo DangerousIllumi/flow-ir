@@ -1,7 +1,7 @@
 {
-  "name": "nl2pad-tools",
+  "name": "flow-ir-tools",
   "private": true,
-  "description": "nl2pad 的 Node 依赖（目前只用于流程图 ELK 布局）",
+  "description": "flow-ir 的 Node 依赖（目前只用于流程图 ELK 布局）",
   "devDependencies": {
     "elkjs": "^0.12.0"
   }
