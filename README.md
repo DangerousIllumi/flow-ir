@@ -87,13 +87,28 @@ cd flow-ir
 > 公司网络常拦截 HTTPS 直连 GitHub（报 `Recv failure: Connection was reset`）。
 > 这时改用 SSH：`git clone git@github.com:DangerousIllumi/flow-ir.git flow-ir`。
 > `setup.ps1` 克隆知识库时也会自动从 HTTPS 回退到 SSH，都失败会给出手动步骤。
+>
+> 只是用的话 clone 即可；想改这套工具本身才需要 fork。
+> 若 PowerShell 提示「在此系统上禁止运行脚本」，改用
+> `powershell -ExecutionPolicy Bypass -File .\setup.ps1`。
 
-1. 用任意 AI 编程助手打开这个目录——它会先读到 [AGENTS.md](AGENTS.md)。
-2. 把 [prompts/nl-to-flow.md](prompts/nl-to-flow.md) 里那段话整段粘给它，末尾写你的需求。
-3. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布，`Ctrl+V`。
+**关键一步：在已打开这个目录的 AI 编程助手里，第一句话这样发**（只贴链接、不打开目录，AI 看不到 `AGENTS.md`）：
 
-交付标准写在 AGENTS.md 第 6 节：生成器 0 error、`check.js` 0 errors、准入 0 fail，
-并且明确告诉你哪些部分需要人工补（UI 元素 / 脚本 / 账号）。
+```text
+按仓库里的 AGENTS.md 与 prompts/nl-to-flow.md 执行：
+先跑 .\setup.ps1（若提示“禁止运行脚本”，改用
+powershell -ExecutionPolicy Bypass -File .\setup.ps1），
+再把我下面的需求写成 flows/<name>.json，并走完 生成 → 静态校验 → 准入。
+
+我的需求：<在这里写，例如：每天把 D:\inbox 下的 CSV 复制到 D:\archive，同名覆盖，结束后弹窗提示数量>
+```
+
+发完只需要等它跑：
+
+1. AI 会自己读 `AGENTS.md` 与 `prompts/nl-to-flow.md`，不需要你转述里面写了什么。
+2. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布，`Ctrl+V`。
+3. 交付标准见 AGENTS.md 第 6 节：生成器 0 error、`check.js` 0 errors、准入 0 fail，
+   并明确告诉你哪些部分需要人工补（UI 元素 / 脚本 / 账号）。
 
 ---
 
