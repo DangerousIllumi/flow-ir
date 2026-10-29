@@ -16,13 +16,17 @@
 #>
 
 param(
-    [switch]$SkipDrawIO = $true
+    [switch]$SkipDrawIO = $true,
+    # 动作知识库的克隆地址；默认先试 HTTPS 再试 SSH，
+    # 公司网络拦截 HTTPS 时可指定镜像或本地路径
+    [string]$KbRepo = ""
 )
 
 $ErrorActionPreference = "Stop"
 $WorkDir = $PSScriptRoot
 $KBDir = Join-Path $WorkDir "pad-robin-action-kb"
-$KBRepo = "https://github.com/JoeG592/pad-robin-action-kb.git"
+$KBRepoHttps = "https://github.com/JoeG592/pad-robin-action-kb.git"
+$KBRepoSsh   = "git@github.com:JoeG592/pad-robin-action-kb.git"
 
 function Write-Step { param($msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok   { param($msg) Write-Host "    [OK]   $msg" -ForegroundColor Green }
@@ -73,19 +77,41 @@ if (Test-Path (Join-Path $WorkDir "package.json")) {
 }
 
 # ── 2. 克隆 KB ───────────────────────────────────────────────
-Write-Step "2/4 克隆 pad-robin-action-kb（Agent B 知识库）"
+Write-Step "2/4 克隆 pad-robin-action-kb（PAD 动作知识库）"
+
+# 公司网络常拦截 HTTPS 直连 GitHub（表现为 Recv failure: Connection was reset），
+# 所以 HTTPS 失败后自动改用 SSH 再试一次；两者都不通时给手动步骤，而不是只报“克隆失败”
+$candidates = @()
+if ($KbRepo) { $candidates += $KbRepo } else { $candidates += $KBRepoHttps, $KBRepoSsh }
+
+# 上一次克隆失败会留下空目录，先把这种半成品清掉，否则后面的 git pull 也会失败
+if ((Test-Path $KBDir) -and -not (Test-Path (Join-Path $KBDir "PAD_Robin_ActionKB.json"))) {
+    Write-Warn "已有目录不完整（缺 PAD_Robin_ActionKB.json），删除后重新克隆"
+    Remove-Item $KBDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 if (Test-Path $KBDir) {
     Write-Info "目录已存在，执行 git pull 更新"
     Push-Location $KBDir
     & git pull --ff-only
+    $pullExit = $LASTEXITCODE
     Pop-Location
+    if ($pullExit -ne 0) { Write-Warn "更新失败（网络或远端已变），继续使用本地已有副本" }
 } else {
-    Write-Info "正在克隆 $KBRepo"
-    & git clone --depth 1 $KBRepo $KBDir
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fail "克隆失败，请检查网络或 GitHub 可达性"
-        Write-Info "也可手动下载 ZIP 解压到 $KBDir"
+    $cloned = $false
+    foreach ($repo in $candidates) {
+        Write-Info "正在克隆 $repo"
+        & git clone --depth 1 $repo $KBDir
+        if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $KBDir "PAD_Robin_ActionKB.json"))) { $cloned = $true; break }
+        Write-Warn "该地址不可用，换下一个"
+        if (Test-Path $KBDir) { Remove-Item $KBDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    if (-not $cloned) {
+        Write-Fail "克隆失败：HTTPS 与 SSH 都不通"
+        Write-Info "手动方式（任选其一）："
+        Write-Info "  1) git clone git@github.com:JoeG592/pad-robin-action-kb.git `"$KBDir`""
+        Write-Info "  2) 浏览器下载 ZIP，解压到 `"$KBDir`""
+        Write-Info "  3) 换地址重跑：.\setup.ps1 -KbRepo <镜像或本地路径>"
         exit 1
     }
 }
@@ -109,7 +135,8 @@ foreach ($f in @($kbFile, $typeFile, $promptFile, $rulesFile, $checkFlows)) {
 
 # 打印 KB 统计信息（让用户知道这是什么版本）
 $kb = Get-Content $kbFile -Raw | ConvertFrom-Json
-Write-Info "KB 版本 $($kb.version)，PAD build $($kb.pad_build)，$(($kb.actions).Count) 个动作，$((Get-Member -InputObject $kb.modules -MemberType NoteProperty).Count) 个模块"
+# modules 在 KB 里是数组，用 Get-Member 数 NoteProperty 会得到 0，必须按数组计数
+Write-Info "KB 版本 $($kb.version)，PAD build $($kb.pad_build)，$(($kb.actions).Count) 个动作，$(@($kb.modules).Count) 个模块"
 Write-Info "规则文件：$((Get-Content $rulesFile -Raw | ConvertFrom-Json).rules.Count) 条，验证日期 $((Get-Content $rulesFile -Raw | ConvertFrom-Json).date)"
 
 # ── 3. 验证 check-flows.js ───────────────────────────────────

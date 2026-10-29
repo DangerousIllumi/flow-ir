@@ -84,6 +84,10 @@ cd flow-ir
 .\setup.ps1            # 安装 Node 依赖 + 克隆动作知识库
 ```
 
+> 公司网络常拦截 HTTPS 直连 GitHub（报 `Recv failure: Connection was reset`）。
+> 这时改用 SSH：`git clone git@github.com:DangerousIllumi/flow-ir.git flow-ir`。
+> `setup.ps1` 克隆知识库时也会自动从 HTTPS 回退到 SSH，都失败会给出手动步骤。
+
 1. 用任意 AI 编程助手打开这个目录——它会先读到 [AGENTS.md](AGENTS.md)。
 2. 把 [prompts/nl-to-flow.md](prompts/nl-to-flow.md) 里那段话整段粘给它，末尾写你的需求。
 3. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布，`Ctrl+V`。

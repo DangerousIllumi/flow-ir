@@ -20,6 +20,9 @@ logs/
 # Node 依赖（仅流程图 ELK 布局用）
 node_modules/
 
+# 按 README 生成的脚本（默认输出到仓库根）
+out.robin
+
 # Python 缓存
 __pycache__/
 *.pyc

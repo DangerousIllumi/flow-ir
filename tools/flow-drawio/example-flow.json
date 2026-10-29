@@ -10,7 +10,6 @@
     { "name": "ManagerEmail", "type": "string", "default": "manager@company.com", "description": "经理邮箱", "required": true },
     { "name": "SenderFilter", "type": "string", "default": "finance@company.com", "description": "对账单发件人", "required": true },
     { "name": "Month", "type": "string", "default": "2026-09", "description": "对账月份", "required": true },
-    { "name": "VbsPath", "type": "string", "default": "C:\\PAD\\Scripts\\MB51_导出.vbs", "description": "SAP导出VBS路径", "required": true },
     { "name": "ExcelPath", "type": "string", "default": "C:\\PAD\\MB51\\export.xlsx", "description": "SAP导出Excel路径", "required": true }
   ],
   "nodes": [
@@ -36,7 +35,7 @@
         "SubjectContains": "对账单",
         "SaveAttachmentsInto": "C:\\PAD\\Attachments"
       },
-      "outputs": ["RetrievedEmails"],
+      "output_skip": ["Messages"],
       "next": ["3"],
       "branch": null
     },
@@ -49,7 +48,7 @@
       "params": {
         "VBScriptCode": "WScript.Echo \"MB51 exported to {{variables.ExcelPath}}\""
       },
-      "outputs": [],
+      "output_skip": ["ScriptError", "ScriptOutput"],
       "next": ["4"],
       "branch": null
     },
