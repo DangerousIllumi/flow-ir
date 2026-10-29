@@ -64,9 +64,9 @@ node tools/flow-drawio/drawio-to-flow.js flows/<name>.drawio flows/<name>.json f
 
 | 规则 | 含义 | 设计时怎么做 |
 |---|---|---|
-| `unused-output` | 动作捕获了输出变量，但后续从未读取 | **只捕获要用的输出**；不用的留空，别图省事全接 |
+| `unused-output` | 动作捕获了输出变量，但后续从未读取 | **只捕获要用的输出**；不用的写进节点的 `output_skip`（等同 PAD 里留空），别图省事全接 |
 | `unused-var` | `SET` 声明了变量，但从未引用 | 派生路径只声明真正用到的；删掉模板残留 |
-| `nested-if` | IF 嵌套超过 3 层 | 改成提前退出（标志位 + 末尾统一处理），或把条件合并成 `AND` |
+| `nested-if` | IF 嵌套超过 3 层 | 改成**守卫式提前退出**：整段包进 `LOOP 1 TO 1` 的一次性执行块，每个失败分支弹窗后直接 `EXIT LOOP`，后续步骤平铺在块内，不再写「IF 失败 ELSE 继续」的层层嵌套 |
 
 单独检查：`node tools/pad-robin/lint-robin.js out.robin`
 

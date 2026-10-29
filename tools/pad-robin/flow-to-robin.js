@@ -367,7 +367,16 @@ for (const node of flow.nodes) {
   }
 
   // 输出绑定
+  // output_skip：节点声明「这些输出不落变量」（清理/打开等只看执行不看结果的动作），
+  // 与 PAD 里把输出留空同义；句柄输出不允许跳过，否则后续动作拿不到句柄
+  const skipOutputs = new Set(node.output_skip || []);
   for (const op of action.output_params) {
+    if (skipOutputs.has(op.name)) {
+      if (isHandleType(op.type)) {
+        gate(node, `output_skip 不能跳过句柄输出 ${op.name}（后续动作依赖该句柄）`);
+      }
+      continue;
+    }
     // 句柄类型用类型推导的变量名（OutlookInstance / ExcelInstance），避免都叫 Instance 冲突
     const outputName = outputVarName(node, action, op);
     parts.push(`${op.name}=> ${outputName}`);
@@ -516,7 +525,15 @@ function generateNodeInline(node) {
     }
     parts.push(`${p.name}: ${val}`);
   }
+  // output_skip：与主循环同口径，跳过的输出不落变量
+  const skipOutputs = new Set(node.output_skip || []);
   for (const op of action.output_params) {
+    if (skipOutputs.has(op.name)) {
+      if (isHandleType(op.type)) {
+        gate(node, `output_skip 不能跳过句柄输出 ${op.name}（后续动作依赖该句柄）`);
+      }
+      continue;
+    }
     const outputName = outputVarName(node, action, op);
     parts.push(`${op.name}=> ${outputName}`);
     if (isHandleType(op.type)) handleVars[handleBaseName(op.type)] = outputName;

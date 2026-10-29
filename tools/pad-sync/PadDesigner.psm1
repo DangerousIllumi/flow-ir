@@ -372,14 +372,65 @@ function Invoke-PadInject {
     return [ordered]@{ actions = $final; verified = $verified; diff = $cmp }
 }
 
-# ── 运行：URL 触发 + 自动点确认框/消息框 ─────────────────────
+# ── 运行：触发 + 按“运行日志落盘”判定开始与结束 ───────────────
+# 旧实现用「PAD.RobotV2 进程还在不在」判断本次运行是否结束。同一台机器上只要有人
+# 同时跑别的流（例如在设计器里手工运行），那个进程就会被误当成本次的机器人：它一退出
+# 就提前判定结束，随后收集日志时自然找不到本次的运行目录。
+# 现在改为：
+#   1) 触发前记基线：已有运行目录 / 机器人进程 / 遥测日志都不属于本次
+#   2) 触发后只认「基线之外新出现」的运行目录（URL 触发）或遥测日志（设计器本地运行）
+#   3) 结束判定看日志里的终止状态，不看进程表
+#   4) 只点「触发之后新起」的机器人进程的消息框，避免误点别人那一轮的弹窗
+# 返回 [ordered]@{ robotId; evidence; runDir; logPath; status }，供编排层收集结果
+
+# 列出 Console\Scripts\<流程Guid>\Runs 下的所有运行目录
+function Get-PadRunDirs {
+    param([string]$ScriptsRoot)
+    $dirs = @()
+    if (-not $ScriptsRoot -or -not (Test-Path $ScriptsRoot)) { return $dirs }
+    foreach ($flowDir in (Get-ChildItem $ScriptsRoot -Directory -ErrorAction SilentlyContinue)) {
+        $runs = Join-Path $flowDir.FullName 'Runs'
+        if (Test-Path $runs) { $dirs += @(Get-ChildItem $runs -Directory -ErrorAction SilentlyContinue) }
+    }
+    return $dirs
+}
+
+# 读 Actions.log 末尾的汇总行，返回终止状态（Succeeded / Failed / Cancelled）
+# 逐动作行都带 index，只有整次运行的汇总行没有 index，用它区分
+function Get-RunLogStatus {
+    param([string]$LogPath)
+    if (-not $LogPath -or -not (Test-Path $LogPath)) { return $null }
+    try { $lines = [IO.File]::ReadAllLines($LogPath, [Text.Encoding]::UTF8) } catch { return $null }
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if (-not $lines[$i].Trim()) { continue }
+        try { $j = $lines[$i] | ConvertFrom-Json } catch { continue }
+        if ($null -eq $j.index -and $j.status) { return [string]$j.status }
+    }
+    return $null
+}
+
 function Invoke-PadRun {
     param(
         [Parameter(Mandatory = $true)][string]$WorkflowName,
         [string]$RunId,
         [int]$TimeoutSec = 300,
+        # 触发后多久仍看不到本次运行日志就判定“没起来”（例如用户点了控制台的取消）
+        [int]$StartupTimeoutSec = 180,
         [switch]$Local
     )
+    $scriptsRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts'
+    $dcDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\DataCollection'
+
+    # 基线：触发之前就存在的运行目录 / 机器人进程 / 遥测日志，一律不算本次运行
+    $beforeDirs = @{}
+    foreach ($d in (Get-PadRunDirs $scriptsRoot)) { $beforeDirs[$d.FullName] = $true }
+    $beforePids = @{}
+    foreach ($p in (Get-Process -Name 'PAD.RobotV2' -ErrorAction SilentlyContinue)) { $beforePids[$p.Id] = $true }
+    $beforeLogs = @{}
+    if (Test-Path $dcDir) {
+        foreach ($f in (Get-ChildItem $dcDir -Filter '*.log' -File -ErrorAction SilentlyContinue)) { $beforeLogs[$f.Name] = $true }
+    }
+
     if ($Local) {
         # 测试阶段直接点设计器的“运行”按钮执行当前画布，不发布到云端：
         # 免掉云端发布等待，也不会再遇到版本冲突
@@ -399,8 +450,9 @@ function Invoke-PadRun {
         Start-Process $uri
     }
 
+    $result = [ordered]@{ robotId = 0; evidence = $null; runDir = $null; logPath = $null; status = $null }
     $root = Get-UiRoot
-    $robotId = 0
+    $quietPolls = 0
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
         Start-Sleep -Milliseconds 800
@@ -419,9 +471,13 @@ function Invoke-PadRun {
         }
 
         # 2) 机器人消息框（WinForms，UIA 读不到子按钮，只能用 Win32 BM_CLICK）
-        $rp = Get-Process -Name 'PAD.RobotV2' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($rp) {
-            $robotId = $rp.Id
+        # 只处理触发之后新起的机器人：基线里的进程属于别人那一轮，点它会误操作
+        $robotAlive = $false
+        foreach ($rp in (Get-Process -Name 'PAD.RobotV2' -ErrorAction SilentlyContinue)) {
+            if ($beforePids.ContainsKey($rp.Id)) { continue }
+            $robotAlive = $true
+            if (-not $result.robotId) { $result.robotId = $rp.Id }
+            if ($rp.Id -ne $result.robotId) { continue }   # 同时冒出来的其它机器人不归本次
             $script:robotId = $rp.Id   # 委托里只能读模块作用域变量
             $cb = [PadNative+EnumWindowsProc]{
                 param($h, $l)
@@ -445,17 +501,67 @@ function Invoke-PadRun {
                 return $true
             }
             [void][PadNative]::EnumWindows($cb, [IntPtr]::Zero)
-        } elseif ($robotId -ne 0) {
-            Write-PadDesignerLog '机器人已退出'
+        }
+
+        # 3) 本次运行的证据：基线之外新出现的运行目录（URL）或遥测日志（本地运行）
+        if (-not $result.evidence) {
+            if ($Local) {
+                $new = @(Get-ChildItem $dcDir -Filter '*.log' -File -ErrorAction SilentlyContinue |
+                    Where-Object { -not $beforeLogs.ContainsKey($_.Name) } |
+                    Sort-Object LastWriteTime -Descending)
+                if ($new.Count -gt 0) {
+                    $result.evidence = 'telemetry'
+                    $result.logPath = $new[0].FullName
+                    Write-PadDesignerLog "已定位本次运行遥测日志：$($new[0].Name)"
+                }
+            } else {
+                $new = @(Get-PadRunDirs $scriptsRoot |
+                    Where-Object { -not $beforeDirs.ContainsKey($_.FullName) } |
+                    Sort-Object LastWriteTime -Descending)
+                if ($new.Count -gt 0) {
+                    $result.evidence = 'run-dir'
+                    $result.runDir = $new[0].FullName
+                    $result.logPath = Join-Path $new[0].FullName 'Actions.log'
+                    Write-PadDesignerLog "已定位本次运行目录：$($new[0].Name)"
+                }
+            }
+        }
+
+        # 4) 结束判定：日志里出现终止状态即结束（不看进程表）
+        if ($result.evidence -eq 'run-dir') {
+            $st = Get-RunLogStatus $result.logPath
+            if ($st) { $result.status = $st; break }
+        } elseif ($result.evidence -eq 'telemetry') {
+            $txt = ''
+            try { $txt = [IO.File]::ReadAllText($result.logPath, [Text.Encoding]::UTF8) } catch { }
+            if ($txt -match 'robot\.execution\.completion') { break }
+        }
+
+        # 5) 已定位本次运行，但日志被 PAD 清掉且我们的机器人也退出了 → 静默两轮后收工
+        #    （运行结束后 PAD 会清理 Actions.log，属正常现象）
+        if ($result.evidence -and -not $robotAlive) {
+            $quietPolls++
+            if ($quietPolls -ge 3) {
+                Write-PadDesignerLog '本次运行的机器人已退出且日志不可读，按结束处理'
+                break
+            }
+        } else {
+            $quietPolls = 0
+        }
+
+        # 6) 一直没有本次运行的任何证据（比如控制台确认框被点了取消）→ 别傻等满超时
+        if (-not $result.evidence -and $sw.Elapsed.TotalSeconds -gt $StartupTimeoutSec) {
+            Write-PadDesignerLog "触发后 $StartupTimeoutSec 秒内没有出现本次运行的日志，判定未启动"
             break
         }
     }
-    Start-Sleep -Seconds 3
-    return $robotId
+    Start-Sleep -Seconds 2
+    return $result
 }
 
 Export-ModuleMember -Function `
     Get-DesignerWindow, Get-PadElementById, Get-PadElementByName, Get-PadElementByClass, `
     Get-ActionItems, Focus-ActionList, Clear-ActionList, Get-CanvasText, Test-CanvasMatch, `
     Test-WindowOutside, Repair-DesignerBounds, Exit-Recorder, Click-ToolButton, `
-    Get-StatusBarText, Wait-PublishDone, Invoke-PadInject, Invoke-PadRun
+    Get-StatusBarText, Wait-PublishDone, Invoke-PadInject, Invoke-PadRun, `
+    Get-PadRunDirs, Get-RunLogStatus

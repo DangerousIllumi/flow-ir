@@ -1,7 +1,7 @@
 // lint-robin.test.js — 流程卫生规则的单元测试（node --test）
 //
 // 覆盖：未读输出、未用声明、IF 嵌套阈值，以及两条回归基线：
-//   - 生产脚本的告警数量必须与 PAD 设计器流检查器一致（30 / 6）
+//   - 生产脚本必须保持 0 条流程卫生警告
 //   - 仓库自带的示例流程不能误报嵌套过深
 
 const test = require("node:test");
@@ -70,15 +70,15 @@ test("LOOP 里的 IF 不算 IF 嵌套", () => {
   assert.strictEqual(rulesOf(text, "nested-if").length, 0);
 });
 
-test("回归：生产脚本的告警数量与设计器流检查器一致（30 / 6）", () => {
+test("回归：生产脚本 0 条流程卫生警告", () => {
   const p = path.join(__dirname, "..", "..", "flows", "basf-sample-report.robin");
   if (!fs.existsSync(p)) {
     // 公开仓库不含业务脚本，跳过
     return;
   }
   const text = fs.readFileSync(p, "utf8");
-  assert.strictEqual(rulesOf(text, "unused-output").length, 30);
-  assert.strictEqual(rulesOf(text, "nested-if").length, 6);
+  assert.strictEqual(rulesOf(text, "unused-output").length, 0);
+  assert.strictEqual(rulesOf(text, "nested-if").length, 0);
 });
 
 test("示例流程生成后不误报嵌套过深", () => {

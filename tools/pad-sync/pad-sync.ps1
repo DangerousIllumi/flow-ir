@@ -153,7 +153,12 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
 # 设计器内“运行”不写 Console\Scripts\<flow>\Runs\<runId>\Actions.log，
 # 而是在 DataCollection 下新建带时间戳的 RobinRobot.log（JSON Lines）。
 # 因此用“触发之后的最新文件”关联本次运行；解析交给 PadTelemetry
-function Get-DesignerRunResult([datetime]$since) {
+function Get-DesignerRunResult([datetime]$since, [string]$LogPath) {
+    # 等待阶段已经锁定本次运行的遥测日志时直接用它，
+    # 避免“取触发之后最新一份”在同机并发跑别的流时误命中别人那一份
+    if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
+        return (Get-RobinTelemetryFromFile -Path $LogPath)
+    }
     $dc = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\DataCollection'
     $log = $null
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -167,12 +172,18 @@ function Get-DesignerRunResult([datetime]$since) {
 }
 
 # ── 收集：定位 Runs 目录并解析 Actions.log ────────────────────
-function Get-PadRunResult([string]$rid, [datetime]$since = [datetime]::MinValue) {
+function Get-PadRunResult([string]$rid, [datetime]$since = [datetime]::MinValue, [string]$RunDir) {
     $base = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts'
-    # 先按 runId 精确找；PAD 桌面流程实际用自生成的 GUID 作为目录名（与 URL 里的 runId 不同），
-    # 因此退化为"触发之后产生的最新运行目录"
-    $dir = Get-ChildItem -LiteralPath $base -Recurse -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -eq $rid } | Select-Object -First 1
+    # 等待阶段已锁定本次运行目录时直接用它：同机并发跑别的流时，
+    # “取触发之后最新的运行目录”会误命中别人那一轮
+    $dir = $null
+    if ($RunDir -and (Test-Path -LiteralPath $RunDir)) { $dir = Get-Item -LiteralPath $RunDir }
+    if (-not $dir) {
+        # 先按 runId 精确找；PAD 桌面流程实际用自生成的 GUID 作为目录名（与 URL 里的 runId 不同），
+        # 因此退化为"触发之后产生的最新运行目录"
+        $dir = Get-ChildItem -LiteralPath $base -Recurse -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq $rid } | Select-Object -First 1
+    }
     if (-not $dir) {
         # 本地运行由 PAD 自生成运行目录，可能延迟几秒才落盘，最多等 60 秒
         $swDir = [Diagnostics.Stopwatch]::StartNew()
@@ -306,12 +317,17 @@ try {
     } else {
         $script:Result.stage = 'run'
         $runStart = (Get-Date).AddSeconds(-5)
-        [void](Invoke-PadRun -WorkflowName $FlowName -RunId $RunId -TimeoutSec $RunTimeoutSec -Local:($LocalRun -or $NoPublish))
+        # 等待阶段按“运行日志落盘”锁定本次运行，返回目录/日志路径与终止状态，
+        # 不再用“PAD.RobotV2 进程是否还在”判结束（同机并发时会误判）
+        $runHint = Invoke-PadRun -WorkflowName $FlowName -RunId $RunId -TimeoutSec $RunTimeoutSec -Local:($LocalRun -or $NoPublish)
+        if (-not $runHint -or -not $runHint.evidence) {
+            throw '触发后没有出现本次运行的日志（可能被取消或 PAD 未响应），未收集到运行结果'
+        }
 
         $script:Result.stage = 'collect'
         if ($LocalRun -or $NoPublish) {
             # 设计器内运行：读 DataCollection 下的 RobinRobot.log 遥测
-            $res = Get-DesignerRunResult $runStart
+            $res = Get-DesignerRunResult $runStart $runHint.logPath
             if (-not $res) { throw '找不到设计器运行的遥测日志（RobinRobot.log）' }
             $script:Result.status = $res.status
             $script:Result.actions = $res.actions
@@ -328,8 +344,12 @@ try {
             }
             $script:Result.ok = ($res.status -eq 'Succeeded')
         } else {
-            $res = Get-PadRunResult $RunId $runStart
-            if (-not $res) { throw "找不到运行日志目录（runId=$RunId）" }
+            $res = Get-PadRunResult $RunId $runStart $runHint.runDir
+            if (-not $res -and $runHint.status) {
+                # 运行结束后 PAD 会清掉 Actions.log：用等待阶段读到的终止状态兜底
+                $res = [ordered]@{ status = $runHint.status; actions = @(); failed = $null; logPath = $runHint.logPath }
+            }
+            if (-not $res) { throw "找不到本次运行的日志目录（runId=$RunId）" }
 
             $script:Result.status = $res.status
             $script:Result.actions = $res.actions

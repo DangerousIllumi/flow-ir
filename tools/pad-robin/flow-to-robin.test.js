@@ -1,6 +1,7 @@
 // flow-to-robin.test.js — 生成器单元测试（node --test）
 //
-// 覆盖 B2 的四类新能力：deployKey 占位符、guard 守卫、任意层嵌套、output_map 显式绑定。
+// 覆盖 B2 的四类新能力：deployKey 占位符、guard 守卫、任意层嵌套、output_map 显式绑定，
+// 以及 output_skip（不需要的输出不落变量）。
 // 用法：node --test tools/pad-robin/flow-to-robin.test.js
 const test = require("node:test");
 const assert = require("node:assert");
@@ -133,6 +134,16 @@ test("output_map 显式绑定输出变量，条件里的 {{id.Field}} 解析成�
     "Test.Log Message: $'''yes'''",
     "END",
   ].join("\n"));
+});
+
+test("output_skip 声明的输出不落变量（与 PAD 里把输出留空同义）", () => {
+  const r = run({
+    nodes: [
+      { id: "1", type: "action", pad_hint: "Test.Show", params: { Message: "x" }, output_skip: ["ButtonPressed"] },
+    ],
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.text, "Test.Show Message: $'''x'''");
 });
 
 test("未知动作仍被安全闸门拒绝，且不产出文件", () => {

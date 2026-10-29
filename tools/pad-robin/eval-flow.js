@@ -3,7 +3,7 @@
  * eval-flow.js — 设计质量评估集：按需求文本断言 flow.json 的结构
  *
  * 只验结构，不评文案（D6）。两种用法：
- *   node eval-flow.js tests/eval/sample.cases.json     # 单个用例文件
+ *   node eval-flow.js tests/eval/<name>.cases.json                  # 单个用例文件
  *   node eval-flow.js tests/eval                                   # 目录：跑里面所有 *.cases.json
  *
  * 用例文件里 `flow` 指向被测 flow.json；目录模式下每个用例文件各自带 flow。
@@ -51,6 +51,13 @@ const OPS = {
     if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
     const v = (n.params || {})[a.name];
     return { ok: JSON.stringify(v) === JSON.stringify(a.equals), detail: `${a.name}=${JSON.stringify(v)}` };
+  },
+  // 输出绑定（output_map）中某个字段绑到了哪个变量
+  outputMapEquals(flow, a) {
+    const n = flow.nodes.find((x) => x.id === a.id);
+    if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    const v = (n.output_map || {})[a.name];
+    return { ok: v === a.equals, detail: `${a.name}=${v}` };
   },
   outputsUnique(flow, a) {
     const nodes = flow.nodes.filter((n) => n.pad_hint === a.padHint);
