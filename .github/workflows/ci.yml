@@ -99,4 +99,4 @@ jobs:
           }
 
       - name: 生成器与对比器单元测试
-        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js
+        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js

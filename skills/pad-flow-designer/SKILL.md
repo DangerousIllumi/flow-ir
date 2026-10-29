@@ -58,6 +58,21 @@ node tools/flow-drawio/drawio-to-flow.js flows/<name>.drawio flows/<name>.json f
 - 句柄类流程必须显式 Launch/Close
 - 只生成 flow.json + 流程图，不生成 Robin 代码
 
+## 流程卫生（会被 `check.js` / `lint-robin.js` 提示）
+
+这三条与 PAD 设计器右上角「流检查器」同口径，离线就能看到，不必打开设计器：
+
+| 规则 | 含义 | 设计时怎么做 |
+|---|---|---|
+| `unused-output` | 动作捕获了输出变量，但后续从未读取 | **只捕获要用的输出**；不用的留空，别图省事全接 |
+| `unused-var` | `SET` 声明了变量，但从未引用 | 派生路径只声明真正用到的；删掉模板残留 |
+| `nested-if` | IF 嵌套超过 3 层 | 改成提前退出（标志位 + 末尾统一处理），或把条件合并成 `AND` |
+
+单独检查：`node tools/pad-robin/lint-robin.js out.robin`
+
+> 设计器里那条「应用修复」按钮**不要点**：它直接改画布，`flow.json` 不变，
+> 下次生成就被覆盖，线上与仓库立刻漂移。修复一律回 `flow.json` 改，再重新生成。
+
 ## 准入红线（来自 policy.json，设计阶段就避开）
 | 规则 | 禁止 / 条件 |
 |---|---|

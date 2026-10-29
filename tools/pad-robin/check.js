@@ -53,13 +53,31 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+const { lintRobin } = require("./lint-robin.js");
+
 let bad = false;
+let lintTotal = 0;
 for (const f of files) {
   try {
     execFileSync(process.execPath, [checkFlows, kbPath, f], { stdio: "inherit" });
   } catch (e) {
     bad = true;
   }
+  // 流程卫生检查：只报 warning，不影响退出码（未读输出 / 未用变量 / IF 嵌套过深）
+  const { warnings } = lintRobin(fs.readFileSync(f, "utf8"));
+  for (const w of warnings) {
+    console.log(`[lint] ${path.basename(f)}:${w.line} ${w.rule} ${w.message}`);
+  }
+  lintTotal += warnings.length;
+  if (warnings.length) {
+    const byRule = {};
+    for (const w of warnings) byRule[w.rule] = (byRule[w.rule] || 0) + 1;
+    const summary = Object.entries(byRule).map(([k, v]) => `${k}=${v}`).join(" ");
+    console.log(`[lint] ${path.basename(f)}: 共 ${warnings.length} 条警告（${summary}），不影响校验结果`);
+  }
+}
+if (lintTotal > 0) {
+  console.log(`[lint] 合计 ${lintTotal} 条流程卫生警告；修复请回到 flow.json（不要在画布点“应用修复”）`);
 }
 
 process.exit(bad ? 1 : 0);
