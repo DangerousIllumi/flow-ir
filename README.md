@@ -26,8 +26,8 @@
 | `business/flows/<业务名>.*` | 生产流程：`flow.json` / `.robin` / `.drawio` / 验收判据 |
 | `business/config/<业务名>*.json` | 该流程的部署配置（真实 config 不入库） |
 | `business/policy.json` | 生产准入策略（deny / ask / allow） |
-| `business/docs/<业务名>-运行手册.md` | 该流程的运行手册 |
-| `business/docs/项目现状-*.md` | 内部现状与改动记录 |
+| `business/docs/runbook.md` | 该流程的运行手册 |
+| `business/docs/project-status.md` | 内部现状与改动记录 |
 | `business/tests/` | 该流程的需求级结构断言与业务回归用例 |
 | `business/tools/` | 业务专属脚本（如报表核对）与合成数据生成器 |
 | `business/manifest.jsonl` / `business/snapshots/` | 运行与发布审计、回滚快照（均被 .gitignore 忽略） |
@@ -114,6 +114,12 @@ cd flow-ir
 > 只是用的话 clone 即可；想改这套工具本身才需要 fork。
 > 若 PowerShell 提示「在此系统上禁止运行脚本」，改用
 > `powershell -ExecutionPolicy Bypass -File .\setup.ps1`。
+>
+> **新 clone 必须手动重建真实词表**：`tools/publish/public-safe.denylist.local.json` 不在库内
+> （被 `.gitignore` 忽略）。缺这个文件时，`check-public-safe.ps1` 只加载
+> `public-safe.denylist.json` 的占位词表，拦不住真实业务名、流程名和路径。
+> 重建方式：照 `public-safe.denylist.json` 的分类结构（`businessName` / `flowName` / `realPath`）
+> 新建同结构 JSON，填入自己的真实词，保存在同一路径即可；不要提交该文件。
 
 **关键一步：在已打开这个目录的 AI 编程助手里，第一句话这样发**（只贴链接、不打开目录，AI 看不到 `AGENTS.md`）：
 
