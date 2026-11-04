@@ -13,6 +13,9 @@
 const fs = require("fs");
 const path = require("path");
 
+// 节点运行方式的取值集合：自动执行 / 需人工确认 / 只读观察
+const RUN_MODES = ["auto", "confirm", "observe"];
+
 /** 断言操作表：每个操作返回 { ok, detail } */
 const OPS = {
   // 循环：fromto 校验上下界，foreach 校验遍历变量
@@ -81,6 +84,40 @@ const OPS = {
     const want = a.cases.map((c) => `${c.case} ${(c.body || []).join(",")}`);
     const ok = JSON.stringify(got) === JSON.stringify(want) && (n.switch.default || []).length > 0;
     return { ok, detail: got.join(" | ") };
+  },
+  // 节点级必答项：运行方式（auto / confirm / observe）与幂等性（布尔）
+  // 设计规则要求「用户没回答就不生成 flow.json」，所以缺字段一律判失败，不做默认填充
+  nodeDeclaration(flow, a) {
+    const n = flow.nodes.find((x) => x.id === a.id);
+    if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    const problems = [];
+    if (!RUN_MODES.includes(n.run_mode)) {
+      problems.push(`run_mode=${JSON.stringify(n.run_mode)}（应为 ${RUN_MODES.join("/")}）`);
+    }
+    if (typeof n.idempotent !== "boolean") {
+      problems.push(`idempotent=${JSON.stringify(n.idempotent)}（应为 true/false）`);
+    } else if (n.idempotent === false && !String(n.idempotency_note || "").trim()) {
+      problems.push("idempotent=false 时必须写 idempotency_note（幂等键或先查后写方案）");
+    }
+    if (a.runMode && n.run_mode !== a.runMode) problems.push(`run_mode 期望 ${a.runMode}，实际 ${n.run_mode}`);
+    if (typeof a.idempotent === "boolean" && n.idempotent !== a.idempotent) {
+      problems.push(`idempotent 期望 ${a.idempotent}，实际 ${n.idempotent}`);
+    }
+    return { ok: problems.length === 0, detail: problems.length ? problems.join("；") : `run_mode=${n.run_mode} idempotent=${n.idempotent}` };
+  },
+  // 全流程必答项完整性：每个节点都必须显式声明两项，缺一个即失败
+  declarationsComplete(flow) {
+    const missing = flow.nodes.filter((n) => {
+      const modeOk = RUN_MODES.includes(n.run_mode);
+      const idemOk = typeof n.idempotent === "boolean"
+        && (n.idempotent === true || String(n.idempotency_note || "").trim());
+      return !modeOk || !idemOk;
+    });
+    const ids = missing.map((n) => n.id);
+    return {
+      ok: missing.length === 0,
+      detail: missing.length ? `缺声明节点 ${missing.length} 个：${ids.slice(0, 12).join(",")}${ids.length > 12 ? "…" : ""}` : `${flow.nodes.length} 个节点均已声明`,
+    };
   },
 };
 

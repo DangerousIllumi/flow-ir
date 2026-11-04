@@ -51,7 +51,9 @@
 ## 3. 标准工作流（按顺序执行，不要跳步）
 
 ```powershell
-# 1) 设计：按 skills/pad-flow-designer 把需求写成 business\flows\<name>.json
+# 1) 设计：先按 skills/pad-flow-designer「生成 flow.json 之前的必答项（硬门槛）」
+#    逐节点问清「运行方式（auto/confirm/observe）」与「幂等性（true/false + 幂等键）」，
+#    用户没回答就不生成 business\flows\<name>.json
 # 2) 画布（可选，给人评审）
 node tools\flow-drawio\flow-to-drawio.js business\flows\<name>.json business\flows\<name>.drawio
 # 3) 生成
@@ -60,8 +62,8 @@ node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
 node tools\pad-robin\check.js out.robin
 # 5) 准入（只读；0 fail 才能交付）
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<name>.json -RobinFile out.robin
-# 6) 结构评估（如果为这条需求写了 tests/eval/<name>.cases.json）
-node tools\pad-robin\eval-flow.js tests\eval\<name>.cases.json
+# 6) 结构评估（用例放 business\tests\eval\；公开库只放中性样例）
+node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ```
 
 全部通过后，告诉用户：
@@ -77,6 +79,7 @@ node tools\pad-robin\eval-flow.js tests\eval\<name>.cases.json
 | `edges 与 next/branch 不一致` | 画图用的边和生成用的结构漂了 | 按报错补齐 `edges` |
 | 准入 `POLICY_DENY` | 命中 `business/policy.json` 的禁止规则 | 删掉该动作或改条件，不要绕过 |
 | 准入 `MISSING_INTENT` / `BUDGET_UNKNOWN` | 缺必填声明 | 补 `intent` / `budget` |
+| 结构评估 `缺声明节点` / `run_mode=` | 没回答“运行方式 / 幂等性” | 回问用户，补 `run_mode` / `idempotent` / `idempotency_note`，不要默认填充 |
 | `模块未找到 PAD_Robin_ActionKB.json` | 没跑 `setup.ps1` | 先跑第 0 步 |
 
 ## 5. 明确不做的事

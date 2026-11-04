@@ -34,19 +34,46 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 **句柄必须成对开闭**：Launch 产出 → 后续引用 → Close 收尾。
 唯一例外是 Outlook：**只 Launch 不 Close**，否则会把用户已打开的主窗口一起关掉。
 
-### 3. 生成 flow.json
+### 3. 生成 flow.json 之前的必答项（硬门槛）
+
+**这两个问题必须逐节点问到答案，没有答案就不许生成 `flow.json`。**
+不许用「默认自动」「默认安全」替用户回答；用户只说整体流程时，要按节点拆开追问。
+
+| # | 必答项 | 取值 | 落到 flow.json 的字段 |
+|---|---|---|---|
+| 1 | 这个节点怎么运行 | `auto` 自动执行 / `confirm` 需人工确认 / `observe` 只读观察 | 节点级 `run_mode` |
+| 2 | 重跑是否安全（幂等） | `true` 可重跑 / `false` 只能跑一次 | 节点级 `idempotent`；为 `false` 时必须再写 `idempotency_note`（幂等键或先查后写方案） |
+
+判定口径：
+- **控制节点（SET / IF / LOOP / SWITCH / GUARD）也要标注**，不能只标业务动作。
+- 发信、过账、删文件、改状态这类副作用节点，默认要问清楚；问不出幂等键就按 `idempotent=false` 加 `idempotency_note`。
+- 反例必须记住：
+  - **MB51 导出可重跑**：每次覆盖同名导出文件，`idempotent=true`。
+  - **MIGO 过账只能跑一次**：重复过账会产生重复物料凭证，必须 `idempotent=false`，
+    并在 `idempotency_note` 写明幂等键（如「按物料凭证号先查后写」）或先查后写步骤。
+
+缺字段的后果：`eval-flow.js` 的 `declarationsComplete` / `nodeDeclaration` 会直接判失败（退出码 1），
+不会降级成警告。自检命令：
+
+```bash
+node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
+```
+
+> `check.js` 只看生成后的 `.robin`，看不到 `flow.json` 字段；两项声明的门禁在 `eval-flow.js`。
+
+### 4. 生成 flow.json
 严格遵循结构（见 `docs/agent-prompts.md` 完整 schema）。关键点：
 - `pad_hint`：KB 真实三段式 actionId
 - `params`：键必须是该动作 `input_params` 的真实参数名
 - `outputs`：要绑定的输出变量名数组
 - `{{2.RetrievedEmails}}` 引用上游节点输出
 
-### 4. 生成流程图
+### 5. 生成流程图
 ```bash
 node tools/flow-drawio/flow-to-drawio.js business/flows/<name>.json business/flows/<name>.drawio
 ```
 
-### 5. 回读改动
+### 6. 回读改动
 ```bash
 node tools/flow-drawio/drawio-to-flow.js business/flows/<name>.drawio business/flows/<name>.json business/flows/<name>.new.json
 ```

@@ -44,6 +44,8 @@
    ```
 
    要点：`budget` 必填；参数值走 `{{variables.X}}` / `{{1.FileContent}}`；字符串字面量写成 `$'''…'''`。
+   另外**每个节点**（含控制节点）都必须写 `run_mode`（auto/confirm/observe）与 `idempotent`
+   （false 时加 `idempotency_note`）；没问清这两项就不要生成 flow.json。
 
 4. 产出配套声明（缺了准入会拦）：
    - `business/flows/copy-text.requirements.json`：环境依赖（目录、Python 等）
