@@ -18,6 +18,25 @@ const RUN_MODES = ["auto", "confirm", "observe"];
 
 /** 断言操作表：每个操作返回 { ok, detail } */
 const OPS = {
+  // 节点总数：用于锁住结构不再漂移
+  nodeCount(flow, a) {
+    return { ok: flow.nodes.length === a.equals, detail: `${flow.nodes.length} 个节点（期望 ${a.equals}）` };
+  },
+  // 通用字段断言：不带 id 查 flow 顶层，带 id 查节点；exists 判有无，equals 判值
+  field(flow, a) {
+    const target = a.id ? flow.nodes.find((x) => x.id === a.id) : flow;
+    if (!target) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    const v = target[a.name];
+    let ok;
+    if (Object.prototype.hasOwnProperty.call(a, "exists")) {
+      ok = a.exists ? v !== undefined : v === undefined;
+    } else if (Object.prototype.hasOwnProperty.call(a, "equals")) {
+      ok = JSON.stringify(v) === JSON.stringify(a.equals);
+    } else {
+      ok = v !== undefined;
+    }
+    return { ok, detail: `${a.id ? a.id + "." : ""}${a.name}=${JSON.stringify(v)}` };
+  },
   // 循环：fromto 校验上下界，foreach 校验遍历变量
   loop(flow, a) {
     const n = flow.nodes.find((x) => (a.id ? x.id === a.id : x.pad_hint === "LOOP"));
