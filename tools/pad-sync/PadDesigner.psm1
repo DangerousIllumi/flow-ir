@@ -612,7 +612,12 @@ function Invoke-PadRun {
         Start-Process $uri
     }
 
-    $result = [ordered]@{ robotId = 0; evidence = $null; runDir = $null; logPath = $null; status = $null }
+    $result = [ordered]@{
+        robotId = 0; evidence = $null; runDir = $null; logPath = $null; status = $null
+        # 触发类失败的取证标记：供编排层区分「没起来」与「跑了但失败」，不再一律记 run-failed
+        startupTimedOut = $false   # 到判定窗口仍看不到机器人/运行日志
+        timedOut = $false          # 整轮等待到 TimeoutSec 仍未拿到终止状态
+    }
     $root = Get-UiRoot
     $quietPolls = 0
     # 本次运行是否真的见过机器人进程：运行目录在触发瞬间就存在，
@@ -771,6 +776,7 @@ function Invoke-PadRun {
             }
         } elseif ($result.evidence -and -not $everAlive -and $sw.Elapsed.TotalSeconds -gt $StartupTimeoutSec) {
             # 目录已出现但机器人始终没起来：多半是控制台确认框被取消，或 PAD 启动失败
+            $result.startupTimedOut = $true
             Write-PadDesignerLog "触发后 $StartupTimeoutSec 秒内机器人未启动，判定未运行"
             break
         } else {
@@ -779,10 +785,13 @@ function Invoke-PadRun {
 
         # 6) 一直没有本次运行的任何证据（比如控制台确认框被点了取消）→ 别傻等满超时
         if (-not $result.evidence -and $sw.Elapsed.TotalSeconds -gt $StartupTimeoutSec) {
+            $result.startupTimedOut = $true
             Write-PadDesignerLog "触发后 $StartupTimeoutSec 秒内没有出现本次运行的日志，判定未启动"
             break
         }
     }
+    # 整轮等到 TimeoutSec 都没拿到终止状态：属于运行超时，不是「结果未知」
+    if ($sw.Elapsed.TotalSeconds -ge $TimeoutSec) { $result.timedOut = $true }
     Start-Sleep -Seconds 2
     return $result
 }

@@ -171,6 +171,50 @@ function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$
     return [ordered]@{ workday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
 
+# 失败告警分级：把退出码与结果标记映射成 kind / reason / note
+#
+# 单独抽成纯函数，便于 Pester 直接断言分类结果，不必真跑 PAD。
+# 分类优先级：人工确认 > 等锁超时 > 日历不可用 > 触发失败 > 运行超时 > 一般运行失败。
+function Get-RunAlertKind {
+    param(
+        [int]$ExitCode,
+        [Nullable[bool]]$CalendarOk,
+        $SyncResult
+    )
+    $isHumanConfirm = ($ExitCode -eq 3 -or ($SyncResult -and $SyncResult.needsHumanConfirm))
+    $isLockTimeout = ($ExitCode -eq 4)
+    $isCalendarDown = ($CalendarOk -eq $false)
+    $isTriggerFailed = ($SyncResult -and $SyncResult.triggerFailed)
+    $isRunTimeout = ($SyncResult -and $SyncResult.runTimeout)
+
+    if ($isHumanConfirm) {
+        return [ordered]@{ kind = 'run-needs-human-confirm'; reason = $null
+            note = "流程停在人工确认弹窗「$($SyncResult.dialogTitle)」，未自动点击，请人工确认后重跑" }
+    }
+    if ($isLockTimeout) {
+        return [ordered]@{ kind = 'run-lock-timeout'; reason = $null; note = '排队超时未执行，可稍后重跑' }
+    }
+    if ($isCalendarDown) {
+        return [ordered]@{ kind = 'calendar-unavailable'; reason = $null; note = '日历不可用，本次未运行' }
+    }
+    if ($isTriggerFailed) {
+        $reason = [string]$SyncResult.triggerReason
+        if (-not $reason) { $reason = 'unknown' }
+        $note = switch ($reason) {
+            'identity-mismatch' { '流程名解析不出 flowId，本次未触发；请在 PAD 控制台确认流程名并至少成功运行一次，未自动重试' }
+            'no-evidence' { '触发后没有出现运行日志（协议处理器无响应 / flowId 不符 / PAD 报错弹窗）；请人工查看 PAD 控制台，未自动重试' }
+            'no-robot' { '触发已被接受但机器人未启动（PAD 错误框或确认框被取消）；请人工处理后重跑，未自动重试' }
+            default { '触发失败（原因未分类）；请人工查看 PAD 控制台，未自动重试' }
+        }
+        return [ordered]@{ kind = 'trigger-failed'; reason = $reason; note = $note }
+    }
+    if ($isRunTimeout) {
+        return [ordered]@{ kind = 'run-timeout'; reason = $null
+            note = '运行超过超时阈值仍未拿到终止状态；请人工确认 PAD 中是否仍卡着，未自动重试' }
+    }
+    return [ordered]@{ kind = 'run-failed'; reason = $null; note = $null }
+}
+
 # 失败告警：只追加到 business\logs\alerts.jsonl，不发送任何外部消息
 #
 # 为什么放在调度层而不是 PAD 流程里：流程内的发信动作覆盖不到「进程崩溃 / 超时被杀 /
@@ -203,15 +247,12 @@ function Write-RunAlert {
         $acc = $SyncResult.acceptance
     }
 
-    # 退出码 4 = 等锁超时，流程根本没有跑；与 1（跑了但失败）分开记，
-    # 避免运维把「没执行」误读成「执行失败」。calendarOk=false 单独归为日历不可用
-    # 退出码 3 = 非交互运行停在人工确认弹窗：不是失败，也不是成功，必须单独告警
-    $isLockTimeout = ($ExitCode -eq 4)
-    $isCalendarDown = ($CalendarOk -eq $false)
-    $isHumanConfirm = ($ExitCode -eq 3 -or ($SyncResult -and $SyncResult.needsHumanConfirm))
+    # 分级统一由 Get-RunAlertKind 决定：退出码 4（等锁超时，根本没跑）与 1（跑了但失败）
+    # 必须分开；3（停在人工确认）、触发失败、运行超时各自单独成类，避免运维误读
+    $grade = Get-RunAlertKind -ExitCode $ExitCode -CalendarOk $CalendarOk -SyncResult $SyncResult
     $rec = [ordered]@{
         ts         = (Get-Date).ToString('o')
-        kind       = $(if ($isHumanConfirm) { 'run-needs-human-confirm' } elseif ($isLockTimeout) { 'run-lock-timeout' } elseif ($isCalendarDown) { 'calendar-unavailable' } else { 'run-failed' })
+        kind       = $grade.kind
         flow       = $FlowName
         exitCode   = $ExitCode
         stage      = $Stage
@@ -220,8 +261,10 @@ function Write-RunAlert {
         error      = $errMsg
         logPath    = $LogPath
         acceptance = $acc
-        note       = $(if ($isHumanConfirm) { "流程停在人工确认弹窗「$($SyncResult.dialogTitle)」，未自动点击，请人工确认后重跑" } elseif ($isLockTimeout) { '排队超时未执行，可稍后重跑' } elseif ($isCalendarDown) { '日历不可用，本次未运行' } else { $null })
+        note       = $grade.note
     }
+    # 触发失败额外带 reason 分类（identity-mismatch / no-evidence / no-robot）
+    if ($grade.reason) { $rec['reason'] = $grade.reason }
     if ($null -ne $CalendarOk) { $rec['calendarOk'] = [bool]$CalendarOk }
     # 不用 Add-Content：PS 5.1 首次写入会带 BOM，JSONL 逐行解析会失败
     [IO.File]::AppendAllText($file, (($rec | ConvertTo-Json -Depth 8 -Compress) + "`n"),

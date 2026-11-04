@@ -116,6 +116,8 @@ $script:Result = [ordered]@{
     canvasVerified = $null; warnings = @(); lockWaitSec = 0
     # 非交互运行停在人工确认弹窗时置为 true；ok 保持 $null（未知 ≠ 失败）
     needsHumanConfirm = $false; dialogTitle = $null; evidence = $null
+    # 触发类失败：URL 被调用但流程没起来 / 流程名解析不出 flowId；供调度层分级告警
+    triggerFailed = $false; triggerReason = $null; runTimeout = $false
 }
 
 # ── 跨进程互斥：同一时刻只允许一个流占用 PAD ──────────────────
@@ -364,10 +366,27 @@ try {
         $runStart = (Get-Date).AddSeconds(-5)
         # 等待阶段按“运行日志落盘”锁定本次运行，返回目录/日志路径与终止状态，
         # 不再用“PAD.RobotV2 进程是否还在”判结束（同机并发时会误判）
-        $runHint = Invoke-PadRun -WorkflowName $FlowName -RunId $RunId -TimeoutSec $RunTimeoutSec `
-            -Local:($LocalRun -or $NoPublish) -NonInteractive:$NonInteractive
+        $runHint = $null
+        try {
+            $runHint = Invoke-PadRun -WorkflowName $FlowName -RunId $RunId -TimeoutSec $RunTimeoutSec `
+                -Local:($LocalRun -or $NoPublish) -NonInteractive:$NonInteractive
+        } catch {
+            # 触发前校验失败（流程名解析不出 flowId）也算触发失败，单独分类后退出码仍是 1
+            if ($_.Exception.Message -match '触发前校验失败') {
+                $script:Result.triggerFailed = $true
+                $script:Result.triggerReason = 'identity-mismatch'
+            }
+            throw
+        }
         if (-not $runHint -or -not $runHint.evidence) {
-            throw '触发后没有出现本次运行的日志（可能被取消或 PAD 未响应），未收集到运行结果'
+            # 没起来：协议处理器没反应、确认框被取消、PAD 报错弹窗阻塞都会落到这里
+            $script:Result.triggerFailed = $true
+            $script:Result.triggerReason = 'no-evidence'
+            $script:Result.error = [ordered]@{
+                code = 'TRIGGER_NO_EVIDENCE'
+                message = '触发后没有出现本次运行的日志（协议处理器无响应 / 流程名或 flowId 不符 / PAD 报错）'
+            }
+            throw $script:Result.error.message
         }
 
         # 非交互运行停在人工确认弹窗（完成提示 / 催办确认等）：
@@ -383,6 +402,30 @@ try {
             $script:Result.logPath = $runHint.logPath
             $script:Result.warnings += "非交互运行停在人工确认弹窗「$($runHint.dialogTitle)」，流程保持等待人工点击"
             Write-Log "运行停在人工确认弹窗「$($runHint.dialogTitle)」：不自动点击，请人工处理后重跑"
+        } elseif ($runHint.startupTimedOut -and -not $runHint.status) {
+            # 运行目录已出现但机器人始终没启动：以前会落到 Unknown→退出码 0，静默无告警，
+            # 现在按 trigger-failed（reason=no-robot）收尾，只告警不重试
+            $script:Result.stage = 'trigger'
+            $script:Result.status = 'NotStarted'
+            $script:Result.ok = $false
+            $script:Result.triggerFailed = $true
+            $script:Result.triggerReason = 'no-robot'
+            $script:Result.logPath = $runHint.logPath
+            $script:Result.error = [ordered]@{
+                code = 'TRIGGER_NO_ROBOT'
+                message = '触发已被接受并出现运行目录，但判定窗口内机器人没有启动（可能停在 PAD 错误框或被取消）'
+            }
+        } elseif ($runHint.timedOut -and -not $runHint.status) {
+            # 等满 RunTimeoutSec 仍未拿到终止状态：按运行超时告警，不静默按 Unknown 退出
+            $script:Result.stage = 'run-timeout'
+            $script:Result.status = 'RunTimeout'
+            $script:Result.ok = $false
+            $script:Result.runTimeout = $true
+            $script:Result.logPath = $runHint.logPath
+            $script:Result.error = [ordered]@{
+                code = 'RUN_TIMEOUT'
+                message = "等待运行结束超过 $RunTimeoutSec 秒，仍未拿到终止状态"
+            }
         } else {
         $script:Result.stage = 'collect'
         if ($LocalRun -or $NoPublish) {
@@ -489,7 +532,18 @@ try {
 }
 catch {
     $script:Result.ok = $false
-    $script:Result.error = [ordered]@{ message = $_.Exception.Message }
+    # 触发类失败在抛出前已写入分类错误码，这里只补消息，不覆盖 code
+    $code = $null
+    if ($script:Result.error -is [System.Collections.IDictionary]) {
+        $code = $script:Result.error['code']
+    } elseif ($script:Result.error) {
+        $code = $script:Result.error.code
+    }
+    if ($code) {
+        $script:Result.error = [ordered]@{ code = $code; message = $_.Exception.Message }
+    } else {
+        $script:Result.error = [ordered]@{ message = $_.Exception.Message }
+    }
     Write-Log "失败于 [$($script:Result.stage)]：$($_.Exception.Message)"
 }
 

@@ -265,4 +265,44 @@ Describe 'pad-schedule 纯函数测试' {
         (Write-RunAlert -FlowName 'F' -ExitCode 0 -Stage 'needs-human-confirm' -SyncResult $sync -Dir $dir).record.kind |
             Should Be 'run-needs-human-confirm'
     }
+
+    It '告警分级：触发失败记 trigger-failed，并按 reason 给出不同说明' {
+        foreach ($reason in @('identity-mismatch', 'no-evidence', 'no-robot')) {
+            $sync = [pscustomobject]@{ triggerFailed = $true; triggerReason = $reason }
+            $g = Get-RunAlertKind -ExitCode 1 -SyncResult $sync
+            $g.kind | Should Be 'trigger-failed'
+            $g.reason | Should Be $reason
+            $g.note | Should Match '未自动重试'
+        }
+        # 没带 reason 时兜底为 unknown，但仍然是 trigger-failed，不退回 run-failed
+        $g2 = Get-RunAlertKind -ExitCode 1 -SyncResult ([pscustomobject]@{ triggerFailed = $true })
+        $g2.kind | Should Be 'trigger-failed'
+        $g2.reason | Should Be 'unknown'
+    }
+
+    It '告警分级：运行超时记 run-timeout，不被 Unknown 吞掉' {
+        $sync = [pscustomobject]@{ runTimeout = $true }
+        $g = Get-RunAlertKind -ExitCode 1 -SyncResult $sync
+        $g.kind | Should Be 'run-timeout'
+        $g.note | Should Match '仍未拿到终止状态'
+    }
+
+    It '触发失败写 JSONL 时带 reason 字段，且原有分级不受影响' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $sync = [pscustomobject]@{
+            triggerFailed = $true; triggerReason = 'no-robot'
+            error = [pscustomobject]@{ code = 'TRIGGER_NO_ROBOT'; message = '机器人未启动' }
+        }
+        $a = Write-RunAlert -FlowName 'F' -ExitCode 1 -Stage 'trigger' `
+            -Status 'NotStarted' -SyncResult $sync -Dir $dir
+        $a.record.kind | Should Be 'trigger-failed'
+        $a.record.reason | Should Be 'no-robot'
+        $a.record.errorCode | Should Be 'TRIGGER_NO_ROBOT'
+        $a.record.note | Should Match '未自动重试'
+        # 原有三类告警仍在，未被新分类挤掉
+        (Write-RunAlert -FlowName 'F' -ExitCode 4 -Stage 'lock' -Dir $dir).record.kind |
+            Should Be 'run-lock-timeout'
+        (Write-RunAlert -FlowName 'F' -ExitCode 1 -Stage 'run' -Dir $dir).record.kind |
+            Should Be 'run-failed'
+    }
 }
