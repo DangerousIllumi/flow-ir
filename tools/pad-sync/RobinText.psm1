@@ -13,9 +13,14 @@
 # 以及转义差异：源文件写 \"x\"（单反斜杠转义引号），PAD 落盘时会再转义成 \\"x\\"，
 # 这是同一内容的不同表示，比对前把「一个或多个反斜杠 + 引号」统一成单个引号
 function ConvertTo-NormalizedRobin([string]$Text) {
-    $text2 = $Text -replace '\\+"', '"'
+    # 显式剥掉 BOM：PAD 落盘偶尔会在文件头带 U+FEFF，
+    # 不剥会让首行动作多出一个不可见字符，导致同一内容被判成两份
+    $text1 = $Text.Replace([string][char]0xFEFF, '')
+    $text2 = $text1 -replace '\\+"', '"'
     $lines = $text2 -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object {
-        $_ -ne '' -and -not $_.StartsWith('#') -and -not $_.StartsWith('@') -and -not $_.StartsWith('IMPORT ')
+        $_ -ne '' -and -not $_.StartsWith('#') -and -not $_.StartsWith('@') -and -not $_.StartsWith('IMPORT ') -and
+        # 折叠区标记只是编辑器辅助，PAD 落盘时可能保留也可能丢弃，不参与比对
+        -not $_.StartsWith('**REGION') -and -not $_.StartsWith('**ENDREGION')
     }
     return ($lines -join "`n")
 }

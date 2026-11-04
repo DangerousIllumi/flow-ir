@@ -52,61 +52,16 @@ function Log([string]$m) { Write-Host "[release] $m" }
 # 必须用 -Global：阶段 1 的 Invoke-Pester 会在自己的作用域里跑完再销毁，
 # 普通导入的模块函数随后就取不到了（表现为 Get-RobinHash 找不到）
 Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force -Global
+# 指纹定位与身份解析唯一实现（pad-fingerprint / pad-admit / pad-rollback 共用）
+Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force -Global
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
 # 子进程末行 RESULT 的解析统一由 PadTelemetry 提供
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force -Global
 
 
-# 从 Actions.log 路径解析流程 GUID 与 runId：
-#   ...\Console\Scripts\<flowGuid>\Runs\<runId>\Actions.log
-function Get-FlowGuidFromLogPath([string]$LogPath) {
-    $m = [regex]::Match($LogPath, 'Scripts\\([0-9a-fA-F-]{36})\\Runs\\([0-9a-fA-F-]{36})\\')
-    if (-not $m.Success) { return $null }
-    return [ordered]@{ flowGuid = $m.Groups[1].Value.ToLower(); runId = $m.Groups[2].Value }
-}
-
-# 在本地运行历史里找该流程最近一次运行的定义信息（按 startTime 取最新）
-# 返回：flowGuid / flowVersion（云端版本 ETag）/ startTime / status；找不到返回 $null
-function Find-LatestFlowRun([string]$ScriptsRoot, [string]$FlowName) {
-    if (-not (Test-Path $ScriptsRoot)) { return $null }
-    $best = $null
-    $files = Get-ChildItem -LiteralPath $ScriptsRoot -Recurse -Filter 'RunDefinition.json' -ErrorAction SilentlyContinue
-    foreach ($rd in $files) {
-        try { $j = [IO.File]::ReadAllText($rd.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
-        if (-not $j.workflow -or $j.workflow.name -ne $FlowName) { continue }
-        if (-not $j.startTime) { continue }
-        if (-not $best -or ([string]$j.startTime) -gt ([string]$best.startTime)) {
-            $best = [ordered]@{
-                flowGuid    = [string]$j.workflow.workflowId
-                flowVersion = $(if ($j.diagnosticInfo) { [string]$j.diagnosticInfo.flowVersion } else { $null })
-                startTime   = [string]$j.startTime
-                status      = [string]$j.status
-                path        = $rd.FullName
-            }
-        }
-    }
-    return $best
-}
-
-# 已发布流程的本地定义副本：Console\Workspace\<flowGuid>\<修订目录>\script.robin
-# 精确匹配本次发布/运行的修订，绝不退化成“取最新一份”（同机并发时会拿别人的定义来比对）：
-#   1) 修订目录名等于本次 runId 时直接采用（与 PadDesigner 的运行目录同一口径）；
-#   2) 否则只认“本次发布之后写入”的修订；命中多个视为无法确定并报错。
-function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]$RunId, [datetime]$SinceUtc) {
-    $dir = Join-Path $WorkspaceRoot $FlowGuid
-    if (-not (Test-Path $dir)) { return $null }
-    $all = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter 'script.robin' -ErrorAction SilentlyContinue)
-    $hit = @($all | Where-Object {
-        ($RunId -and $_.Directory.Name -eq $RunId) -or
-        ($_.LastWriteTime.ToUniversalTime() -ge $SinceUtc.AddMinutes(-2))
-    })
-    if ($hit.Count -gt 1) {
-        throw ("Workspace 里有 $($hit.Count) 个候选修订，无法确定本次发布对应哪一份：" +
-            (($hit | ForEach-Object { $_.Directory.Name }) -join '、'))
-    }
-    if ($hit.Count -eq 1) { return $hit[0].FullName }
-    return $null
-}
+# 已发布流程的本地定义副本定位与身份解析已迁移到 PadFingerprint.psm1（唯一实现）：
+#   Get-FlowGuidFromLogPath / Find-LatestFlowRun / Find-WorkspaceRobin 均由模块导入，
+#   函数名保持不变，pad-release 只是调用方。
 
 # manifest 追加与版本快照统一由 PublishHistory.psm1 提供（pad-rollback.ps1 共用）
 # 阶段 1：测试摘要。pytest 解析 passed/failed 计数；Pester 3.4 用 -PassThru 的结果对象计数
@@ -166,13 +121,8 @@ function Invoke-Deploy([string]$SrcRobin, [string]$CfgFile, [string]$Flow, [stri
 # 批准指纹：把「这次要发的三样东西」绑成一个可核对的标识
 # 确认框展示短哈希，正式发布前重算一次；期间文件被改过就中止
 function Get-ApprovalFingerprint([string]$RobinPath, [string]$ConfigPath, [string]$AcceptancePath) {
-    $fp = [ordered]@{ robin = $null; config = $null; acceptance = $null }
-    foreach ($pair in @(@('robin', $RobinPath), @('config', $ConfigPath), @('acceptance', $AcceptancePath))) {
-        if ($pair[1] -and (Test-Path -LiteralPath $pair[1])) {
-            $fp[$pair[0]] = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToLower()
-        }
-    }
-    return $fp
+    # 哈希算法统一由 PadFingerprint 提供，本脚本不再自行实现一份
+    return (Get-FingerprintParts $RobinPath $ConfigPath $AcceptancePath)
 }
 
 # 只展示每个哈希前 8 位，够人眼核对又不刷屏
@@ -195,7 +145,7 @@ if (-not $NoMain) {
         flowGuid = $null; flowVersionBefore = $null; flowVersionAfter = $null
         runId = $null; runStatus = $null; hashMatch = $null; snapshotPath = $null
         acceptanceFile = $null; acceptance = $null
-        fingerprint = $null
+        fingerprint = $null; fingerprintBaseline = $null
         tests = $null; manifestPath = $null
         warnings = @(); errors = @()
     }
@@ -375,6 +325,21 @@ if (-not $NoMain) {
             $removed = @(Remove-OldReleaseSnapshots (Split-Path -Parent $result.snapshotPath) 20)
             if ($removed.Count -gt 0) { Log "已清理旧快照 $($removed.Count) 个（保留最近 20 个）" }
 
+            # ── 指纹基线：发布成功后固化「这份定义 + 配置 + 验收」的哈希，供准入比对 ──
+            # 写入失败不推翻已经成功的发布，但必须显式告警
+            try {
+                $fpPath = Get-FingerprintBaselinePath $script:RepoRoot $FlowName
+                $fpBase = New-FingerprintBaseline -FlowName $FlowName -FlowGuid $result.flowGuid `
+                    -EnvironmentId (Get-PadEnvironmentId) -SourceRobin $result.sourceRobin `
+                    -WorkspaceRobin $wsRobin -ConfigPath $ConfigFile -AcceptancePath $AcceptanceFile
+                [void](Write-FingerprintBaseline $fpPath $fpBase)
+                $result.fingerprintBaseline = $fpPath
+                Log "指纹基线已更新：$fpPath"
+            } catch {
+                $result.warnings += "指纹基线写入失败：$($_.Exception.Message)"
+                Log "警告：指纹基线写入失败（$($_.Exception.Message)）"
+            }
+
             $result.ok = $true; $result.stage = 'done'; $exitCode = 0
         }
     }
@@ -396,6 +361,7 @@ if (-not $NoMain) {
                 flowVersionBefore = $result.flowVersionBefore; flowVersionAfter = $result.flowVersionAfter
                 runId = $result.runId; runStatus = $result.runStatus; hashMatch = $result.hashMatch
                 fingerprint = $result.fingerprint
+                fingerprintBaseline = $result.fingerprintBaseline
                 ok = $result.ok; errors = $result.errors; warnings = @($result.warnings)
             }
             try {

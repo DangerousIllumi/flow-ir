@@ -35,6 +35,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+# 指纹机制唯一实现：定位、哈希、比对都在 PadFingerprint.psm1
+Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force
+# 指纹未通过时的处置级别：warn 只提醒、fail 阻断。
+# 切换顺序是硬要求：先播种基线并保持 warn，等真实运行观察无误后再单独提交改成 fail
+$script:FingerprintMode = 'warn'
 
 $CONTROL_HINTS = @('IF', 'LOOP', 'SWITCH', 'GUARD', 'WAIT', 'EXIT LOOP', 'EXIT_LOOP')
 
@@ -395,31 +400,16 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'PREFLIGHT' 'warn' 'PREFLIGHT_SKIPPED' '缺少 requirements 或 config，跳过' @()
     }
 
-    # 12 FINGERPRINT
-    $fpParts = [ordered]@{ robin = $null; config = $null; acceptance = $null }
-    foreach ($pair in @(@('robin', $RobinPath), @('config', $Paths.ConfigFile), @('acceptance', $AcceptancePath))) {
-        if ($pair[1] -and (Test-Path -LiteralPath $pair[1])) {
-            $fpParts[$pair[0]] = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToLower()
-        }
-    }
-    $fpLine = ($fpParts.Keys | Where-Object { $fpParts[$_] } | ForEach-Object { "$_=$($fpParts[$_].Substring(0, 12))" }) -join ' '
-    if ($ApprovePath -and (Test-Path -LiteralPath $ApprovePath)) {
-        $ok = $false
-        foreach ($l in [IO.File]::ReadAllLines($ApprovePath, [Text.Encoding]::UTF8)) {
-            if (-not $l.Trim()) { continue }
-            $rec = $l | ConvertFrom-Json
-            if ([string]$rec.robin -eq [string]$fpParts.robin -and
-                [string]$rec.config -eq [string]$fpParts.config -and
-                [string]$rec.acceptance -eq [string]$fpParts.acceptance) { $ok = $true; break }
-        }
-        if ($ok) {
-            $checks += New-AdmitCheck 'FINGERPRINT' 'pass' 'OK' "与批准记录一致：$fpLine" @()
-        } else {
-            $checks += New-AdmitCheck 'FINGERPRINT' 'fail' 'FINGERPRINT_MISMATCH' "与批准记录不一致：$fpLine" @()
-        }
-    } else {
-        $checks += New-AdmitCheck 'FINGERPRINT' 'warn' 'FINGERPRINT_UNVERIFIED' "未提供批准记录：$fpLine" @()
-    }
+    # 12 FINGERPRINT（机制与哈希在 PadFingerprint.psm1，本脚本不另写一份）
+    # 结果码：pass / FINGERPRINT_MISMATCH / FINGERPRINT_UNKNOWN / FINGERPRINT_NO_BASELINE /
+    #         FINGERPRINT_FLOW_STALE / SOURCE_MISMATCH / CONFIG_STALE / BASELINE_CORRUPT / AMBIGUOUS
+    $basePath = $null
+    if ($Paths.Repo -and $FlowName) { $basePath = Get-FingerprintBaselinePath $Paths.Repo $FlowName }
+    $fp = Test-FlowFingerprint -FlowName $FlowName -RobinPath $RobinPath -ConfigPath $Paths.ConfigFile `
+        -AcceptancePath $AcceptancePath -BaselinePath $basePath `
+        -ScriptsRoot $Paths.ScriptsRoot -EnvironmentId $Paths.EnvironmentId `
+        -ApprovePath $ApprovePath -Mode $script:FingerprintMode
+    $checks += New-AdmitCheck 'FINGERPRINT' $fp.status $fp.code $fp.message $fp.evidence
 
     # 13 INTENT
     $noIntent = @($actionNodes | Where-Object {
@@ -509,7 +499,12 @@ if (-not $NoMain) {
             $policy = [IO.File]::ReadAllText($PolicyFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         }
 
-        $paths = @{ Repo = $repo; FlowFile = $FlowFile; ConfigFile = $ConfigFile }
+        # 指纹检查需要「本地运行历史」与「当前环境」：只读读取，不改任何状态
+        $paths = @{
+            Repo = $repo; FlowFile = $FlowFile; ConfigFile = $ConfigFile
+            ScriptsRoot = (Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts')
+            EnvironmentId = (Get-PadEnvironmentId)
+        }
         $result.flow = $FlowName
         $result.checks = @(Invoke-AdmitChecks -Flow $flow -FlowName $FlowName -Config $config -Kb $kb `
             -RobinPath $RobinFile -AcceptancePath $AcceptanceFile -RequirementsPath $RequirementsFile `

@@ -186,6 +186,10 @@ flow-ir/
 │   │   ├── pad-sync.ps1              ← 注入→发布→运行→收集（唯一触碰 PAD 的入口）
 │   │   ├── pad-repair-loop.ps1       ← 自动修复循环（含 RunDOSCommand hook）
 │   │   ├── pad-deploy.ps1            ← 生产部署（变量替换 + 用户确认）
+│   │   ├── pad-rollback.ps1          ← 快照回滚（成功后重写指纹基线）
+│   │   ├── pad-fingerprint.ps1       ← 指纹基线：查看定位结果 / -Set 人工确认播种
+│   │   ├── PadFingerprint.psm1       ← 指纹唯一实现（修订定位、哈希、比对）
+│   │   ├── PadConfig.psm1            ← 运行时配置读取与逐字段校验
 │   │   └── confirm-deploy.ps1        ← MessageBox 弹窗辅助
 │   ├── flow-drawio/                  ← flow.json ↔ .drawio 可视化
 │   ├── publish/                      ← 推送前内容门禁 + 词表

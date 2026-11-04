@@ -27,8 +27,32 @@
 | 9 | ACCEPTANCE | `*.acceptance.json` | JSON 合法、检查类型已知、占位符可解析 | `ACCEPTANCE_INVALID` | `PadAcceptance.psm1` |
 | 10 | CONFIG | `business/config/*.json` + schema | schema 校验通过 | `CONFIG_INVALID` | `pad-deploy.ps1` |
 | 11 | PREFLIGHT | 机器环境 | PAD/Python/SAP/Outlook/目录齐全 | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
-| 12 | FINGERPRINT | 三个文件的 SHA256 | 与批准记录一致 | `FINGERPRINT_MISMATCH` | 部分（发布后哈希校验） |
+| 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（默认 warn，观察期后再切 fail） |
 | 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
+
+### 2.1 指纹（FINGERPRINT）结果码
+
+机制全部在 `tools/pad-sync/PadFingerprint.psm1`，对所有 `flow.json` 一视同仁；
+基线数据只在业务层 `business/fingerprints/<流程名>.json`（含流程名、flowGuid、environmentId、
+机器名与真实路径），不入库、不进公开层。
+
+| 结果码 | 含义 | 证据字段 `evidence` |
+|---|---|---|
+| `pass` | 与批准记录或基线一致 | 命中的批准记录/基线路径 |
+| `FINGERPRINT_MISMATCH` | 与批准记录不一致（始终 fail） | `approve=` + 当前三哈希 |
+| `FINGERPRINT_UNKNOWN` | 读不到 `.robin`、解析不到流程身份，或环境/机器与基线不符 | `robin=` / `scriptsRoot=` / 身份差异 |
+| `FINGERPRINT_NO_BASELINE` | 还没有基线（存量流未播种） | `baseline=` + 当前三哈希 |
+| `FINGERPRINT_FLOW_STALE` | 基线对应的 flowGuid 已变化 | 基线与当前 flowGuid |
+| `FINGERPRINT_SOURCE_MISMATCH` | 源 `.robin` 与基线不一致 | 基线路径 + 当前/基线哈希前缀 |
+| `FINGERPRINT_CONFIG_STALE` | 部署配置与基线不一致 | 同上 |
+| `FINGERPRINT_BASELINE_CORRUPT` | 基线 JSON 损坏或缺 `flow`/`hashes.robin` | `baseline=` |
+| `AMBIGUOUS` | Workspace 命中多个候选修订，无法确定本次发布对应哪一份 | 候选修订目录名 |
+
+切换顺序（硬要求）：先上线写入侧（`pad-release` / `pad-rollback`）与
+`pad-fingerprint.ps1 -Set`，把存量流基线播种出来，**默认级别保持 warn**；
+等真实运行观察无误后，再单独提交把 `pad-admit.ps1` 里的 `$script:FingerprintMode` 改为 `fail`。
+播种必须人工确认：`-Set` 只打印定位结果（修订目录、Workspace 路径、mtime、三个哈希），
+加 `-Confirm` 才写；`-DryRun` 永远不写；多候选直接报 `AMBIGUOUS` 停下。
 
 ## 3. 执行阶段
 

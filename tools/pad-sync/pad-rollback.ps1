@@ -52,6 +52,8 @@ $script:ConfirmPath = Join-Path $here 'confirm-deploy.ps1'
 # FlowName / ConfigFile / DryRun / AllowProd 等同名参数一并重置
 Import-Module (Join-Path $here 'PublishHistory.psm1') -Force
 Import-Module (Join-Path $here 'RobinText.psm1') -Force
+# 指纹定位/哈希唯一实现：回滚成功后重写基线
+Import-Module (Join-Path $here 'PadFingerprint.psm1') -Force
 # 子进程末行 RESULT 的解析统一由 PadTelemetry 提供
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
 
@@ -82,6 +84,7 @@ if (-not $NoMain) {
         ok = $false; stage = 'init'; flow = $FlowName; dryRun = [bool]$DryRun
         fromSha256 = $null; targetSha256 = $null; targetSnapshot = $null
         deployedRobin = $null; runId = $null; runStatus = $null
+        fingerprintBaseline = $null
         manifestPath = $null; warnings = @(); errors = @()
     }
     try {
@@ -143,6 +146,33 @@ if (-not $NoMain) {
                 $result.runId = [string]$dep.runResult.runId
                 if ($PublishOnly) { Log '回滚发布完成（-PublishOnly，未触发运行）' }
                 else { Log "回滚发布完成，验证运行状态：$($result.runStatus)" }
+
+                # ── 指纹基线：回滚成功后必须重写，否则准入还按旧定义比对 ──
+                # 基线写失败不推翻已成功的回滚，但必须显式告警
+                try {
+                    $scriptsRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts'
+                    $workspaceRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Workspace'
+                    $run = Find-LatestFlowRun $scriptsRoot $FlowName
+                    $flowGuid = $(if ($run) { [string]$run.flowGuid } else { $null })
+                    $ids = Get-FlowGuidFromLogPath ([string]$dep.runResult.logPath)
+                    $runId = $(if ($ids) { [string]$ids.runId } else { $null })
+                    $wsRobin = $null
+                    if ($flowGuid) {
+                        try { $wsRobin = Find-WorkspaceRobin $workspaceRoot $flowGuid $runId ([datetime]::UtcNow) }
+                        catch { $wsRobin = $null }
+                    }
+                    $fpPath = Get-FingerprintBaselinePath $script:RepoRoot $FlowName
+                    $fpBase = New-FingerprintBaseline -FlowName $FlowName -FlowGuid $flowGuid `
+                        -EnvironmentId (Get-PadEnvironmentId) -SourceRobin $target.FullName `
+                        -WorkspaceRobin $wsRobin -ConfigPath $ConfigFile -AcceptancePath $null
+                    [void](Write-FingerprintBaseline $fpPath $fpBase)
+                    $result.fingerprintBaseline = $fpPath
+                    Log "指纹基线已重写：$fpPath"
+                } catch {
+                    $result.warnings += "指纹基线重写失败：$($_.Exception.Message)"
+                    Log "警告：指纹基线重写失败（$($_.Exception.Message)）"
+                }
+
                 $result.ok = $true; $result.stage = 'done'; $exitCode = 0
             } finally {
                 Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -162,6 +192,7 @@ if (-not $NoMain) {
                 fromSha256 = $result.fromSha256; targetSha256 = $result.targetSha256
                 targetSnapshot = $result.targetSnapshot; deployedRobin = $result.deployedRobin
                 runId = $result.runId; runStatus = $result.runStatus
+                fingerprintBaseline = $result.fingerprintBaseline
                 ok = $result.ok; errors = $result.errors
             }
             try { Add-ManifestEntry $ManifestPath $entry; $result.manifestPath = $ManifestPath; Log "manifest 已追加：$ManifestPath" }
