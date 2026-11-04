@@ -1,0 +1,28 @@
+{
+  "flow": "tests/eval/fixtures/loop-with-break.json",
+  "description": "需求：最多重试 5 次，达到阈值就停",
+  "cases": [
+    {
+      "id": "bounded-loop",
+      "requirement": "循环必须有明确上界（5 次）",
+      "expect": [
+        { "op": "loop", "id": "1", "from": 1, "to": 5, "step": 1 }
+      ]
+    },
+    {
+      "id": "early-exit",
+      "requirement": "条件满足时跳出循环，而不是跑满 5 次",
+      "expect": [
+        { "op": "condition", "id": "2", "contains": "Idx >= Threshold" },
+        { "op": "edge", "from": "2", "to": "3" }
+      ]
+    },
+    {
+      "id": "after-loop",
+      "requirement": "循环结束后仍要继续收尾",
+      "expect": [
+        { "op": "edge", "from": "1", "to": "4" }
+      ]
+    }
+  ]
+}

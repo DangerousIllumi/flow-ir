@@ -1,0 +1,8 @@
+{
+  "name": "flow-ir",
+  "private": true,
+  "description": "flow-ir：自然语言到 PAD 工作流的工具链（Node 依赖目前只用于流程图 ELK 布局）",
+  "devDependencies": {
+    "elkjs": "^0.12.0"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "name": "archive-csv-files",
+  "description": "把下载目录里的 CSV 逐个移动到归档目录（合成样例，用于结构评估）",
+  "trigger": { "type": "schedule", "config": { "time": "18:00" } },
+  "budget": { "maxLoop": 200 },
+  "variables": [
+    { "name": "SourceDir", "type": "string", "default": "C:\\Temp\\downloads" },
+    { "name": "ArchiveDir", "type": "string", "default": "C:\\Temp\\archive" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3", "label": "循环体" },
+    { "from": "2", "to": "4", "label": "结束循环" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "列出待归档的 CSV",
+      "type": "action",
+      "pad_hint": "Folder.GetFiles",
+      "params": {
+        "Folder": "{{variables.SourceDir}}",
+        "FileFilter": "*.csv",
+        "IncludeSubfolders": false,
+        "FailOnAccessDenied": false
+      },
+      "output_map": { "Files": "CsvFiles" },
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "逐个归档",
+      "type": "loop",
+      "pad_hint": "LOOP",
+      "loop": { "kind": "foreach", "item": "Item", "list": "{{1.CsvFiles}}", "body": ["3"] },
+      "next": ["4"]
+    },
+    {
+      "id": "3",
+      "label": "移动到归档目录",
+      "type": "action",
+      "pad_hint": "File.Move",
+      "params": {
+        "Files": "{{2.Item}}",
+        "Destination": "{{variables.ArchiveDir}}",
+        "IfFileExists": "Overwrite"
+      }
+    },
+    {
+      "id": "4",
+      "label": "完成提示",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "归档完成",
+        "Title": "归档",
+        "Icon": "Information",
+        "Buttons": "OK",
+        "DefaultButton": "Button1",
+        "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "DoneButton" }
+    }
+  ]
+}

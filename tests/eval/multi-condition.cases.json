@@ -1,0 +1,22 @@
+{
+  "flow": "tests/eval/fixtures/multi-condition.json",
+  "description": "需求：开关打开且有文件时才处理",
+  "cases": [
+    {
+      "id": "and-condition",
+      "requirement": "两个条件必须同时成立（AND），不能只判断其中一个",
+      "expect": [
+        { "op": "condition", "id": "2", "contains": "AND" },
+        { "op": "condition", "id": "2", "contains": "Files.Count > 0" }
+      ]
+    },
+    {
+      "id": "both-branches",
+      "requirement": "不满足条件要有跳过分支，不能静默结束",
+      "expect": [
+        { "op": "edge", "from": "2", "to": "3" },
+        { "op": "edge", "from": "2", "to": "4" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "name": "multi-condition-branch",
+  "description": "两个条件同时成立才处理（合成样例）",
+  "trigger": { "type": "schedule", "config": { "time": "08:30" } },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "SourceDir", "type": "string", "default": "C:\\Temp\\inbox" },
+    { "name": "Enabled", "type": "boolean", "default": true }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3", "label": "是" },
+    { "from": "2", "to": "4", "label": "否" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "列出待处理文件",
+      "type": "action",
+      "pad_hint": "Folder.GetFiles",
+      "params": {
+        "Folder": "{{variables.SourceDir}}",
+        "FileFilter": "*.xlsx",
+        "IncludeSubfolders": false,
+        "FailOnAccessDenied": false
+      },
+      "output_map": { "Files": "Files" },
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "开关打开且有文件才处理",
+      "type": "if",
+      "pad_hint": "IF",
+      "params": { "Condition": "Enabled = $'''True''' AND Files.Count > 0" },
+      "branch": { "trueBody": ["3"], "falseBody": ["4"] }
+    },
+    {
+      "id": "3",
+      "label": "开始处理",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "开始处理", "Title": "处理中", "Icon": "Information",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "StartButton" }
+    },
+    {
+      "id": "4",
+      "label": "跳过",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "条件不满足，跳过", "Title": "跳过", "Icon": "Warning",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "SkipButton" }
+    }
+  ]
+}

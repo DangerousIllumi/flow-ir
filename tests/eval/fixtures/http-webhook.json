@@ -1,0 +1,69 @@
+{
+  "name": "http-webhook-notify",
+  "description": "POST 一个 JSON 到 webhook，按状态码分支（合成样例）",
+  "trigger": { "type": "schedule", "config": { "time": "18:30" } },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "WebhookUrl", "type": "string", "default": "https://example.com/hook" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3", "label": "是" },
+    { "from": "2", "to": "4", "label": "否" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "POST 通知",
+      "type": "action",
+      "pad_hint": "Web.InvokeWebService.InvokeWebServicePost",
+      "params": {
+        "Url": "{{variables.WebhookUrl}}",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "UserAgent": "pad-agent",
+        "RequestBody": "{\"text\":\"job done\"}",
+        "EncodeRequestBody": true,
+        "TrimRequestBody": true,
+        "ClearCookies": false,
+        "FailOnErrorStatus": true,
+        "ConnectionTimeout": 30,
+        "FollowRedirection": true,
+        "Encoding": "AutoDetect",
+        "AcceptUntrustedCertificates": false
+      },
+      "output_map": { "StatusCode": "HttpStatus", "Response": "HttpBody" },
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "HTTP 200 才算成功",
+      "type": "if",
+      "pad_hint": "IF",
+      "params": { "Condition": "HttpStatus = 200" },
+      "branch": { "trueBody": ["3"], "falseBody": ["4"] }
+    },
+    {
+      "id": "3",
+      "label": "通知成功",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "已通知", "Title": "结果", "Icon": "Information",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "OkButton" }
+    },
+    {
+      "id": "4",
+      "label": "通知失败",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "通知失败", "Title": "结果", "Icon": "ErrorIcon",
+        "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "FailButton" }
+    }
+  ]
+}

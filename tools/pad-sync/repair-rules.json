@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "description": "错误码 → 修复规则与提示模板。新增错误码只在这里追加一条，不用改 repair-executor.ps1；反过来，脚本里也不再出现任何错误码字面量。",
+  "defaultHint": "未识别的错误码：按错误消息在 docs/script-standards.md 第四节查表。",
+  "fixerRules": [
+    {
+      "id": "path",
+      "description": "文件/目录不存在：在 .robin 里找缺失的绝对路径，唯一同名项重定位（R1）或在 PadRoot 下补建目录（R2）",
+      "codePattern": "FileNotFound|PathNotFound|DirectoryNotFound|FolderNotFound",
+      "messagePattern": "not found|找不到|does not exist|不存在",
+      "action": "resolve-path"
+    }
+  ],
+  "hintRules": [
+    {
+      "id": "sap",
+      "codePattern": "^SAP\\.",
+      "hint": "SAP 元素/会话类错误：屏幕号或元素 ID 随事务码变化，需人工核对 MIGO/MB51 脚本里的 findById 路径与当前 SAP 版本是否一致。"
+    },
+    {
+      "id": "ui",
+      "codePattern": "^UI\\.|^Window\\.",
+      "hint": "UI/窗口类错误：优先检查窗口标题是否被改了，其次在失败动作前插入「等待窗口显示」并加长超时；不要靠坐标点击。"
+    },
+    {
+      "id": "excel",
+      "codePattern": "^Excel\\.",
+      "hint": "Excel 类错误：常见原因是文件仍被占用、受保护视图窗口未关闭、或 COM 实例附着到了别的 Excel 进程；先看 close_excel.log 和 Excel 进程数。"
+    },
+    {
+      "id": "clipboard",
+      "codePattern": "^Clipboard\\.",
+      "hint": "剪贴板类错误：上一步复制没有成功。检查来源窗口是否真的在前台、Ctrl+A 是否落在正确的控件上。"
+    },
+    {
+      "id": "file",
+      "codePattern": "^File\\.",
+      "hint": "文件类错误：确认 .robin 里路径的转义（PAD 需要双反斜杠）、目录是否存在、文件是否被别的程序占用。"
+    },
+    {
+      "id": "folder",
+      "codePattern": "^Folder\\.",
+      "hint": "目录类错误：确认目录存在且当前账号有写权限。"
+    },
+    {
+      "id": "system",
+      "codePattern": "^System\\.",
+      "hint": "系统类错误：多为超时或权限不足。检查外部脚本的最长等待时间与 SAP/Excel 是否处于弹窗阻塞状态。"
+    },
+    {
+      "id": "script",
+      "codePattern": "^Script\\.",
+      "hint": "脚本类错误：外部 VBS/Python 返回非 0。看下面的 extraLogs：VBS 日志或 Python stdout 里通常有真实原因。"
+    },
+    {
+      "id": "dos-command",
+      "systemActionPattern": "RunDOSCommand",
+      "hint": "外部命令失败：看下面的 extraLogs（VBS 日志 / Python stdout）定位退出码含义。"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "name": "excel-read-write",
+  "description": "打开 Excel、读取全部数据、有数据就写一行标记再保存（合成样例）",
+  "trigger": { "type": "schedule", "config": { "time": "07:00" } },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "ExcelPath", "type": "string", "default": "C:\\Temp\\report.xlsx" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3" },
+    { "from": "3", "to": "4", "label": "是" },
+    { "from": "3", "to": "5", "label": "否" },
+    { "from": "4", "to": "5" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "打开工作簿",
+      "type": "action",
+      "pad_hint": "Excel.LaunchExcel.LaunchAndOpen",
+      "params": {
+        "Path": "{{variables.ExcelPath}}",
+        "Visible": false,
+        "ReadOnly": false,
+        "LoadAddInsAndMacros": false,
+        "UseMachineLocale": false
+      },
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "label": "读取全部数据",
+      "type": "action",
+      "pad_hint": "Excel.ReadFromExcel.ReadAllCells",
+      "params": {
+        "FirstLineIsHeader": true,
+        "GetCellContentsMode": "TypedValues"
+      },
+      "output_map": { "RangeValue": "Rows" },
+      "next": ["3"]
+    },
+    {
+      "id": "3",
+      "label": "有数据才写标记",
+      "type": "if",
+      "pad_hint": "IF",
+      "params": { "Condition": "Rows.Count > 0" },
+      "branch": { "trueBody": ["4"], "falseBody": [] },
+      "next": ["5"]
+    },
+    {
+      "id": "4",
+      "label": "写一行标记",
+      "type": "action",
+      "pad_hint": "Excel.WriteToExcel.WriteCell",
+      "params": { "Column": "A", "Row": 2, "Value": "$'''checked'''" }
+    },
+    {
+      "id": "5",
+      "label": "保存并关闭",
+      "type": "action",
+      "pad_hint": "Excel.CloseExcel.CloseAndSave",
+      "params": {}
+    }
+  ]
+}
