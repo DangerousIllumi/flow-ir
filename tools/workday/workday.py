@@ -69,13 +69,15 @@ def find_col(header, names, prefix=None):
     return None
 
 
-def load_workdays(cal_path):
-    """从工作日历读出所有标记为工作日的日期集合
+def load_calendar(cal_path):
+    """读取日历，返回 (工作日集合, 最小日期, 最大日期)
 
-    日历不可用或表头识别失败时返回 None，由调用方决定如何兜底。
+    最小/最大日期按「所有能解析出日期的行」统计，不是只统计工作日：
+    这样日历哪天开始、哪天结束一目了然，用来判断日历是否已过期。
+    日历不可用或表头识别失败时返回 (None, None, None)。
     """
     if not cal_path or not os.path.isfile(cal_path):
-        return None
+        return (None, None, None)
     wb = load_workbook(cal_path, data_only=True)
     try:
         # 优先选名字里含「工作日」的表，否则用第一个表
@@ -91,19 +93,42 @@ def load_workdays(cal_path):
                 c_date, c_wd, hdr = d, w, r
                 break
         if not c_date:
-            return None
+            return (None, None, None)
         days = set()
+        all_dates = []
         for r in range(hdr + 1, ws.max_row + 1):
             dv = to_date(ws.cell(row=r, column=c_date).value)
             if dv is None:
                 continue
+            all_dates.append(dv)
             wv = ws.cell(row=r, column=c_wd).value
             flag = str(wv).strip().upper() if wv is not None else ""
             if flag in TRUE_FLAGS:
                 days.add(dv)
-        return days
+        if not all_dates:
+            return (days, None, None)
+        return (days, min(all_dates), max(all_dates))
     finally:
         wb.close()
+
+
+def load_workdays(cal_path):
+    """只取工作日集合（保留旧签名，供既有调用方使用）"""
+    return load_calendar(cal_path)[0]
+
+
+def calendar_state(cal_path, today):
+    """返回日历状态：{days, min, max, stale}；日历不可用时返回 None
+
+    stale 表示今天落在日历覆盖范围之外：此时不能把「表里没有今天」解释成休息，
+    否则日历过期会让定时任务静默跳过。
+    """
+    days, dmin, dmax = load_calendar(cal_path)
+    if days is None:
+        return None
+    stale = bool(dmin is not None and dmax is not None and (today < dmin or today > dmax))
+    return {"days": days, "min": dmin, "max": dmax, "stale": stale}
+
 
 
 def load_prev_workday(cal_path, today):
@@ -115,18 +140,23 @@ def load_prev_workday(cal_path, today):
     return max(prev) if prev else None
 
 
-def is_workday(cal_path, today):
-    """判断 today 是否工作日，返回 (是否工作日, 日历是否可用)
+def is_workday_detail(cal_path, today):
+    """返回 (是否工作日, 日历可用, 日历过期, 最小日期, 最大日期)
 
-    日历不可用时按周一至周五兜底：宁可多跑一次，也不要让定时任务因为
-    日历文件缺失而静默停摆（节假日/调休仍以日历为准）。
-    注意区分「读不到日历」（None）与「读到了但没有任何工作日」（空集合）：
-    后者说明日历有效、只是当天不是工作日，不能走兜底。
+    日历过期时 WORKDAY 必须为 1（不能表达成「今天休息」），由调用方硬失败。
     """
-    days = load_workdays(cal_path)
-    if days is None:
-        return (today.weekday() < 5, False)
-    return (today in days, True)
+    state = calendar_state(cal_path, today)
+    if state is None:
+        return (today.weekday() < 5, False, False, None, None)
+    if state["stale"]:
+        return (True, True, True, state["min"], state["max"])
+    return (today in state["days"], True, False, state["min"], state["max"])
+
+
+def is_workday(cal_path, today):
+    """判断 today 是否工作日，返回 (是否工作日, 日历是否可用)"""
+    detail = is_workday_detail(cal_path, today)
+    return (detail[0], detail[1])
 
 
 def prev_workday_by_weekday(today):
@@ -170,9 +200,12 @@ def main(argv=None):
         print("LAST_WORKDAY=%d" % (1 if is_last_workday(args.calendar, today) else 0))
         return 0
     if args.is_workday:
-        ok, has_cal = is_workday(args.calendar, today)
+        ok, has_cal, stale, dmin, dmax = is_workday_detail(args.calendar, today)
         print("CALENDAR_OK=%d" % (1 if has_cal else 0))
         print("WORKDAY=%d" % (1 if ok else 0))
+        print("CALENDAR_STALE=%d" % (1 if stale else 0))
+        print("CALENDAR_MIN=%s" % (dmin.isoformat() if dmin else ""))
+        print("CALENDAR_MAX=%s" % (dmax.isoformat() if dmax else ""))
         return 0
     if args.prev_workday:
         d = load_prev_workday(args.calendar, today) or prev_workday_by_weekday(today)

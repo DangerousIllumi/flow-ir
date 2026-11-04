@@ -55,6 +55,35 @@ def test_single_holiday_row_counts_as_available_calendar(tmp_path):
     assert reconcile.is_workday(str(cal), date.today()) == (False, True)
 
 
+def test_calendar_in_range_reports_min_max(tmp_path):
+    """今天在覆盖范围内：WORKDAY 按标记判断，并给出 CALENDAR_MIN / MAX"""
+    cal = tmp_path / "cal.xlsx"
+    _write_calendar(cal, [(-1, "是"), (0, "是")])
+    ok, has_cal, stale, dmin, dmax = reconcile.is_workday_detail(str(cal), date.today())
+    assert (ok, has_cal, stale) == (True, True, False)
+    assert dmin == date.today() - timedelta(days=1)
+    assert dmax == date.today()
+
+
+def test_calendar_out_of_range_is_stale_not_rest(tmp_path):
+    """日历最后一天早于今天：判定为过期，WORKDAY 不能表达成 0（休息）"""
+    cal = tmp_path / "cal.xlsx"
+    _write_calendar(cal, [(-30, "是"), (-5, "否")])
+    detail = reconcile.is_workday_detail(str(cal), date.today())
+    assert detail[2] is True, "今天超出日历范围必须标记 stale"
+    assert detail[0] is True, "过期不能返回 WORKDAY=0"
+    # 保留旧签名也不得把过期读成休息
+    assert reconcile.is_workday(str(cal), date.today()) == (True, True)
+
+
+def test_empty_calendar_is_available_but_not_workday(tmp_path):
+    """只有表头、没有任何日期行：日历有效但今天不在表里，不判过期"""
+    cal = tmp_path / "cal.xlsx"
+    _write_calendar(cal, [])
+    detail = reconcile.is_workday_detail(str(cal), date.today())
+    assert detail == (False, True, False, None, None)
+
+
 def test_weekend_marked_yes_is_workday(tmp_path):
     """调休上班：日历标"是"，即使今天是周末也要跑"""
     cal = tmp_path / "cal.xlsx"

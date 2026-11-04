@@ -37,6 +37,8 @@ param(
     [string]$TaskName,
     # 被调度的脚本，默认同目录的 pad-sync.ps1
     [string]$PadSyncPath,
+    # 集中运行时配置（JSON）：显式参数优先级最高，未显式给出的项才从配置取
+    [string]$ConfigPath,
     # 工作日历：必须显式给出（不再内置默认路径），缺省时按错误退出
     [string]$CalendarPath,
     [string]$PythonExe,
@@ -73,6 +75,16 @@ $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $here)
+# 集中配置：只在显式传 -ConfigPath 时读取；缺项/路径不存在/类型错误一律硬失败
+Import-Module (Join-Path $here 'PadConfig.psm1') -Force
+if ($ConfigPath) {
+    $runtime = Get-PadRuntimeConfig -ConfigPath $ConfigPath
+    if (-not $PSBoundParameters.ContainsKey('PadSyncPath')) { $PadSyncPath = $runtime.PadSyncPath }
+    if (-not $PSBoundParameters.ContainsKey('PythonExe')) { $PythonExe = $runtime.PythonExe }
+    if (-not $PSBoundParameters.ContainsKey('CalendarPath')) { $CalendarPath = $runtime.CalendarPath }
+    if (-not $PSBoundParameters.ContainsKey('WorkdayScript')) { $WorkdayScript = $runtime.WorkdayScript }
+    if (-not $PSBoundParameters.ContainsKey('RunTimeoutSec')) { $RunTimeoutSec = $runtime.RunTimeoutSec }
+}
 # 隐藏窗口启动器：任务仍以 Interactive 身份运行（PAD 需要交互桌面），
 # 改用 wscript.exe 包装 powershell，控制台窗口从创建起就是隐藏的，不会闪黑框
 $script:HiddenLauncher = Join-Path $here 'run-hidden.vbs'
@@ -168,7 +180,21 @@ function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$
     if ($out -match 'CALENDAR_OK=0') {
         throw "工作日历文件读不到或格式不对：$CalendarPath"
     }
+    # 日历能读但今天不在覆盖范围：不能当成「今天休息」静默跳过，必须硬失败
+    if ($out -match 'CALENDAR_STALE=1') {
+        $min = [regex]::Match($out, 'CALENDAR_MIN=([^\r\n]*)').Groups[1].Value.Trim()
+        $max = [regex]::Match($out, 'CALENDAR_MAX=([^\r\n]*)').Groups[1].Value.Trim()
+        throw "日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
+    }
     return [ordered]@{ workday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
+}
+
+# 日历类失败的分类：过期（exit 5）与不可用（exit 1）必须分开
+function Get-CalendarFailure([string]$Message) {
+    if ($Message -match '日历不覆盖今天') {
+        return [ordered]@{ exitCode = 5; reason = 'calendar-stale'; stale = $true }
+    }
+    return [ordered]@{ exitCode = 1; reason = 'calendar-unavailable'; stale = $false }
 }
 
 # 失败告警分级：把退出码与结果标记映射成 kind / reason / note
@@ -230,7 +256,10 @@ function Write-RunAlert {
         [string]$LogPath,
         [string]$Dir,
         # 日历是否可用：$false 表示本次因日历不可用而未运行，供告警分级使用
-        [Nullable[bool]]$CalendarOk
+        [Nullable[bool]]$CalendarOk,
+        # 日历过期：日历能读，但今天不在覆盖范围内；必须单列，不能算「今天休息」
+        [switch]$CalendarStale,
+        [string]$CalendarRange
     )
     if (-not $Dir) { $Dir = Join-Path $script:RepoRoot 'business\logs' }
     if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
@@ -250,6 +279,14 @@ function Write-RunAlert {
     # 分级统一由 Get-RunAlertKind 决定：退出码 4（等锁超时，根本没跑）与 1（跑了但失败）
     # 必须分开；3（停在人工确认）、触发失败、运行超时各自单独成类，避免运维误读
     $grade = Get-RunAlertKind -ExitCode $ExitCode -CalendarOk $CalendarOk -SyncResult $SyncResult
+    # 日历过期单独成类：事件名固定 calendar-stale（触发层上线后复用同名，不另造新名）
+    if ($CalendarStale) {
+        $grade = [ordered]@{
+            kind   = 'calendar-stale'
+            reason = 'calendar-stale'
+            note   = "日历不覆盖今天（覆盖 $CalendarRange），本次未运行；请更新日历文件"
+        }
+    }
     $rec = [ordered]@{
         ts         = (Get-Date).ToString('o')
         kind       = $grade.kind
@@ -265,6 +302,10 @@ function Write-RunAlert {
     }
     # 触发失败额外带 reason 分类（identity-mismatch / no-evidence / no-robot）
     if ($grade.reason) { $rec['reason'] = $grade.reason }
+    if ($CalendarStale) {
+        $rec['calendarStale'] = $true
+        $rec['calendarRange'] = $CalendarRange
+    }
     if ($null -ne $CalendarOk) { $rec['calendarOk'] = [bool]$CalendarOk }
     # 不用 Add-Content：PS 5.1 首次写入会带 BOM，JSONL 逐行解析会失败
     [IO.File]::AppendAllText($file, (($rec | ConvertTo-Json -Depth 8 -Compress) + "`n"),
@@ -312,11 +353,12 @@ if (-not $NoMain) {
         # ── 运行入口（任务计划实际调用的分支） ──
         if ($RunIfWorkday -or $RunIfLastWorkday) {
             $result.action = $(if ($RunIfLastWorkday) { 'run-if-last-workday' } else { 'run-if-workday' })
-            if (-not $WorkdayScript) { $WorkdayScript = Join-Path $script:RepoRoot 'tools\workday\workday.py' }
-            if (-not $PythonExe) { $PythonExe = 'C:\Program Files\Python313\python.exe' }
+            # 运行入口所需参数必须显式传入或来自 -ConfigPath；不退回任何内置路径
+            if (-not $WorkdayScript) { throw 'CONFIG_MISSING: 未提供 WorkdayScript（用 -ConfigPath 或显式参数）' }
+            if (-not $PythonExe) { throw 'CONFIG_MISSING: 未提供 PythonExe（用 -ConfigPath 或显式参数）' }
             # 日历必须由任务动作显式传入：缺了就硬失败，绝不退化成「每个工作日都跑」
-            if (-not $CalendarPath) { throw '未提供工作日日历文件，请用 -CalendarPath 指定' }
-            if (-not $PadSyncPath) { $PadSyncPath = Join-Path $here 'pad-sync.ps1' }
+            if (-not $CalendarPath) { throw 'CONFIG_MISSING: 未提供工作日日历文件（用 -ConfigPath 或 -CalendarPath）' }
+            if (-not $PadSyncPath) { throw 'CONFIG_MISSING: 未提供 PadSyncPath（用 -ConfigPath 或显式参数）' }
 
             if ($RunIfLastWorkday) {
                 $lw = Test-TodayLastWorkday $PythonExe $WorkdayScript $CalendarPath
@@ -410,7 +452,7 @@ if (-not $NoMain) {
         }
 
         # ── 注册/更新 ──
-        if (-not $PadSyncPath) { $PadSyncPath = Join-Path $here 'pad-sync.ps1' }
+        if (-not $PadSyncPath) { throw 'CONFIG_MISSING: 未提供 PadSyncPath（用 -ConfigPath 或显式参数）' }
         if (-not (Test-Path $PadSyncPath)) { throw "找不到 pad-sync.ps1：$PadSyncPath" }
         if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
             throw '安全熔断：默认只能为 PAD_SYNC_TEST 建计划。生产流程请显式加 -AllowProd。'
@@ -419,12 +461,12 @@ if (-not $NoMain) {
             throw '使用 -AcceptanceFile 时必须同时提供 -ConfigFile'
         }
         $gate = -not $IgnoreCalendar
-        if (-not $PythonExe) { $PythonExe = 'C:\Program Files\Python313\python.exe' }
-        # 需要日历的模式（按日历判断 / 仅最后工作日）必须显式给出日历，不再内置默认路径
-        if (-not $CalendarPath -and ($gate -or $LastWorkday)) {
-            throw '未提供工作日日历文件，请用 -CalendarPath 指定'
+        # 需要日历的模式（按日历判断 / 仅最后工作日）必须显式给出日历与依赖，不再内置默认路径
+        if ($gate -or $LastWorkday) {
+            if (-not $CalendarPath) { throw 'CONFIG_MISSING: 未提供工作日日历文件（用 -ConfigPath 或 -CalendarPath）' }
+            if (-not $PythonExe) { throw 'CONFIG_MISSING: 未提供 PythonExe（用 -ConfigPath 或显式参数）' }
+            if (-not $WorkdayScript) { throw 'CONFIG_MISSING: 未提供 WorkdayScript（用 -ConfigPath 或显式参数）' }
         }
-        if (-not $WorkdayScript) { $WorkdayScript = Join-Path $script:RepoRoot 'tools\workday\workday.py' }
 
         $at = ConvertTo-ScheduleTime $Time
         if ($LastWorkday) {
@@ -486,12 +528,20 @@ if (-not $NoMain) {
     catch {
         $msg = $_.Exception.Message
         $result.errors += $msg
-        # 日历类失败：标记 calendarOk=false 并按「本次未运行」写告警，便于与运行失败分开统计
-        if ($msg -match '^(工作日历文件|工作日判断脚本)') {
-            $result.calendarOk = $false
-            $result.reason = 'calendar-unavailable'
-            $alert = Write-RunAlert -FlowName $FlowName -ExitCode $exitCode -Stage 'calendar' `
-                -Status 'skipped' -CalendarOk $false
+        if ($msg -match '^(工作日历文件|工作日判断脚本|日历不覆盖今天)') {
+            # 日历类失败分两种：过期（exit 5 / calendar-stale）与不可用（exit 1）
+            $cal = Get-CalendarFailure $msg
+            $exitCode = $cal.exitCode
+            $result.reason = $cal.reason
+            if ($cal.stale) { $result.calendarOk = $null } else { $result.calendarOk = $false }
+            $range = [regex]::Match($msg, '覆盖 ([^）]+)').Groups[1].Value
+            if ($cal.stale) {
+                $alert = Write-RunAlert -FlowName $FlowName -ExitCode $exitCode -Stage 'calendar' `
+                    -Status 'skipped' -CalendarStale -CalendarRange $range
+            } else {
+                $alert = Write-RunAlert -FlowName $FlowName -ExitCode $exitCode -Stage 'calendar' `
+                    -Status 'skipped' -CalendarOk $false
+            }
             $result.alertLog = $alert.path
         }
         Log "失败于 [$($result.action)]：$msg"

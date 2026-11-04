@@ -47,10 +47,12 @@ Describe 'pad-schedule 纯函数测试' {
 
     # 下面几条用子进程跑真实脚本，验证「日历缺省」时的退出码与文案
     $scheduleScript = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-schedule.ps1'
+    $workdayScript = Join-Path $PSScriptRoot '..\tools\workday\workday.py'
 
     It '运行入口不传日历：非零退出，并明确提示用 -CalendarPath 指定' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
-            -FlowName 'PAD_SYNC_TEST' -RunIfWorkday 2>&1 | Out-String
+            -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -PythonExe 'python' `
+            -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match '未提供工作日日历文件'
         $out | Should Match 'CalendarPath'
@@ -60,7 +62,9 @@ Describe 'pad-schedule 纯函数测试' {
 
     It '运行入口日历文件不存在：非零退出、不运行，并标记 calendarOk=false' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
-            -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -CalendarPath (Join-Path $TestDrive 'nope.xlsx') 2>&1 | Out-String
+            -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -PythonExe 'python' `
+            -WorkdayScript $workdayScript -PadSyncPath $scheduleScript `
+            -CalendarPath (Join-Path $TestDrive 'nope.xlsx') 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match '工作日历文件不存在或读不到'
         # 绝不能静默退化成「每个工作日都跑」
@@ -82,7 +86,7 @@ Describe 'pad-schedule 纯函数测试' {
         )
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -CalendarPath $calendar `
-            -PythonExe $py -WorkdayScript $probe 2>&1 | Out-String
+            -PythonExe $py -WorkdayScript $probe -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match '工作日判断脚本执行失败'
         $out | Should Not Match '开始运行'
@@ -93,14 +97,15 @@ Describe 'pad-schedule 纯函数测试' {
 
     It '注册模式不传日历：同样非零退出，不静默降级' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
-            -FlowName 'PAD_SYNC_TEST' -DryRun 2>&1 | Out-String
+            -FlowName 'PAD_SYNC_TEST' -DryRun -PythonExe 'python' `
+            -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match '未提供工作日日历文件'
     }
 
     It '忽略日历模式不需要 -CalendarPath（显式声明才允许不看日历）' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
-            -FlowName 'PAD_SYNC_TEST' -DryRun -IgnoreCalendar 2>&1 | Out-String
+            -FlowName 'PAD_SYNC_TEST' -DryRun -IgnoreCalendar -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
         $out | Should Match '忽略日历'
         $out | Should Not Match '未提供工作日日历文件'
@@ -123,7 +128,7 @@ Describe 'pad-schedule 纯函数测试' {
         [IO.File]::WriteAllBytes($calendar, [byte[]](1, 2, 3))
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -CalendarPath $calendar `
-            -PythonExe $py -WorkdayScript $probe 2>&1 | Out-String
+            -PythonExe $py -WorkdayScript $probe -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
         $out | Should Match '今天不是工作日'
         # 参数确实原样传到了判断脚本，而不是被替换成内置默认值
@@ -189,6 +194,52 @@ Describe 'pad-schedule 纯函数测试' {
         } catch {
             $_.Exception.Message | Should Match '工作日判断脚本执行失败'
         }
+    }
+
+    It '日历过期：CALENDAR_STALE=1 时硬失败，不能当成今天休息' {
+        # 用假的 python（cmd 脚本）回放 workday.py 的输出，不依赖真实日历
+        $fake = Join-Path $TestDrive 'fake-python.cmd'
+        Set-Content -LiteralPath $fake -Encoding ASCII -Value @(
+            '@echo off',
+            'echo CALENDAR_OK=1',
+            'echo WORKDAY=1',
+            'echo CALENDAR_STALE=1',
+            'echo CALENDAR_MIN=2026-01-01',
+            'echo CALENDAR_MAX=2026-10-31'
+        )
+        $cal = Join-Path $TestDrive 'calendar.xlsx'
+        Set-Content -LiteralPath $cal -Value 'x' -Encoding UTF8
+        $script = Join-Path $PSScriptRoot '..\tools\workday\workday.py'
+        try {
+            Test-TodayWorkday $fake $script $cal
+            throw '预期应当抛错，但没有'
+        } catch {
+            $_.Exception.Message | Should Match '日历不覆盖今天'
+            $_.Exception.Message | Should Match '覆盖 2026-01-01 ~ 2026-10-31'
+        }
+    }
+
+    It '日历类失败分类：过期是 exit 5 / calendar-stale，不可用仍是 exit 1' {
+        $stale = Get-CalendarFailure '日历不覆盖今天：今天 2026-11-05（覆盖 2026-01-01 ~ 2026-10-31），判定为日历过期，本次不运行'
+        $stale.exitCode | Should Be 5
+        $stale.reason | Should Be 'calendar-stale'
+        $stale.stale | Should Be $true
+        $down = Get-CalendarFailure '工作日历文件不存在或读不到：C:\x\cal.xlsx'
+        $down.exitCode | Should Be 1
+        $down.reason | Should Be 'calendar-unavailable'
+        $down.stale | Should Be $false
+    }
+
+    It '日历过期告警：kind=calendar-stale，带 calendarRange 且不混入 calendarOk' {
+        $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $a = Write-RunAlert -FlowName 'F' -ExitCode 5 -Stage 'calendar' -Status 'skipped' `
+            -CalendarStale -CalendarRange '2026-01-01 ~ 2026-10-31' -Dir $dir
+        $a.record.kind | Should Be 'calendar-stale'
+        $a.record.reason | Should Be 'calendar-stale'
+        $a.record.exitCode | Should Be 5
+        $a.record.calendarStale | Should Be $true
+        $a.record.calendarRange | Should Be '2026-01-01 ~ 2026-10-31'
+        $a.record.note | Should Match '请更新日历文件'
     }
 
     It '解析 PAD_SYNC_RESULT：取最后一行，缺失时返回空' {

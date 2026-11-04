@@ -207,6 +207,11 @@ flow-ir/
 └── README.md
 ```
 
+> **日历口径**：表里没有今天 ≠ 今天休息。今天早于 `CALENDAR_MIN` 或晚于 `CALENDAR_MAX` 时，
+> `workday.py` 输出 `CALENDAR_STALE=1` 且 `WORKDAY=1`；`pad-schedule` 以退出码 5 +
+> `calendar-stale` 事件硬失败，不再静默跳过。只有「今天在覆盖范围内、但标记为非工作日」才正常跳过。
+> 触发层上线后复用同一事件名 `calendar-stale`，不另造 `trigger-calendar-stale`。
+
 ## 十、文件编码与 PowerShell 编写规范
 
 ### 10.1 编码硬约束
@@ -360,3 +365,42 @@ pad-repair-loop.ps1 -Executor tools/pad-sync/repair-executor-llm.ps1 -MaxRound 3
 LLM 版执行器内部流程：读 ctx → 拼提示词（含 `.robin` 全文 + `error.code` + `extraLogs`）→ 调模型 → 取出修改后的 `.robin` → 写 OutputRobin → exit 0。
 
 **安全约束**：执行器产物会先经过 `Test-RobinSyntax` 自检，且循环默认限制 `-MaxRound 3`、默认只允许 `PAD_SYNC_TEST`。
+
+## 十二、运行时配置（PadConfig）
+
+`tools/pad-sync/PadConfig.psm1` 提供 `Get-PadRuntimeConfig -ConfigPath <json>`，启动时一次性读取并逐字段校验；
+显式命令行参数优先级最高，只有未显式给出的项才从配置取。**不存在「读不到就退回硬编码默认值」**。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `PadSyncPath` | string | `pad-sync.ps1` 的完整路径 |
+| `PythonExe` | string | Python 解释器路径 |
+| `CalendarPath` | string | 工作日历 `.xlsx` 路径 |
+| `WorkdayScript` | string | `workday.py` 路径 |
+| `RunTimeoutSec` | 正整数 | 等待流程自身运行结束的超时秒数 |
+| `PadRoot` | string | 结果目录根（PAD 根目录） |
+
+示例（中性占位，真实配置放 `business/config/runtime.json`，不入库）：
+
+```json
+{
+  "PadSyncPath": "C:\\example\\tools\\pad-sync\\pad-sync.ps1",
+  "PythonExe": "C:\\example\\python\\python.exe",
+  "CalendarPath": "C:\\example\\calendar.xlsx",
+  "WorkdayScript": "C:\\example\\tools\\workday\\workday.py",
+  "RunTimeoutSec": 4200,
+  "PadRoot": "C:\\example\\results"
+}
+```
+
+错误码（硬失败，不降级为 warn）：
+
+| 码 | 触发条件 |
+|---|---|
+| `CONFIG_MISSING` | 必填字段缺失或为空 |
+| `CONFIG_PATH_NOT_FOUND` | 配置文件本身或任一字段路径不存在 |
+| `CONFIG_INVALID_VALUE` | JSON 非法，或 `RunTimeoutSec` 非正整数 |
+
+`pad-schedule.ps1`：传 `-ConfigPath` 时按上述规则加载；不传且缺关键参数时直接报 `CONFIG_MISSING` 退出，
+不再回退到内置路径（现有计划任务显式传参，属兼容路径，仍然可跑；新任务推荐用配置文件）。
+
