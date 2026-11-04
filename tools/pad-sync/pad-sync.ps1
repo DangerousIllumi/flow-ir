@@ -81,7 +81,9 @@ param(
     #   取两者较大值 63 分钟，再留 27 分钟余量覆盖 SAP 登录、重启、机器卡顿等抖动
     [int]$LockWaitSec = 5400,
     # 跳过跨进程互斥（只在确认没有其它任务会并发时用）
-    [switch]$NoLock
+    [switch]$NoLock,
+    # 集中运行时配置：只覆盖未显式给出的 RunTimeoutSec；显式参数优先
+    [string]$ConfigPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -102,6 +104,12 @@ Import-Module (Join-Path $PSScriptRoot 'PadDesigner.psm1') -Force -DisableNameCh
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PadAcceptance.psm1') -Force
+# 集中配置：只在显式传 -ConfigPath 时读取；缺项/路径不存在/类型错误一律硬失败
+Import-Module (Join-Path $PSScriptRoot 'PadConfig.psm1') -Force
+if ($ConfigPath) {
+    $runtime = Get-PadRuntimeConfig -ConfigPath $ConfigPath
+    if (-not $PSBoundParameters.ContainsKey('RunTimeoutSec')) { $RunTimeoutSec = $runtime.RunTimeoutSec }
+}
 
 # 编排层历史文件：脚本位于仓库 tools\pad-sync 时默认写 business\manifest.jsonl；
 # 被单独部署到仓库之外的目录时不写，避免落到盘根
