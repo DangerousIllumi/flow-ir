@@ -451,8 +451,16 @@ if (-not $NoMain) {
                     throw "未提供 -FlowFile，按流程名派生也找不到：$guess；请用 -FlowFile 指定"
                 }
             } else {
+                # 只认流程定义：排除 accept/requirements/schema 等配套 json，
+                # 再用「有非空 nodes 数组」这一结构特征挡掉 deploy_diff.json 之类同目录产物
                 $cands = @(Get-ChildItem -LiteralPath $flowsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -notmatch '\.(acceptance|requirements|schema)\.json$' })
+                    Where-Object { $_.Name -notmatch '\.(acceptance|requirements|schema)\.json$' } |
+                    Where-Object {
+                        try {
+                            $j = [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+                            ($j.PSObject.Properties.Name -contains 'nodes') -and (@($j.nodes).Count -gt 0)
+                        } catch { $false }
+                    })
                 if ($cands.Count -eq 1) {
                     $FlowFile = $cands[0].FullName
                 } elseif ($cands.Count -eq 0) {
