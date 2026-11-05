@@ -12,6 +12,9 @@
 #   基线数据写在 business\fingerprints\<流程名>.json（含流程名、flowGuid、
 #   environmentId、机器名与真实路径），只在业务层，不入库、不推公开库。
 
+# 规范化与哈希的唯一实现（RobinText.psm1）：本模块不另写一份规范化规则
+Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force
+
 # 从 Actions.log 路径解析流程 GUID 与 runId：
 #   ...\Console\Scripts\<flowGuid>\Runs\<runId>\Actions.log
 function Get-FlowGuidFromLogPath([string]$LogPath) {
@@ -93,6 +96,25 @@ function Get-FingerprintParts([string]$RobinPath, [string]$ConfigPath, [string]$
     return $parts
 }
 
+# .robin 的规范化哈希（逻辑哈希）：剥掉注释/元数据/缩进与转义差异后再算 SHA256。
+# 源文件与已发布副本的原始字节必然不同（PAD 会加 @@ 头、IMPORT 行、重写转义），
+# 只有逻辑哈希才能安全地跨"落盘格式"比较。
+function Get-RobinLogicHash([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
+    return (Get-RobinHash $text)
+}
+
+# 由 ScriptsRoot 推 Workspace 根：两者都在 ...\Power Automate Desktop\Console\ 下
+function Get-WorkspaceRootFromScriptsRoot([string]$ScriptsRoot) {
+    if (-not $ScriptsRoot) { return $null }
+    $consoleRoot = Split-Path -Parent $ScriptsRoot
+    if (-not $consoleRoot) { return $null }
+    $root = Join-Path $consoleRoot 'Workspace'
+    if (Test-Path -LiteralPath $root) { return $root }
+    return $null
+}
+
 # 基线文件位置：business\fingerprints\<流程名>.json（业务层，不入库）
 function Get-FingerprintBaselinePath([string]$RepoRoot, [string]$FlowName) {
     return (Join-Path (Join-Path (Join-Path $RepoRoot 'business') 'fingerprints') ($FlowName + '.json'))
@@ -140,18 +162,33 @@ function New-FingerprintBaseline {
     )
     $parts = Get-FingerprintParts $SourceRobin $ConfigPath $AcceptancePath
     $mtime = $null
+    $deployedRaw = $null
     if ($WorkspaceRobin -and (Test-Path -LiteralPath $WorkspaceRobin)) {
         $mtime = (Get-Item -LiteralPath $WorkspaceRobin).LastWriteTime.ToString('o')
+        $deployedRaw = (Get-FileHash -LiteralPath $WorkspaceRobin -Algorithm SHA256).Hash.ToLower()
     }
     return [ordered]@{
-        version       = 1
+        version       = 2
         flow          = $FlowName
         flowGuid      = $FlowGuid
         environmentId = $EnvironmentId
         machine       = $(if ($Machine) { $Machine } else { $env:COMPUTERNAME })
-        sourceRobin   = $SourceRobin
-        workspaceRobin = $WorkspaceRobin
-        workspaceMtime = $mtime
+        # 源：仓库里的 .robin（原始字节 + 逻辑哈希），config/acceptance 同源
+        source        = [ordered]@{
+            robinPath      = $SourceRobin
+            robinSha256    = $parts.robin
+            robinLogicHash = (Get-RobinLogicHash $SourceRobin)
+            configSha256   = $parts.config
+            acceptanceSha256 = $parts.acceptance
+        }
+        # 已发布：Workspace 副本（原始字节 + 逻辑哈希），只允许在这个域内自比
+        deployed      = [ordered]@{
+            robinPath   = $WorkspaceRobin
+            robinSha256 = $deployedRaw
+            logicHash   = (Get-RobinLogicHash $WorkspaceRobin)
+            workspaceMtime = $mtime
+        }
+        # 兼容旧读取方：robin 仍指源 .robin 的原始字节哈希，别再往里塞已发布哈希
         hashes        = $parts
         seededAt      = [datetime]::UtcNow.ToString('o')
     }
@@ -215,18 +252,34 @@ function Test-FlowFingerprint {
         }
     }
     $base = $read.data
-    $baseShort = [string]$base.hashes.robin
-    if ($baseShort.Length -gt 12) { $baseShort = $baseShort.Substring(0, 12) }
+    # 新基线把哈希分成 source / deployed 两个域；旧基线只有 hashes（源哈希）与已发布路径。
+    $srcBase = $null
+    if ($base.PSObject.Properties.Name -contains 'source' -and $base.source) { $srcBase = $base.source }
+    $depBase = $null
+    if ($base.PSObject.Properties.Name -contains 'deployed' -and $base.deployed) { $depBase = $base.deployed }
+
+    $baseSource = [string]$(if ($srcBase -and $srcBase.robinSha256) { $srcBase.robinSha256 } else { $base.hashes.robin })
+    $baseShort = if ($baseSource.Length -gt 12) { $baseSource.Substring(0, 12) } else { $baseSource }
     $ev = @("baseline=$BaselinePath", "now=$fpLine", "baselined=$baseShort")
 
-    # 3) 身份：流程 GUID / 环境 / 机器任一不符，说明基线不是当前这份运行
+    # 3) 身份：必须用基线里记录的 PAD 显示名去找本地运行历史。
+    #    入参 $FlowName 通常来自 flow.json 的文件名（如 demo-flow），与 PAD 里注册的显示名
+    #    可能完全不同；用文件名去找会让每条流程都永远 UNKNOWN。
+    $displayName = [string]$base.flow
+    if (-not $displayName) { $displayName = $FlowName }
     if ($ScriptsRoot) {
-        $run = Find-LatestFlowRun $ScriptsRoot $FlowName
+        $run = Find-LatestFlowRun $ScriptsRoot $displayName
+        $searched = $displayName
+        if (-not $run -and $displayName -ne $FlowName) {
+            # 兜底：极少数旧基线把业务名写进了 flow 字段
+            $run = Find-LatestFlowRun $ScriptsRoot $FlowName
+            $searched = "$displayName（兜底 $FlowName）"
+        }
         if (-not $run) {
             return [ordered]@{
                 status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-                message = "本地运行历史里找不到流程 $FlowName，无法解析身份"
-                evidence = @("scriptsRoot=$ScriptsRoot")
+                message = "本地运行历史里找不到流程 $displayName，无法解析身份"
+                evidence = @("scriptsRoot=$ScriptsRoot", "searched=$searched")
             }
         }
         if ($base.flowGuid -and [string]$base.flowGuid -ne [string]$run.flowGuid) {
@@ -255,24 +308,56 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 4) 内容：源 .robin 或 config 漂移
-    if ([string]$base.hashes.robin -ne [string]$parts.robin) {
+    # 4) 向后兼容：旧基线没有 deployed 段，无法证明已发布副本一致 → 不许当 pass
+    if (-not $depBase -or -not $depBase.logicHash) {
+        return [ordered]@{
+            status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
+            message = '基线缺少已发布哈希，请重新播种（source/deployed 拆分后的新格式）'
+            evidence = $ev
+        }
+    }
+
+    # 5) 源对源：仓库 .robin 只与基线里的源哈希比（原始字节）
+    if ($baseSource -ne [string]$parts.robin) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_SOURCE_MISMATCH'
             message = '源 .robin 与基线不一致（流程定义有改动，需要重新发布或重新播种）'
             evidence = $ev
         }
     }
-    if ($base.hashes.config -and [string]$base.hashes.config -ne [string]$parts.config) {
+    $baseConfig = [string]$(if ($srcBase -and $srcBase.configSha256) { $srcBase.configSha256 } else { $base.hashes.config })
+    if ($baseConfig -and $baseConfig -ne [string]$parts.config) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_CONFIG_STALE'
             message = '部署配置与基线不一致（变量替换结果会变）'
             evidence = $ev
         }
     }
-    return [ordered]@{ status = 'pass'; code = 'OK'; message = "与基线一致：$fpLine"; evidence = @($BaselinePath) }
+
+    # 6) 仓库 .robin vs 已发布副本：只比逻辑哈希，绝不跨域比原始字节
+    $nowLogic = Get-RobinLogicHash $RobinPath
+    if ($nowLogic -ne [string]$depBase.logicHash) {
+        return [ordered]@{
+            status = $nonPass; code = 'FINGERPRINT_DEPLOYED_MISMATCH'
+            message = '仓库 .robin 与已发布副本的逻辑不一致（发布副本已过期或被改过）'
+            evidence = $ev
+        }
+    }
+
+    # 原始字节不同是常态（PAD 会追加 @@ 头/IMPORT 行并重写转义），只记录不判失败
+    $note = ''
+    if ([string]$depBase.robinSha256 -and [string]$parts.robin -ne [string]$depBase.robinSha256) {
+        $note = '（源与已发布副本原始字节不同，规范化后一致）'
+        $ev += "sourceRaw=$($parts.robin.Substring(0,12)) deployedRaw=$([string]$depBase.robinSha256.ToString().Substring(0,12))"
+    }
+    return [ordered]@{
+        status = 'pass'; code = 'OK'
+        message = "与基线一致：$fpLine$note"
+        evidence = (@($BaselinePath) + $ev)
+    }
 }
 
 Export-ModuleMember -Function Get-FlowGuidFromLogPath, Find-LatestFlowRun, Find-WorkspaceRobin,
     Get-PadEnvironmentId, Get-FingerprintParts, Get-FingerprintBaselinePath,
+    Get-RobinLogicHash, Get-WorkspaceRootFromScriptsRoot,
     Read-FingerprintBaseline, Write-FingerprintBaseline, New-FingerprintBaseline, Test-FlowFingerprint
