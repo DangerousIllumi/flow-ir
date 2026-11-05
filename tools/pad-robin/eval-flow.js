@@ -154,9 +154,22 @@ function validateTrigger(flow, trg, opts = {}) {
     if (confirmNodes.length > 0 && assisted !== true) {
       err("TRIGGER_UNATTENDED_CONFIRM", `无人值守触发但节点需要人工确认：${confirmNodes.map((n) => n.id).join(",")}`);
     }
-    const nonIdem = nodes.filter((n) => n && n.idempotent === false);
-    if (nonIdem.length > 0) {
-      warn("TRIGGER_UNATTENDED_NONIDEMPOTENT", `无人值守触发但节点重跑不安全：${nonIdem.map((n) => n.id).join(",")}`);
+    // 可逆性收窄：与幂等性是两个正交的轴，不再用 idempotent=false 代表后果风险。
+    //   idempotent = 同一输入重跑是否收敛（重跑安全）
+    //   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
+    const irreversible = nodes.filter((n) => n && n.reversible === false);
+    if (irreversible.length > 0) {
+      warn("TRIGGER_UNATTENDED_IRREVERSIBLE",
+        `无人值守触发但存在后果不可回退的节点：${irreversible
+          .map((n) => `${n.id}${n.reversibility_note ? `（${n.reversibility_note}）` : ""}`)
+          .join("、")}`);
+    }
+    // idempotent=false 却没声明 reversible：提示补声明，不默认填充
+    const missingRev = nodes.filter(
+      (n) => n && n.idempotent === false && !hasOwn(n, "reversible"));
+    if (missingRev.length > 0) {
+      warn("TRIGGER_MISSING_REVERSIBILITY",
+        `节点 idempotent=false 但未声明 reversible：${missingRev.map((n) => n.id).join(",")}`);
     }
   }
 

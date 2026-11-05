@@ -94,6 +94,8 @@ function Get-TriggerSpec {
     $fileSettleSec = 60
     $fileMaxWaitSec = 7200
     $fileOncePerFile = $true
+    # 声明级提示（warn）：不阻断注册，随 spec 返回给调用方展示
+    $triggerWarnings = @()
 
     if ($kind -eq 'manual') {
         foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file', 'assisted')) {
@@ -187,6 +189,34 @@ function Get-TriggerSpec {
             throw (New-TriggerException 'TRIGGER_UNATTENDED_CONFIRM' `
                 ("无人值守触发但节点需要人工确认：" + (@($confirm | ForEach-Object { $_.id }) -join ',')))
         }
+        # 可逆性收窄：与幂等性是两个正交的轴。
+        #   idempotent = 同一输入重跑是否收敛（重跑安全）
+        #   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
+        # 无人值守只对「后果不可回退」提示，不再由 idempotent=false 触发。
+        $irreversible = @($flow.nodes | Where-Object {
+            $_ -and (Test-TriggerProp $_ 'reversible') -and $_.reversible -eq $false
+        })
+        foreach ($n in $irreversible) {
+            $note = $null
+            if (Test-TriggerProp $n 'reversibility_note') { $note = [string]$n.reversibility_note }
+            $triggerWarnings += [ordered]@{
+                code     = 'TRIGGER_UNATTENDED_IRREVERSIBLE'
+                message  = "无人值守触发但节点 $($n.id) 后果不可回退（reversible=false）"
+                evidence = @("节点 $($n.id) reversible=false" + $(if ($note) { "：$note" } else { '' }))
+            }
+        }
+        # idempotent=false 却没声明 reversible：提示补声明，不默认填充
+        $missingRev = @($flow.nodes | Where-Object {
+            $_ -and (Test-TriggerProp $_ 'idempotent') -and $_.idempotent -eq $false -and
+            -not (Test-TriggerProp $_ 'reversible')
+        })
+        foreach ($n in $missingRev) {
+            $triggerWarnings += [ordered]@{
+                code     = 'TRIGGER_MISSING_REVERSIBILITY'
+                message  = "节点 $($n.id) idempotent=false 但未声明 reversible"
+                evidence = @("节点 $($n.id) idempotent=false，reversible 未声明")
+            }
+        }
     }
 
     $taskName = $null
@@ -217,6 +247,8 @@ function Get-TriggerSpec {
         fileSettleSec = $fileSettleSec
         fileMaxWaitSec = $fileMaxWaitSec
         fileOncePerFile = $fileOncePerFile
+        # 声明级 warn：调用方可直接展示，不阻断注册
+        warnings     = @($triggerWarnings)
         raw          = $trg
     }
 }

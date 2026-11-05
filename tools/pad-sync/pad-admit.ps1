@@ -442,13 +442,33 @@ function Invoke-TriggerCheck {
                 message = '无人值守触发但节点需要人工确认'
                 evidence = @($confirm | ForEach-Object { "节点 $($_.id) run_mode=confirm" }) }
         }
-        $nonIdem = @($nodes | Where-Object {
-            $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false
+        # 可逆性收窄：与幂等性是两个正交的轴。
+        #   idempotent = 同一输入重跑是否收敛（重跑安全）
+        #   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
+        # 无人值守只对「后果不可回退」告警，不再由 idempotent=false 触发。
+        $irreversible = @($nodes | Where-Object {
+            $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $false
         })
-        if ($nonIdem.Count -gt 0) {
-            $issues += @{ status = 'warn'; code = 'TRIGGER_UNATTENDED_NONIDEMPOTENT'
-                message = '无人值守触发但节点重跑不安全（idempotent=false），请确认重跑后果'
-                evidence = @($nonIdem | ForEach-Object { "节点 $($_.id) idempotent=false" }) }
+        if ($irreversible.Count -gt 0) {
+            $issues += @{ status = 'warn'; code = 'TRIGGER_UNATTENDED_IRREVERSIBLE'
+                message = '无人值守触发但存在后果不可回退的节点（reversible=false），请确认回退办法'
+                evidence = @($irreversible | ForEach-Object {
+                    $note = $null
+                    if (Test-PropExists $_ 'reversibility_note') { $note = [string]$_.reversibility_note }
+                    if ($note) { "节点 $($_.id) reversible=false：$note" } else { "节点 $($_.id) reversible=false" }
+                }) }
+        }
+        # idempotent=false 却没声明 reversible：提示补声明，不拿默认值糊过去
+        $missingRev = @($nodes | Where-Object {
+            $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false -and
+            -not (Test-PropExists $_ 'reversible')
+        })
+        if ($missingRev.Count -gt 0) {
+            $issues += @{ status = 'warn'; code = 'TRIGGER_MISSING_REVERSIBILITY'
+                message = '节点 idempotent=false 但未声明 reversible，请补声明（后果能否回退）'
+                evidence = @($missingRev | ForEach-Object {
+                    "节点 $($_.id) idempotent=false，reversible 未声明"
+                }) }
         }
     }
 
