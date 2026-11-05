@@ -29,6 +29,8 @@ param(
     [string]$ConfigFile,
     [string]$AcceptanceFile,
     [string]$BaselinePath,
+    # 业务流文件；不传时按 -FlowName 的 pad_flow_name 在 business\flows 反查
+    [string]$FlowFile,
     [string]$EnvironmentId,
     [switch]$Set,
     [switch]$DryRun,
@@ -48,18 +50,46 @@ if (-not $ScriptsRoot) {
 if (-not $WorkspaceRoot) {
     $WorkspaceRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Workspace'
 }
+# ── 业务流标识：与 pad-admit 同一套解析 ──────────────────────────
+# PAD 流程名（中文）用于在本地运行历史里定位流程，
+# 但仓库侧产物（.robin / config / acceptance / 基线）一律用 flow.json 文件名命名；
+# 两者不是一个名字时若混用，基线会写到准入读不到的位置（永远 NO_BASELINE）。
+function Resolve-FlowFileByName([string]$FlowsDir, [string]$Name) {
+    if (-not $Name -or -not (Test-Path -LiteralPath $FlowsDir)) { return $null }
+    $items = @(Get-ChildItem -LiteralPath $FlowsDir -Filter '*.json' -File | Where-Object {
+        $_.Name -notmatch '\.(acceptance|schema)\.json$'
+    } | ForEach-Object {
+        $j = $null
+        try { $j = [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { }
+        [ordered]@{ File = $_.FullName; Json = $j }
+    })
+    # 先按 pad_flow_name 精确匹配；命中不唯一时不做猜测
+    $hit = @($items | Where-Object { [string]$_.Json.pad_flow_name -eq $Name })
+    if ($hit.Count -eq 1) { return $hit[0].File }
+    return $null
+}
+
+if (-not $FlowFile) { $FlowFile = Resolve-FlowFileByName (Join-Path $RepoRoot 'business\flows') $FlowName }
+# 反查不到时退回 PAD 流程名（存量流可能还没有 pad_flow_name）
+$businessName = if ($FlowFile) {
+    [IO.Path]::GetFileNameWithoutExtension($FlowFile)
+} else { $FlowName }
+
 if (-not $ConfigFile) {
-    $guess = Join-Path $RepoRoot ("business\config\{0}.json" -f $FlowName)
+    $guess = Join-Path $RepoRoot ("business\config\{0}.json" -f $businessName)
     if (Test-Path -LiteralPath $guess) { $ConfigFile = $guess }
 }
 if (-not $AcceptanceFile) {
     # 与 pad-release 同一口径：业务流目录下同名的 <flow>.acceptance.json
-    $guess = Join-Path $RepoRoot ("business\flows\{0}.acceptance.json" -f $FlowName)
+    $guess = Join-Path $RepoRoot ("business\flows\{0}.acceptance.json" -f $businessName)
     if (Test-Path -LiteralPath $guess) { $AcceptanceFile = $guess }
 }
-if (-not $BaselinePath) { $BaselinePath = Get-FingerprintBaselinePath $RepoRoot $FlowName }
+if (-not $BaselinePath) { $BaselinePath = Get-FingerprintBaselinePath $RepoRoot $businessName }
 
 function Log([string]$m) { Write-Host "[fingerprint] $m" }
+if ($businessName -ne $FlowName) {
+    Log "业务流：$businessName（基线/产物按 flow.json 文件名命名，与 pad-admit 一致）"
+}
 
 $result = [ordered]@{
     ok = $false; flow = $FlowName; stage = 'locate'
@@ -92,8 +122,9 @@ try {
     $result.environmentId = $(if ($EnvironmentId) { $EnvironmentId } else { Get-PadEnvironmentId $ConsoleConfigPath })
 
     # 源 .robin 取流程产物；找不到时退回已发布副本（由日志显式提示）
+    # 源 .robin 与 pad-admit 比对的是同一份文件：按 flow.json 文件名取，取不到才退回已发布副本
     $sourceRobin = $null
-    $guess = Join-Path $RepoRoot ("business\flows\{0}.robin" -f $FlowName)
+    $guess = Join-Path $RepoRoot ("business\flows\{0}.robin" -f $businessName)
     if (Test-Path -LiteralPath $guess) { $sourceRobin = $guess } else { $sourceRobin = $wsRobin }
     $result.hashes = Get-FingerprintParts $sourceRobin $ConfigFile $AcceptanceFile
     $sha = @()

@@ -209,6 +209,49 @@ Describe 'PadFingerprint 比对' {
     }
 }
 
+Describe 'pad-fingerprint 基线命名与 pad-admit 同口径' {
+    It '按 pad_flow_name 反查 flow.json：基线落在 <flow文件名>.json，准入能读到' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $runId = '22222222-2222-2222-2222-222222222222'
+        # PAD 流程名与业务流文件名不同：这正是中文流程名的真实形态
+        $padName = '示例流程显示名'
+        $bizName = 'demo-flow'
+        $fake = New-FakePad $work $padName $g $runId
+
+        $flows = Join-Path $work 'business\flows'
+        New-Item -ItemType Directory -Path $flows -Force | Out-Null
+        $flowJson = Join-Path $flows "$bizName.json"
+        [IO.File]::WriteAllText($flowJson,
+            ('{"pad_flow_name":"' + $padName + '","name":"' + $bizName + '"}'),
+            (New-Object Text.UTF8Encoding($false)))
+        $srcRobin = Join-Path $flows "$bizName.robin"
+        [IO.File]::WriteAllText($srcRobin, "SET A TO 'src'", (New-Object Text.UTF8Encoding($false)))
+        $cfgDir = Join-Path $work 'business\config'
+        New-Item -ItemType Directory -Path $cfgDir -Force | Out-Null
+        $cfg = Join-Path $cfgDir "$bizName.json"
+        [IO.File]::WriteAllText($cfg, '{"A":"1"}', (New-Object Text.UTF8Encoding($false)))
+        $acc = Join-Path $flows "$bizName.acceptance.json"
+        [IO.File]::WriteAllText($acc, '{"items":[]}', (New-Object Text.UTF8Encoding($false)))
+
+        $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:Script -FlowName $padName `
+            -RepoRoot $work -ScriptsRoot $fake.scripts -WorkspaceRoot $fake.workspace `
+            -ConsoleConfigPath (Join-Path $work 'none.config') -Set -Confirm 2>&1 | Out-String
+        $LASTEXITCODE | Should Be 0
+
+        # 关键断言：基线用的是 flow.json 文件名，不是 PAD 流程名
+        $baseline = Join-Path $work "business\fingerprints\$bizName.json"
+        (Test-Path -LiteralPath $baseline) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $work "business\fingerprints\$padName.json")) | Should Be $false
+
+        # 与 pad-admit 同一口径（不传 ScriptsRoot）读取：应能命中，且哈希一致
+        $r = Test-FlowFingerprint -FlowName $bizName -RobinPath $srcRobin -ConfigPath $cfg `
+            -AcceptancePath $acc -BaselinePath $baseline
+        $r.status | Should Be 'pass'
+        $r.code | Should Be 'OK'
+    }
+}
+
 Describe 'pad-fingerprint 播种必须人工确认' {
     It '-Set 不加 -Confirm：打印定位结果、退出码 2、不写基线；加 -Confirm 才写' {
         $work = New-Work
