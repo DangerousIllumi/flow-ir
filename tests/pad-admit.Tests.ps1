@@ -1,7 +1,7 @@
 ﻿# pad-admit.Tests.ps1 — 准入网关纯函数与端到端测试（Pester 3.4）
 #
 # 覆盖：通配符匹配、策略 deny/ask/allow 三层顺序、无人值守 ask=deny、
-#       真实流程 13 项检查全部可跑（子进程执行，避免 exit 影响测试会话）。
+#       真实流程 14 项检查全部可跑（子进程执行，避免 exit 影响测试会话）。
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-admit.ps1') -NoMain
 
@@ -146,6 +146,68 @@ Describe 'pad-admit 策略评估' {
     }
 }
 
+Describe 'pad-admit TRIGGER 第 14 项（观察期 warn）' {
+    It '无 trigger：warn + TRIGGER_MISSING' {
+        $f = [pscustomobject]@{ nodes = @() }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r.Count | Should Be 1
+        $r[0].id | Should Be 'TRIGGER'
+        $r[0].status | Should Be 'warn'
+        $r[0].code | Should Be 'TRIGGER_MISSING'
+    }
+
+    It '旧 type/config 形状：warn + TRIGGER_LEGACY_SHAPE' {
+        $trg = [pscustomobject]@{ type = 'schedule'; config = [pscustomobject]@{ dayOfMonth = 3 } }
+        $f = [pscustomobject]@{ nodes = @(); trigger = $trg }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'warn'
+        $r[0].code | Should Be 'TRIGGER_LEGACY_SHAPE'
+    }
+
+    It 'kind=mail：fail + TRIGGER_KIND_UNSUPPORTED' {
+        $f = [pscustomobject]@{ nodes = @(); trigger = [pscustomobject]@{ kind = 'mail' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'TRIGGER_KIND_UNSUPPORTED'
+    }
+
+    It 'file.dir 是字面路径：fail + TRIGGER_PATH_LITERAL' {
+        $trg = [pscustomobject]@{
+            kind = 'file'; time = '08:30'
+            file = [pscustomobject]@{ dir = '<附件目录>/inbox'; pattern = '*.xlsx' }
+        }
+        $f = [pscustomobject]@{ nodes = @(); trigger = $trg }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'TRIGGER_PATH_LITERAL'
+    }
+
+    It 'schedule + run_mode=confirm 节点：fail + TRIGGER_UNATTENDED_CONFIRM' {
+        $nodes = @([pscustomobject]@{ id = '9'; pad_hint = 'Display.ShowMessageDialog.ShowMessage'; run_mode = 'confirm'; idempotent = $true })
+        $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'TRIGGER_UNATTENDED_CONFIRM'
+        ($r[0].evidence -join ' ') | Should Match '节点 9'
+    }
+
+    It 'schedule 缺 time：fail + TRIGGER_INVALID' {
+        $f = [pscustomobject]@{ nodes = @(); trigger = [pscustomobject]@{ kind = 'schedule' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'TRIGGER_INVALID'
+    }
+
+    It 'manual 最小声明：pass 且 message 带 kind' {
+        $f = [pscustomobject]@{ nodes = @(); trigger = [pscustomobject]@{ kind = 'manual' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r.Count | Should Be 1
+        $r[0].status | Should Be 'pass'
+        $r[0].message | Should Match 'manual'
+    }
+}
+
 Describe 'pad-admit 不再默认到具体业务流程' {
     It '未传 -FlowFile 且按流程名派生不到：非零退出，且不进入准入检查' {
         $out = Join-Path $TestDrive ('admit-' + [guid]::NewGuid().ToString('N') + '.txt')
@@ -155,8 +217,8 @@ Describe 'pad-admit 不再默认到具体业务流程' {
         $text = [IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)
         $text | Should Match '未提供 -FlowFile'
         $text | Should Match '-FlowFile'
-        # 必须在读取流程定义之前失败，不能输出 13 项准入检查的汇总
-        $text | Should Not Match '"total":13'
+        # 必须在读取流程定义之前失败，不能输出 14 项准入检查的汇总
+        $text | Should Not Match '"total":14'
         $text | Should Not Match 'POLICY_'
     }
 }

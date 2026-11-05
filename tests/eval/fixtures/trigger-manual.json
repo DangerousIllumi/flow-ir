@@ -1,0 +1,19 @@
+{
+  "name": "<流程名>",
+  "description": "触发声明断言用：manual 最小声明，节点全部自动执行",
+  "trigger": { "kind": "manual" },
+  "nodes": [
+    {
+      "id": "1",
+      "type": "dialog.show",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "label": "显示结果",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true
+    }
+  ]
+}

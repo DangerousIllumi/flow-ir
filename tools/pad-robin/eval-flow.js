@@ -16,6 +16,140 @@ const path = require("path");
 // 节点运行方式的取值集合：自动执行 / 需人工确认 / 只读观察
 const RUN_MODES = ["auto", "confirm", "observe"];
 
+// 触发声明（trigger）的取值集合。
+// 与 pad-admit 第 14 项共用同一口径：保留值单列，便于给出“支持但未实现”而不是“拼错”的提示。
+const TRIGGER_KINDS = ["manual", "schedule", "file"];
+const TRIGGER_RESERVED_KINDS = ["mail", "callback"];
+const TRIGGER_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const TRIGGER_GATES = ["none", "workday", "last-workday"];
+// HH:mm，只接受 24 小时制两位写法（9:00 这类一位写法直接判非法，避免注册时再猜）
+const TRIGGER_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function isPlainObject(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+// 正整数校验：JSON 里写成字符串或小数一律不认
+function isPositiveInt(v) {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 && Number.isInteger(v);
+}
+
+/**
+ * 校验 trigger 声明，返回 { errors, warnings }，条目形如 { code, detail }。
+ * 只做静态契约校验，不查本机注册状态（注册验证属于 pad-trigger / pad-admit -TriggerLive）。
+ * 结果码与 docs/trigger-adapter-design.md 第 4.2 节一致。
+ */
+function validateTrigger(flow, trg, opts = {}) {
+  const errors = [];
+  const warnings = [];
+  const err = (code, detail) => errors.push({ code, detail });
+  const warn = (code, detail) => warnings.push({ code, detail });
+
+  if (trg === undefined || trg === null) {
+    return { errors: [{ code: "TRIGGER_MISSING", detail: "缺少 trigger 声明" }], warnings };
+  }
+  if (!isPlainObject(trg)) {
+    return { errors: [{ code: "TRIGGER_INVALID", detail: "trigger 必须是对象" }], warnings };
+  }
+  // 旧形状：只有 type/config 没有 kind，不做静默映射
+  if (!hasOwn(trg, "kind") && hasOwn(trg, "type")) {
+    return { errors: [{ code: "TRIGGER_LEGACY_SHAPE", detail: "只有 type/config 旧形状，缺 kind" }], warnings };
+  }
+  if (typeof trg.kind !== "string" || !trg.kind) {
+    return { errors: [{ code: "TRIGGER_INVALID", detail: `kind=${JSON.stringify(trg.kind)}（必须是字符串）` }], warnings };
+  }
+  if (TRIGGER_RESERVED_KINDS.includes(trg.kind)) {
+    return { errors: [{ code: "TRIGGER_KIND_UNSUPPORTED", detail: `kind=${trg.kind} 是保留值，v1 没有对应注册器` }], warnings };
+  }
+  if (!TRIGGER_KINDS.includes(trg.kind)) {
+    return { errors: [{ code: "TRIGGER_UNKNOWN_KIND", detail: `kind=${trg.kind} 不在 ${TRIGGER_KINDS.join("/")}` }], warnings };
+  }
+  const kind = trg.kind;
+
+  // 任务名：显式给出时必须是安全字符，否则计划任务名无法稳定复现
+  if (hasOwn(trg, "task_name")) {
+    const tn = trg.task_name;
+    if (typeof tn !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(tn)) {
+      err("TRIGGER_INVALID", `task_name=${JSON.stringify(tn)} 不匹配 ^[A-Za-z0-9._-]{1,64}$`);
+    }
+  }
+
+  if (kind === "manual") {
+    for (const key of ["time", "days", "gate", "timeout_sec", "file"]) {
+      if (hasOwn(trg, key)) err("TRIGGER_INVALID", `manual 不允许声明 ${key}（声明了也没人执行）`);
+    }
+    return { errors, warnings };
+  }
+
+  // schedule / file 共用：时刻、星期、日历门、超时
+  const time = hasOwn(trg, "time") ? trg.time : undefined;
+  if (typeof time !== "string" || !TRIGGER_TIME_RE.test(time)) {
+    err("TRIGGER_INVALID", `time=${JSON.stringify(time)}（应为 HH:mm，如 09:00）`);
+  }
+  if (hasOwn(trg, "days")) {
+    if (!Array.isArray(trg.days) || trg.days.length === 0) {
+      err("TRIGGER_INVALID", `days=${JSON.stringify(trg.days)}（应是非空数组）`);
+    } else if (trg.days.some((d) => !TRIGGER_DAYS.includes(d))) {
+      err("TRIGGER_INVALID", `days 含非法值：${JSON.stringify(trg.days.filter((d) => !TRIGGER_DAYS.includes(d)))}`);
+    }
+  }
+  if (hasOwn(trg, "gate")) {
+    if (!TRIGGER_GATES.includes(trg.gate)) {
+      err("TRIGGER_INVALID", `gate=${JSON.stringify(trg.gate)} 不在 ${TRIGGER_GATES.join("/")}`);
+    }
+  } else if (kind === "schedule") {
+    warn("TRIGGER_NO_GATE", "schedule 未声明 gate，节假日会照跑（如不需要请显式写 gate=none）");
+  }
+  if (hasOwn(trg, "timeout_sec") && !isPositiveInt(trg.timeout_sec)) {
+    err("TRIGGER_INVALID", `timeout_sec=${JSON.stringify(trg.timeout_sec)}（应为正整数秒）`);
+  }
+
+  if (kind === "file") {
+    if (!hasOwn(trg, "file") || !isPlainObject(trg.file)) {
+      err("TRIGGER_INVALID", "file 触发必须带 file 对象");
+    } else {
+      const f = trg.file;
+      const dir = hasOwn(f, "dir") ? f.dir : undefined;
+      if (typeof dir !== "string" || !dir) {
+        err("TRIGGER_INVALID", "file.dir 必填");
+      } else if (!/^\{\{config\.\w+\}\}$/.test(dir)) {
+        // 只接受配置引用，禁止把绝对路径写进 flow.json
+        err("TRIGGER_PATH_LITERAL", `file.dir=${dir} 必须是 {{config.<KEY>}} 引用，不能是字面路径`);
+      }
+      if (typeof f.pattern !== "string" || !f.pattern.trim()) {
+        err("TRIGGER_INVALID", "file.pattern 必填且不能为空");
+      }
+      for (const key of ["poll_sec", "settle_sec", "max_wait_sec"]) {
+        if (hasOwn(f, key) && !isPositiveInt(f[key])) {
+          err("TRIGGER_INVALID", `file.${key}=${JSON.stringify(f[key])}（应为正整数秒）`);
+        }
+      }
+      if (hasOwn(f, "once_per_file") && typeof f.once_per_file !== "boolean") {
+        err("TRIGGER_INVALID", `file.once_per_file=${JSON.stringify(f.once_per_file)}（应为 true/false）`);
+      }
+    }
+  }
+
+  // 与节点声明的交叉校验：只对“真实流程”生效；断言里传入的 def 只验声明形状，不拿流程节点做陪衬
+  if (!opts.skipCrossCheck) {
+    const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
+    const confirmNodes = nodes.filter((n) => n && n.run_mode === "confirm");
+    if (confirmNodes.length > 0) {
+      err("TRIGGER_UNATTENDED_CONFIRM", `无人值守触发但节点需要人工确认：${confirmNodes.map((n) => n.id).join(",")}`);
+    }
+    const nonIdem = nodes.filter((n) => n && n.idempotent === false);
+    if (nonIdem.length > 0) {
+      warn("TRIGGER_UNATTENDED_NONIDEMPOTENT", `无人值守触发但节点重跑不安全：${nonIdem.map((n) => n.id).join(",")}`);
+    }
+  }
+
+  return { errors, warnings };
+}
+
 /** 断言操作表：每个操作返回 { ok, detail } */
 const OPS = {
   // 节点总数：用于锁住结构不再漂移
@@ -138,6 +272,32 @@ const OPS = {
       detail: missing.length ? `缺声明节点 ${missing.length} 个：${ids.slice(0, 12).join(",")}${ids.length > 12 ? "…" : ""}` : `${flow.nodes.length} 个节点均已声明`,
     };
   },
+  // 触发声明断言：a.def 给了就验该对象（只验声明形状），否则验流程自身的 trigger。
+  // a.expect=invalid 时断言“确实不合法且命中 a.code”，避免把反例写成正例。
+  trigger(flow, a) {
+    const inline = hasOwn(a, "def");
+    const trg = inline ? a.def : flow.trigger;
+    const { errors, warnings } = validateTrigger(flow, trg, { skipCrossCheck: inline });
+    const codes = [...errors, ...warnings].map((x) => x.code);
+    if (a.expect === "invalid") {
+      const hit = codes.includes(a.code);
+      return { ok: hit, detail: `期望 ${a.code}，实际 ${codes.length ? codes.join(",") : "无错误"}` };
+    }
+    return {
+      ok: errors.length === 0,
+      detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("；") : `trigger=${trg.kind} 合法`,
+    };
+  },
+  // 触发已声明：只看流程自身的 trigger，不接受 def 覆盖
+  triggerComplete(flow) {
+    const trg = flow.trigger;
+    const { errors } = validateTrigger(flow, trg);
+    const kindOk = isPlainObject(trg) && TRIGGER_KINDS.includes(trg.kind);
+    return {
+      ok: kindOk && errors.length === 0,
+      detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("；") : `trigger=${trg.kind} 已声明`,
+    };
+  },
 };
 
 function runCase(flow, c) {
@@ -201,7 +361,17 @@ if (require.main === module) {
       report.push({ flow: s.flowPath, error: e.message, cases: [] });
       continue;
     }
-    const cases = s.cases.map((c) => runCase(flow, c));
+    // 允许单条用例用 flow 覆盖被测文件：用于「同一份断言集里放正例和反例」，
+    // 例如反例需要一个 run_mode=confirm 的节点，而正例需要一个干净流程。
+    const cases = s.cases.map((c) => {
+      if (!c.flow) return runCase(flow, c);
+      try {
+        const own = JSON.parse(fs.readFileSync(c.flow, "utf8"));
+        return runCase(own, c);
+      } catch (e) {
+        return { id: c.id, requirement: c.requirement, ok: false, results: [{ ok: false, detail: `读取用例流程失败：${e.message}` }] };
+      }
+    });
     total += cases.length;
     passed += cases.filter((c) => c.ok).length;
     report.push({ flow: s.flowPath, cases });

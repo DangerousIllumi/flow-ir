@@ -29,6 +29,7 @@
 | 11 | PREFLIGHT | 机器环境 | PAD/Python/SAP/Outlook/目录齐全 | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
 | 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（默认 warn，观察期后再切 fail） |
 | 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
+| 14 | TRIGGER | `flow.json` 的 `trigger` 块 | kind 取值域、必填字段、目录必须走配置引用、无人值守不得要求人工确认 | `TRIGGER_*`（见 2.2） | `pad-admit.ps1`（观察期未声明记 warn） |
 
 ### 2.1 指纹（FINGERPRINT）结果码
 
@@ -48,6 +49,28 @@
 | `FINGERPRINT_BASELINE_CORRUPT` | 基线 JSON 损坏或缺 `flow`/`hashes.robin` | `baseline=` |
 | `AMBIGUOUS` | Workspace 命中多个候选修订，无法确定本次发布对应哪一份 | 候选修订目录名 |
 
+### 2.2 触发声明（TRIGGER）结果码
+
+机制在设计稿 `docs/trigger-adapter-design.md` 中定义；本项只做**静态**校验，不查本机计划任务注册状态。
+
+| 结果码 | 判级 | 含义 |
+|---|---|---|
+| `TRIGGER_MISSING` | warn（观察期） | 没有 `trigger` 块，启动方式仍靠口头约定 |
+| `TRIGGER_LEGACY_SHAPE` | warn（观察期） | 只有旧 `type/config`，没有 `kind` |
+| `TRIGGER_UNKNOWN_KIND` | fail | `kind` 不在 `manual/schedule/file` |
+| `TRIGGER_KIND_UNSUPPORTED` | fail | `kind` 是保留值（`mail`/`callback`），v1 无注册器 |
+| `TRIGGER_INVALID` | fail | 缺必填、`time` 非 `HH:mm`、`days`/`gate` 非法、`file.pattern` 为空 |
+| `TRIGGER_PATH_LITERAL` | fail | `file.dir` 写死路径，未用 `{{config.<KEY>}}` 引用 |
+| `TRIGGER_UNATTENDED_CONFIRM` | fail | 非 `manual` 触发但存在 `run_mode=confirm` 节点 |
+| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn | 非 `manual` 触发但存在 `idempotent=false` 节点 |
+| `TRIGGER_NO_GATE` | warn | `schedule` 未声明 `gate`，节假日会照跑 |
+| `TRIGGER_AMBIGUOUS` | fail | 任务名已被 `business/flows` 下其他流程占用 |
+| `TRIGGER_NOT_REGISTERED` | warn | 仅 `-TriggerLive`（本次未实现） |
+| `TRIGGER_DRIFT` | fail | 仅 `-TriggerLive`（本次未实现） |
+
+切换顺序：先让存量流程补齐 `trigger`，观察期 `$script:TriggerMode` 保持 `warn`，
+确认无漏报后再单独提交改为 `fail`。
+
 切换顺序（硬要求）：先上线写入侧（`pad-release` / `pad-rollback`）与
 `pad-fingerprint.ps1 -Set`，把存量流基线播种出来，**默认级别保持 warn**；
 等真实运行观察无误后，再单独提交把 `pad-admit.ps1` 里的 `$script:FingerprintMode` 改为 `fail`。
@@ -58,7 +81,7 @@
 
 | 阶段 | 跑哪些检查 | 触发点 |
 |---|---|---|
-| 离线（生成前） | 1–6、9、10 | `pad-admit` / `flow-to-robin` / CI |
+| 离线（生成前） | 1–6、9、10、14 | `pad-admit` / `flow-to-robin` / CI |
 | 运行前 | 7、8、11、12 | `pad-sync` 注入前 |
 | 运行后 | 验收判据 | `pad-sync` 运行后（G6） |
 
@@ -134,7 +157,7 @@
 
 ## 8. 落地顺序
 
-1. **只读版**：新增 `pad-admit.ps1`，跑完 13 项只输出报告，不阻断任何现有流程。
+1. **只读版**：新增 `pad-admit.ps1`，跑完 14 项只输出报告，不阻断任何现有流程。
 2. **接入**：把 `pad-sync` 注入前、`pad-deploy` 部署前改为硬门禁。
 3. **披露**：把 `business/policy.json` 的 deny 规则渲染成清单，放进 Agent A 的设计提示词，减少无效设计。
 4. **指纹批准**：确认框显示三个哈希，发布前复核，支持“批准记录”文件。

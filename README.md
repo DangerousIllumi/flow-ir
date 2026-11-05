@@ -43,7 +43,7 @@
 | 把「每月 3 号从邮箱取对账单，和系统核对，不一致的发邮件给经理」写成一版**可评审的结构化定义**（`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
 | 把定义**确定性地编译**成 `.robin` 脚本 | `flow-to-robin.js` 查动作知识库填空，动作/参数写错直接拒绝产出 |
 | 编译前**静态校验**：语法、变量是否定义、`edges` 与结构是否漂移 | `check.js` / `check-flows.js` / `lint-robin.js` |
-| **准入**：动作是否注册、是否需要 UI 选择器、预算、策略 deny/ask/allow | `pad-admit.ps1`（13 项，只读） |
+| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（14 项，只读） |
 | 副作用**可跳过**：发信、过账、删文件的 `guard` + `DRY_RUN` | 生成器 + 策略双层保证 |
 | 注入设计器、发布、回滚、定时、遥测、产物验收 | `tools/pad-sync/` |
 

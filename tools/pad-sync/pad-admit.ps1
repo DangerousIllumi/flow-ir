@@ -1,6 +1,6 @@
 ﻿# pad-admit.ps1 — 只读准入网关：部署/运行前判断"这份流程、这次运行是否被允许"
 #
-# 对应 docs/admission-gate.md 的 13 项检查。硬约束：
+# 对应 docs/admission-gate.md 的 14 项检查。硬约束：
 #   1) 只读：不启动 PAD、不连 SAP、不发邮件、不写产物
 #   2) 一次返回全部问题，不因第一条失败提前退出
 #   3) 每条失败带 code + 人话 + 证据（节点 id / 参数 / 文件名）
@@ -15,6 +15,7 @@
 #   - BUDGET 未声明时记 warn 而不是 fail（否则所有存量流程都过不了）
 #   - INTENT 缺失记 warn（策略仍可用 paramsMatch 兜底）
 #   - 未提供批准记录时 FINGERPRINT 记 warn
+#   - TRIGGER 在观察期未声明记 warn（存量流程迁移完成后改为 fail）
 
 [CmdletBinding()]
 param(
@@ -222,7 +223,230 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
     return $results
 }
 
-# 主体检查：一次跑完 13 项
+# ---------- TRIGGER（第 14 项）：触发声明 ----------
+# 观察期：存量流程还没有 trigger，默认记 warn；迁移完成后单独提交改为 fail。
+# 与指纹同一做法：切换级别是独立改动，不混在本次功能里。
+$script:TriggerMode = 'warn'
+$script:TriggerKinds = @('manual', 'schedule', 'file')
+# 保留值单列：写 mail/callback 是「支持但 v1 未实现」，与拼错区分开
+$script:TriggerReservedKinds = @('mail', 'callback')
+$script:TriggerDays = @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+$script:TriggerGates = @('none', 'workday', 'last-workday')
+$script:TriggerDayNames = @{
+    mon = '周一'; tue = '周二'; wed = '周三'; thu = '周四'; fri = '周五'; sat = '周六'; sun = '周日'
+}
+
+# 属性存在性判断：兼容 JSON 得到的 PSCustomObject 与测试里直接构造的 Hashtable
+function Test-PropExists($Obj, [string]$Name) {
+    if ($null -eq $Obj) { return $false }
+    if ($Obj -is [hashtable]) { return $Obj.ContainsKey($Name) }
+    return (@($Obj.PSObject.Properties.Name) -contains $Name)
+}
+
+# 正整数秒：字符串、小数、0、负数一律不认，避免注册器再猜单位
+function Test-TriggerPositiveInt($Value) {
+    if ($null -eq $Value -or $Value -is [string] -or $Value -is [bool]) { return $false }
+    if (-not ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal])) { return $false }
+    $d = [double]$Value
+    return ($d -gt 0 -and $d -eq [math]::Floor($d))
+}
+
+# 默认任务名：与 pad-schedule 的 Get-ScheduleTaskName 同口径，避免两处派生规则漂移
+function Get-TriggerTaskName([string]$FlowName) {
+    $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
+    if (-not $safe) { return $null }
+    return 'flow-ir-' + $safe
+}
+
+# 静态任务名冲突：扫 business\flows 下其他流程声明的有效任务名，命中即不覆盖
+function Find-TriggerTaskCollision {
+    param([string]$Repo, [string]$SelfFile, [string]$TaskName)
+    $hits = @()
+    if (-not $Repo -or -not $TaskName) { return $hits }
+    $dir = Join-Path $Repo 'business\flows'
+    if (-not (Test-Path -LiteralPath $dir)) { return $hits }
+    $self = $null
+    if ($SelfFile -and (Test-Path -LiteralPath $SelfFile)) { $self = (Resolve-Path -LiteralPath $SelfFile).Path }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        if ($self -and $f.FullName -eq $self) { continue }
+        try { $j = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
+        if (-not (Test-PropExists $j 'trigger')) { continue }
+        $t = $null
+        if (Test-PropExists $j.trigger 'task_name') { $t = [string]$j.trigger.task_name }
+        elseif ((Test-PropExists $j.trigger 'kind') -and [string]$j.trigger.kind -ne 'manual') {
+            $t = Get-TriggerTaskName ([IO.Path]::GetFileNameWithoutExtension($f.Name))
+        }
+        if ($t -eq $TaskName) { $hits += $f.Name }
+    }
+    return $hits
+}
+
+# 第 14 项主体：只做静态校验。
+# 后续接入点（本次不实现）：加 -TriggerLive 后查 Get-ScheduledTask 与 specHash，
+# 补 TRIGGER_NOT_REGISTERED（warn）/ TRIGGER_DRIFT（fail）两个 live 结果码。
+function Invoke-TriggerCheck {
+    param($Flow, [string]$FlowName, [string]$Repo, [string]$SelfFile)
+    $issues = @()
+
+    $trg = $null
+    if (Test-PropExists $Flow 'trigger') { $trg = $Flow.trigger }
+    if ($null -eq $trg) {
+        return @(New-AdmitCheck 'TRIGGER' $script:TriggerMode 'TRIGGER_MISSING' `
+            '未声明触发方式（trigger），启动约定仍靠口头记忆；请补 trigger 块' @())
+    }
+    if (-not (Test-PropExists $trg 'kind') -and (Test-PropExists $trg 'type')) {
+        return @(New-AdmitCheck 'TRIGGER' $script:TriggerMode 'TRIGGER_LEGACY_SHAPE' `
+            '只有 type/config 旧形状，缺 kind；请迁移到 kind（不做静默映射）' @("trigger.type=$([string]$trg.type)"))
+    }
+    if (-not (Test-PropExists $trg 'kind') -or -not [string]$trg.kind) {
+        return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_INVALID' 'trigger.kind 缺失或不是字符串' @())
+    }
+    $kind = [string]$trg.kind
+    if ($script:TriggerReservedKinds -contains $kind) {
+        return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_KIND_UNSUPPORTED' `
+            "kind=$kind 是保留值，v1 没有对应注册器" @("kind=$kind"))
+    }
+    if ($script:TriggerKinds -notcontains $kind) {
+        return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_UNKNOWN_KIND' `
+            "kind=$kind 不在 manual/schedule/file" @("kind=$kind"))
+    }
+
+    # 任务名：显式给出必须安全；未给出按流程名派生。manual 不注册，不需要任务名
+    if ($kind -ne 'manual') {
+        $taskName = $null
+        if (Test-PropExists $trg 'task_name') {
+            $taskName = [string]$trg.task_name
+            if ($taskName -notmatch '^[A-Za-z0-9._-]{1,64}$') {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                    message = "task_name=$taskName 不匹配 ^[A-Za-z0-9._-]{1,64}$"; evidence = @("task_name=$taskName") }
+            }
+        }
+        if (-not $taskName) { $taskName = Get-TriggerTaskName $FlowName }
+        $collisions = @(Find-TriggerTaskCollision -Repo $Repo -SelfFile $SelfFile -TaskName $taskName)
+        if ($collisions.Count -gt 0) {
+            $issues += @{ status = 'fail'; code = 'TRIGGER_AMBIGUOUS'
+                message = "任务名 $taskName 已被其他流程占用，注册会互相覆盖"
+                evidence = @($collisions | ForEach-Object { "task_name=$taskName 冲突文件：$_" }) }
+        }
+    }
+
+    if ($kind -eq 'manual') {
+        # manual 声明了时刻/目录也不会执行，直接判非法，避免“写了但没人跑”
+        foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file')) {
+            if (Test-PropExists $trg $k) {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                    message = "manual 不允许声明 $k（声明了也没人执行）"; evidence = @("trigger.$k") }
+            }
+        }
+    } else {
+        $timeText = $null
+        if (Test-PropExists $trg 'time') { $timeText = [string]$trg.time }
+        if (-not $timeText -or $timeText -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
+            $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                message = "time=$timeText（应为 HH:mm，如 09:00）"; evidence = @("time=$timeText") }
+        }
+
+        if (Test-PropExists $trg 'days') {
+            $dayList = @($trg.days)
+            $badDays = @($dayList | Where-Object { $script:TriggerDays -notcontains [string]$_ })
+            if ($dayList.Count -eq 0 -or $badDays.Count -gt 0) {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                    message = 'days 必须是非空数组，取值 mon..sun'
+                    evidence = @("days=$(@($dayList) -join ',')") }
+            }
+        }
+
+        $gate = 'none'
+        if (Test-PropExists $trg 'gate') {
+            $gate = [string]$trg.gate
+            if ($script:TriggerGates -notcontains $gate) {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                    message = "gate=$gate 不在 none/workday/last-workday"; evidence = @("gate=$gate") }
+            }
+        } elseif ($kind -eq 'schedule') {
+            $issues += @{ status = 'warn'; code = 'TRIGGER_NO_GATE'
+                message = 'schedule 未声明 gate，节假日会照跑；如不需要请显式写 gate=none'
+                evidence = @('gate 未声明') }
+        }
+
+        if ((Test-PropExists $trg 'timeout_sec') -and -not (Test-TriggerPositiveInt $trg.timeout_sec)) {
+            $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                message = "timeout_sec=$($trg.timeout_sec)（应为正整数秒）"; evidence = @('timeout_sec') }
+        }
+
+        $pattern = $null
+        if ($kind -eq 'file') {
+            if (-not (Test-PropExists $trg 'file')) {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                    message = 'file 触发必须带 file 对象'; evidence = @('file') }
+            } else {
+                $f = $trg.file
+                $dir = $null
+                if (Test-PropExists $f 'dir') { $dir = [string]$f.dir }
+                if (-not $dir) {
+                    $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                        message = 'file.dir 必填'; evidence = @('file.dir') }
+                } elseif ($dir -notmatch '^\{\{config\.(\w+)\}\}$') {
+                    $issues += @{ status = 'fail'; code = 'TRIGGER_PATH_LITERAL'
+                        message = 'file.dir 必须是 {{config.<KEY>}} 引用，不能是字面路径'
+                        evidence = @("file.dir=$dir") }
+                }
+                if (Test-PropExists $f 'pattern') { $pattern = [string]$f.pattern }
+                if (-not $pattern -or $pattern.Trim().Length -eq 0) {
+                    $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                        message = 'file.pattern 必填且不能为空'; evidence = @('file.pattern') }
+                }
+                foreach ($k in @('poll_sec', 'settle_sec', 'max_wait_sec')) {
+                    if ((Test-PropExists $f $k) -and -not (Test-TriggerPositiveInt $f.$k)) {
+                        $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                            message = "file.$k=$($f.$k)（应为正整数秒）"; evidence = @("file.$k") }
+                    }
+                }
+                if ((Test-PropExists $f 'once_per_file') -and -not ($f.once_per_file -is [bool])) {
+                    $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                        message = 'file.once_per_file 必须是 true/false'; evidence = @('file.once_per_file') }
+                }
+            }
+        }
+
+        # 交叉校验：无人值守触发遇到人工确认节点是硬矛盾；重跑不安全只提醒
+        $nodes = @($Flow.nodes)
+        $confirm = @($nodes | Where-Object {
+            $_ -and (Test-PropExists $_ 'run_mode') -and [string]$_.run_mode -eq 'confirm'
+        })
+        if ($confirm.Count -gt 0) {
+            $issues += @{ status = 'fail'; code = 'TRIGGER_UNATTENDED_CONFIRM'
+                message = '无人值守触发但节点需要人工确认'
+                evidence = @($confirm | ForEach-Object { "节点 $($_.id) run_mode=confirm" }) }
+        }
+        $nonIdem = @($nodes | Where-Object {
+            $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false
+        })
+        if ($nonIdem.Count -gt 0) {
+            $issues += @{ status = 'warn'; code = 'TRIGGER_UNATTENDED_NONIDEMPOTENT'
+                message = '无人值守触发但节点重跑不安全（idempotent=false），请确认重跑后果'
+                evidence = @($nonIdem | ForEach-Object { "节点 $($_.id) idempotent=false" }) }
+        }
+    }
+
+    if ($issues.Count -eq 0) {
+        $dayText = '周一~周五'
+        if (Test-PropExists $trg 'days') {
+            $dayText = (@($trg.days) | ForEach-Object { $script:TriggerDayNames[[string]$_] }) -join '、'
+        }
+        $msg = switch ($kind) {
+            'manual' { '触发声明合法：manual（手工或外部链接触发，无需注册）' }
+            'schedule' { "触发声明合法：schedule $timeText（$dayText，gate=$gate）" }
+            default { "触发声明合法：file $timeText（$dayText，pattern=$pattern）" }
+        }
+        return @(New-AdmitCheck 'TRIGGER' 'pass' 'OK' $msg @())
+    }
+    return @($issues | ForEach-Object {
+        New-AdmitCheck 'TRIGGER' $_.status $_.code $_.message $_.evidence
+    })
+}
+
+# 主体检查：一次跑完 14 项
 function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,
@@ -451,6 +675,10 @@ function Invoke-AdmitChecks {
     } else {
         $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' '通用脚本动作都有 intent' @()
     }
+
+    # 14 TRIGGER（静态校验；live 注册校验留待 -TriggerLive 接入）
+    $checks += @(Invoke-TriggerCheck -Flow $Flow -FlowName $FlowName `
+        -Repo $Paths.Repo -SelfFile $Paths.FlowFile)
 
     return $checks
 }

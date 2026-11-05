@@ -1,0 +1,92 @@
+{
+  "flow": "tests/eval/fixtures/trigger-manual.json",
+  "description": "需求：启动方式必须写在 flow.json 里，并且能被静态校验",
+  "cases": [
+    {
+      "id": "trigger-manual-minimal",
+      "requirement": "manual 最小声明合法",
+      "expect": [{ "op": "trigger" }]
+    },
+    {
+      "id": "trigger-schedule-full",
+      "requirement": "schedule 完整声明合法（TRIGGER 无错误）",
+      "expect": [
+        {
+          "op": "trigger",
+          "def": {
+            "kind": "schedule",
+            "task_name": "flow-ir-sample-schedule",
+            "time": "09:00",
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "gate": "workday",
+            "timeout_sec": 4200
+          }
+        }
+      ]
+    },
+    {
+      "id": "trigger-file-full",
+      "requirement": "file 完整声明合法（目录必须是配置引用）",
+      "expect": [
+        {
+          "op": "trigger",
+          "def": {
+            "kind": "file",
+            "task_name": "flow-ir-sample-file",
+            "time": "08:30",
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "file": {
+              "dir": "{{config.AttachmentDir}}",
+              "pattern": "*.xlsx",
+              "poll_sec": 60,
+              "settle_sec": 60,
+              "max_wait_sec": 7200,
+              "once_per_file": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "trigger-complete",
+      "requirement": "流程自身已声明触发（triggerComplete 通过）",
+      "expect": [{ "op": "triggerComplete" }]
+    },
+    {
+      "id": "trigger-kind-mail",
+      "requirement": "kind=mail 必须被拒绝（TRIGGER_KIND_UNSUPPORTED）",
+      "expect": [{ "op": "trigger", "def": { "kind": "mail" }, "expect": "invalid", "code": "TRIGGER_KIND_UNSUPPORTED" }]
+    },
+    {
+      "id": "trigger-file-literal-path",
+      "requirement": "file.dir 写死路径必须被拒绝（TRIGGER_PATH_LITERAL）",
+      "expect": [
+        {
+          "op": "trigger",
+          "def": {
+            "kind": "file",
+            "time": "08:30",
+            "file": { "dir": "<附件目录>/inbox", "pattern": "*.xlsx" }
+          },
+          "expect": "invalid",
+          "code": "TRIGGER_PATH_LITERAL"
+        }
+      ]
+    },
+    {
+      "id": "trigger-schedule-missing-time",
+      "requirement": "schedule 缺 time 必须被拒绝（TRIGGER_INVALID）",
+      "expect": [
+        { "op": "trigger", "def": { "kind": "schedule" }, "expect": "invalid", "code": "TRIGGER_INVALID" }
+      ]
+    },
+    {
+      "id": "trigger-confirm-under-schedule",
+      "requirement": "schedule 触发 + run_mode=confirm 节点必须被拒绝（TRIGGER_UNATTENDED_CONFIRM）",
+      "flow": "tests/eval/fixtures/trigger-schedule-confirm.json",
+      "expect": [
+        { "op": "trigger", "expect": "invalid", "code": "TRIGGER_UNATTENDED_CONFIRM" }
+      ]
+    }
+  ]
+}
