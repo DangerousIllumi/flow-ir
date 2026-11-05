@@ -265,16 +265,16 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
     }
 
-    It 'file kind 三个入口都报 TRIGGER_KIND_UNSUPPORTED（第 4 步再做）' {
+    It 'file kind 已支持：缺 -ConfigFile 时无法解析 {{config.KEY}}，硬失败' {
         $t = [ordered]@{ kind = 'file'; time = '09:00'; gate = 'none'; file = @{ dir = '{{config.INBOX}}'; pattern = '*.csv' } }
         $f = New-TestFlow -Dir $TestDrive -Name 'file-kind' -Trigger $t
         $runtime = New-TestRuntime -Dir $TestDrive
-        (Get-TriggerErrorCode { Register-Trigger -FlowFile $f -RuntimeConfigPath $runtime -DryRun }) |
-            Should Be 'TRIGGER_KIND_UNSUPPORTED'
         (Get-TriggerErrorCode { Test-Trigger -FlowFile $f -RuntimeConfigPath $runtime }) |
-            Should Be 'TRIGGER_KIND_UNSUPPORTED'
-        (Get-TriggerErrorCode { Unregister-Trigger -FlowFile $f -DryRun }) |
-            Should Be 'TRIGGER_KIND_UNSUPPORTED'
+            Should Be 'TRIGGER_CONFIG_UNRESOLVED'
+        # 注销不需要解析配置：任务本来不存在时仍可只读返回 absent
+        $u = Unregister-Trigger -FlowFile $f -DryRun
+        $u.ok | Should Be $true
+        $u.changed | Should Be 'absent'
     }
 
     It '未知 kind 报 TRIGGER_UNKNOWN_KIND' {

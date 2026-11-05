@@ -1,4 +1,4 @@
-> 状态：设计基线 v1，尚未实现。实施顺序见第 7 节。
+> 状态：设计基线 v1；trigger 断言、pad-admit 第 14 项、schedule/manual/file 注册器与 file 守望已落地，其余见第 7 节。
 
 # 触发声明（`trigger`）与注册器设计稿（v1）
 
