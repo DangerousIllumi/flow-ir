@@ -39,18 +39,24 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 **这两个问题必须逐节点问到答案，没有答案就不许生成 `flow.json`。**
 不许用「默认自动」「默认安全」替用户回答；用户只说整体流程时，要按节点拆开追问。
 
+> **本工具链不做自动重试。** 运行失败一律「告警 + 人工重跑」，没有任何自动重试路径；
+> 因此 `idempotent` 不用于放行任何自动化行为，只用于告诉人「点运行之前需要知道什么」。
+
 | # | 必答项 | 取值 | 落到 flow.json 的字段 |
 |---|---|---|---|
 | 1 | 这个节点怎么运行 | `auto` 自动执行 / `confirm` 需人工确认 / `observe` 只读观察 | 节点级 `run_mode` |
-| 2 | 重跑是否安全（幂等） | `true` 可重跑 / `false` 只能跑一次 | 节点级 `idempotent`；为 `false` 时必须再写 `idempotency_note`（幂等键或先查后写方案） |
+| 2 | 重跑会发生什么（重跑安全性） | `true` 重跑结果一致 / `false` 重跑会改变状态或丢失输入 | 节点级 `idempotent`；为 `false` 时必须再写 `idempotency_note` |
 
 判定口径：
+- **`idempotent` 的语义是「重跑安全性」**：回答「人工点运行之前需要知道什么」，不是「是否允许自动重试」。
 - **控制节点（SET / IF / LOOP / SWITCH / GUARD）也要标注**，不能只标业务动作。
-- 发信、过账、删文件、改状态这类副作用节点，默认要问清楚；问不出幂等键就按 `idempotent=false` 加 `idempotency_note`。
+- 发信、过账、删文件、改状态这类副作用节点，默认要问清楚；问不出重跑后果就按 `idempotent=false`。
+- `idempotency_note` 必须是一到两句**给人看的中文**，写清「重跑会发生什么 / 要注意什么」，
+  例如「保存附件后重跑会取不到邮件，请先恢复未读状态」「每重跑一次会再发一封催办」。
 - 反例必须记住：
-  - **MB51 导出可重跑**：每次覆盖同名导出文件，`idempotent=true`。
-  - **MIGO 过账只能跑一次**：重复过账会产生重复物料凭证，必须 `idempotent=false`，
-    并在 `idempotency_note` 写明幂等键（如「按物料凭证号先查后写」）或先查后写步骤。
+  - **MB51 导出可重跑**：每次生成新的带时间戳导出文件，`idempotent=true`。
+  - **MIGO 过账不可重跑**：重复过账会产生重复物料凭证，必须 `idempotent=false`，
+    `idempotency_note` 写明人工前置检查（如「重跑前必须确认过账账本完整」）。
 
 缺字段的后果：`eval-flow.js` 的 `declarationsComplete` / `nodeDeclaration` 会直接判失败（退出码 1），
 不会降级成警告。自检命令：

@@ -90,7 +90,7 @@
       "outputs": ["输出变量名"],
       "run_mode": "auto",
       "idempotent": true,
-      "idempotency_note": "（仅 idempotent=false 时必填）幂等键或先查后写方案",
+      "idempotency_note": "重跑会发生什么 / 要注意什么（一到两句中文，仅 idempotent=false 时必填）",
       "next": ["2"],
       "branch": null
     }
@@ -108,8 +108,10 @@
 - **output_skip：不需要的输出参数名数组**。列出的输出不落变量（等同 PAD 里把输出留空），
   用于清理、打开文件、只做提示的弹窗等「只看执行不看结果」的动作；句柄类输出不允许跳过。
 - **run_mode：每个节点必填**，取值 `auto`（自动执行）/ `confirm`（需人工确认）/ `observe`（只读观察）。
-- **idempotent：每个节点必填**，`true` 表示重跑安全；`false` 表示只能跑一次，此时必须写
-  `idempotency_note`（幂等键或先查后写方案）。例：MB51 导出可重跑（true），MIGO 过账只能跑一次（false）。
+- **idempotent：每个节点必填**，语义是「重跑安全性」：`true` 表示重跑结果一致，`false` 表示重跑会改变状态或丢失输入，
+  此时必须写 `idempotency_note`（一到两句给人看的中文，写清重跑会发生什么 / 要注意什么）。
+  例：MB51 导出可重跑（true），MIGO 过账不可重跑（false）。
+  **本工具链不做自动重试**，运行失败一律「告警 + 人工重跑」；该字段不用于放行任何自动化行为。
   这两项必须逐节点问到用户答案；没答案就不生成 flow.json，`eval-flow.js` 缺失即判失败。
 **控制流节点**（pad_hint 写 `IF` / `LOOP` / `SWITCH`，生成器识别节点形状生成内建语句）：
 
