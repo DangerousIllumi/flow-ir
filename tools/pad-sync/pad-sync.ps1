@@ -69,6 +69,9 @@ param(
     [ValidateSet('report', 'enforce', 'off')][string]$AdmitMode = 'enforce',
     # flow.json；不传时按 -AcceptanceFile 的兄弟文件自动推导
     [string]$FlowFile,
+    # 未提供 -FlowFile 时，按 -FlowName 在 business\flows 派生（先 pad_flow_name，再文件名 / name）
+    # 默认关闭：机制先做出来并验证，确认后才接到计划任务，避免存量任务行为突变
+    [switch]$DeriveFlow,
     # 运行后按验收判据检查产物（需同时提供 -ConfigFile）
     [string]$AcceptanceFile,
     [string]$ConfigFile,
@@ -160,7 +163,7 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
         $guess = $AcceptanceFileArg -replace '\.acceptance\.json$', '.json'
         if (Test-Path -LiteralPath $guess) { $flowPath = $guess }
     }
-    if (-not $flowPath) {
+    if (-not $flowPath -and -not $DeriveFlow) {
         Write-Log '未提供 flow.json，准入网关本次不适用（未做校验）'
         $script:Result.warnings += '准入网关未适用：缺少 flow.json'
         return $true
@@ -172,9 +175,15 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
         throw '准入网关拒绝运行：准入脚本不存在（pad-admit.ps1 缺失）'
     }
     $admitArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-        $admitScript, '-FlowFile', $flowPath, '-Unattended')
+        $admitScript, '-Unattended')
     if ($ConfigFileArg) { $admitArgs += @('-ConfigFile', $ConfigFileArg) }
     if ($AcceptanceFileArg) { $admitArgs += @('-AcceptanceFile', $AcceptanceFileArg) }
+    if ($flowPath) {
+        $admitArgs += @('-FlowFile', $flowPath)
+    } else {
+        # 显式开启派生：由准入网关按 pad_flow_name → 文件名/name 唯一命中；多命中报 ADMIT_AMBIGUOUS_FLOW
+        $admitArgs += @('-FlowName', $FlowName)
+    }
     $admitOut = & powershell @admitArgs *>&1 | Out-String
     $admitExit = $LASTEXITCODE
 

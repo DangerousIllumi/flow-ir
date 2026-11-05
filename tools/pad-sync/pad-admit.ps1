@@ -52,6 +52,36 @@ function Test-GlobMatch([string]$Pattern, [string]$Text) {
     return ($Text -match $rx)
 }
 
+# 按 PAD 显示名派生 flow.json：先匹配顶层 pad_flow_name，再匹配文件名 / 顶层 name。
+# 命中多条即 ADMIT_AMBIGUOUS_FLOW，绝不退回“取第一个”；命中 0 条返回 $null。
+# pad_flow_name 是可选字段，生成器 / check.js / eval-flow.js 只接受不消费。
+function Resolve-FlowFileByName([string]$FlowsDir, [string]$FlowName) {
+    if (-not (Test-Path -LiteralPath $FlowsDir)) { return $null }
+    $items = @(Get-ChildItem -LiteralPath $FlowsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '\.(acceptance|requirements|schema)\.json$' } |
+        ForEach-Object {
+            try {
+                $j = [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+                # 只认流程定义：必须有非空 nodes，避免配套产物/部署 diff 混进候选
+                if (($j.PSObject.Properties.Name -contains 'nodes') -and (@($j.nodes).Count -gt 0)) {
+                    [pscustomobject]@{ File = $_; Json = $j }
+                }
+            } catch { }
+        })
+    $hit = @($items | Where-Object { [string]$_.Json.pad_flow_name -eq $FlowName })
+    if ($hit.Count -eq 0) {
+        $hit = @($items | Where-Object {
+            ($_.File.BaseName -eq $FlowName) -or ([string]$_.Json.name -eq $FlowName)
+        })
+    }
+    if ($hit.Count -eq 1) { return $hit[0].File.FullName }
+    if ($hit.Count -gt 1) {
+        throw ("ADMIT_AMBIGUOUS_FLOW：按 '{0}' 命中 {1} 个 flow.json（{2}）；请用 -FlowFile 明确指定" -f `
+            $FlowName, $hit.Count, (($hit | ForEach-Object { $_.File.Name }) -join '、'))
+    }
+    return $null
+}
+
 # 统一的结果条目
 function New-AdmitCheck([string]$Id, [string]$Status, [string]$Code, [string]$Message, $Evidence) {
     return [ordered]@{
@@ -430,16 +460,17 @@ if (-not $NoMain) {
     $exitCode = 1
     try {
         $repo = $script:RepoRoot
+        $nameFromLookup = $false
         if (-not $FlowFile) {
             # 不再默认到某个具体业务流程：先按流程名派生，否则要求唯一匹配
             $flowsDir = Join-Path $repo 'business\flows'
             if ($FlowName) {
-                $guess = Join-Path $flowsDir ("{0}.json" -f $FlowName)
-                if (Test-Path -LiteralPath $guess) {
-                    $FlowFile = $guess
-                } else {
-                    throw "未提供 -FlowFile，按流程名派生也找不到：$guess；请用 -FlowFile 指定"
+                # 先 pad_flow_name，再文件名 / name；多命中直接 ADMIT_AMBIGUOUS_FLOW
+                $FlowFile = Resolve-FlowFileByName $flowsDir $FlowName
+                if (-not $FlowFile) {
+                    throw "未提供 -FlowFile，按流程名派生也找不到：$FlowName（business\flows 下无匹配 pad_flow_name / 文件名 / name）；请用 -FlowFile 指定"
                 }
+                $nameFromLookup = $true
             } else {
                 # 只认流程定义：排除 accept/requirements/schema 等配套 json，
                 # 再用「有非空 nodes 数组」这一结构特征挡掉 deploy_diff.json 之类同目录产物
@@ -462,7 +493,10 @@ if (-not $NoMain) {
             }
         }
         $FlowFile = (Resolve-Path -LiteralPath $FlowFile).Path
-        if (-not $FlowName) { $FlowName = [IO.Path]::GetFileNameWithoutExtension($FlowFile) }
+        # 按名派生时身份统一取文件名：显示名只是定位键，不能当流程身份（会影响策略 env 与基线路径）
+        if ($nameFromLookup) {
+            $FlowName = [IO.Path]::GetFileNameWithoutExtension($FlowFile)
+        } elseif (-not $FlowName) { $FlowName = [IO.Path]::GetFileNameWithoutExtension($FlowFile) }
         if (-not $RobinFile) {
             $guess = [IO.Path]::ChangeExtension($FlowFile, '.robin')
             if (Test-Path -LiteralPath $guess) { $RobinFile = $guess }
