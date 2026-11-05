@@ -29,7 +29,10 @@ function New-FakePad([string]$Work, [string]$FlowName, [string]$FlowGuid, [strin
     New-Item -ItemType Directory -Path $revDir -Force | Out-Null
     $robin = Join-Path $revDir 'script.robin'
     [IO.File]::WriteAllText($robin, $RobinText, (New-Object Text.UTF8Encoding($false)))
-    return [ordered]@{ scripts = $scripts; workspace = $ws; robin = $robin; runId = $RunId }
+    # 部署产物（占位符替换后的副本）与源同目录：指纹已发布侧只认它
+    $deployed = Join-Path $revDir 'script.deployed.robin'
+    [IO.File]::WriteAllText($deployed, $RobinText, (New-Object Text.UTF8Encoding($false)))
+    return [ordered]@{ scripts = $scripts; workspace = $ws; robin = $robin; deployed = $deployed; runId = $RunId }
 }
 
 Describe 'PadFingerprint 定位与身份' {
@@ -300,8 +303,9 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222' -RobinText $deployedTxt
         $src = Join-Path $work 'src.robin'
         [IO.File]::WriteAllText($src, $txt, (New-Object Text.UTF8Encoding($false)))
-        $base = New-BaselineV2 $work $src $fake.robin 'F' $g
-        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $src -BaselinePath $base -ScriptsRoot $fake.scripts
+        $base = New-BaselineV2 $work $src $fake.deployed 'F' $g
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $src -DeployedRobinPath $fake.deployed `
+            -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'pass'
         $r.message | Should Match '原始字节不同'
     }
@@ -318,6 +322,68 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'warn'
         $r.code | Should Be 'FINGERPRINT_DEPLOYED_MISMATCH'
+    }
+}
+
+Describe 'PadFingerprint 已发布侧改比部署产物' {
+
+    # 用模块自带的 v2 播种：deployed 段取自部署产物
+    function New-BaselineFromDeployed([string]$Work, $Fake, [string]$Guid) {
+        $base = Join-Path $Work 'baseline-deployed.json'
+        $null = Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid $Guid `
+            -EnvironmentId $null -SourceRobin $Fake.robin -WorkspaceRobin $Fake.deployed `
+            -ConfigPath $null -AcceptancePath $null)
+        return $base
+    }
+
+    It '① 部署产物与 deployed.logicHash 一致 → pass' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineFromDeployed $work $fake $g
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'pass'
+        $r.code | Should Be 'OK'
+        # 整体通过时明确说明：源是模板，与部署产物不同属正常
+        $r.message | Should Match '源是模板'
+    }
+
+    It '② 篡改 deployed.logicHash → FINGERPRINT_DEPLOYED_MISMATCH' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineFromDeployed $work $fake $g
+        $j = [IO.File]::ReadAllText($base, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        $j.deployed.logicHash = 'deadbeef'
+        [IO.File]::WriteAllText($base, ($j | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'FINGERPRINT_DEPLOYED_MISMATCH'
+        $r.message | Should Match '部署产物与已发布副本逻辑不一致'
+    }
+
+    It '③ 删掉部署产物 → FINGERPRINT_UNKNOWN（提示先生成，不许 pass）' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineFromDeployed $work $fake $g
+        Remove-Item -LiteralPath $fake.deployed -Force
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'FINGERPRINT_UNKNOWN'
+        $r.message | Should Match '找不到部署产物'
+    }
+
+    It '④ 源 .robin 改字节 → 仍 FINGERPRINT_SOURCE_MISMATCH' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineFromDeployed $work $fake $g
+        # 只改源模板，部署产物不动：源对源比较必须先报出来
+        [IO.File]::AppendAllText($fake.robin, "`r`nSET B TO 'y'", (New-Object Text.UTF8Encoding($false)))
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'FINGERPRINT_SOURCE_MISMATCH'
     }
 }
 
@@ -340,6 +406,9 @@ Describe 'pad-fingerprint 基线命名与 pad-admit 同口径' {
             (New-Object Text.UTF8Encoding($false)))
         $srcRobin = Join-Path $flows "$bizName.robin"
         [IO.File]::WriteAllText($srcRobin, "SET A TO 'src'", (New-Object Text.UTF8Encoding($false)))
+        # 部署产物：已发布侧只跟它比，缺失会被判 UNKNOWN
+        [IO.File]::WriteAllText((Join-Path $flows "$bizName.deployed.robin"), "SET A TO 'src'",
+            (New-Object Text.UTF8Encoding($false)))
         $cfgDir = Join-Path $work 'business\config'
         New-Item -ItemType Directory -Path $cfgDir -Force | Out-Null
         $cfg = Join-Path $cfgDir "$bizName.json"

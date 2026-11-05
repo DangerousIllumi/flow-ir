@@ -205,6 +205,8 @@ function Test-FlowFingerprint {
         [string]$ScriptsRoot,
         [string]$EnvironmentId, [string]$Machine,
         [string]$ApprovePath,
+        # 部署产物路径（占位符替换后的 .robin）；不传时按「源文件名.deployed.robin」自动派生
+        [string]$DeployedRobinPath,
         [ValidateSet('warn', 'fail')][string]$Mode = 'warn'
     )
     if (-not $Machine) { $Machine = $env:COMPUTERNAME }
@@ -334,21 +336,40 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 6) 仓库 .robin vs 已发布副本：只比逻辑哈希，绝不跨域比原始字节
-    $nowLogic = Get-RobinLogicHash $RobinPath
+    # 6) 已发布侧只跟部署产物比：源是含 {{VAR}} 占位符的模板，规范化后天然不可能等于
+    #    替换后的发布副本。这里改比「部署产物」，仍然只比规范化哈希，不跨域比原始字节。
+    if (-not $DeployedRobinPath) {
+        # 自动派生：与源 .robin 同目录的 <源文件名去扩展名>.deployed.robin
+        $srcLeaf = [IO.Path]::GetFileNameWithoutExtension($RobinPath) + '.deployed.robin'
+        $srcDir = [IO.Path]::GetDirectoryName($RobinPath)
+        $DeployedRobinPath = Join-Path $srcDir $srcLeaf
+    }
+    $depLeaf = [IO.Path]::GetFileName($DeployedRobinPath)
+    if (-not (Test-Path -LiteralPath $DeployedRobinPath)) {
+        $ev += "deployed=$DeployedRobinPath"
+        return [ordered]@{
+            status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
+            message = "找不到部署产物，请先生成 $depLeaf"
+            evidence = $ev
+        }
+    }
+    $nowLogic = Get-RobinLogicHash $DeployedRobinPath
     if ($nowLogic -ne [string]$depBase.logicHash) {
+        $ev += "deployed=$DeployedRobinPath"
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_DEPLOYED_MISMATCH'
-            message = '仓库 .robin 与已发布副本的逻辑不一致（发布副本已过期或被改过）'
+            message = '部署产物与已发布副本逻辑不一致（发布副本已过期或被改过）'
             evidence = $ev
         }
     }
 
-    # 原始字节不同是常态（PAD 会追加 @@ 头/IMPORT 行并重写转义），只记录不判失败
-    $note = ''
-    if ([string]$depBase.robinSha256 -and [string]$parts.robin -ne [string]$depBase.robinSha256) {
-        $note = '（源与已发布副本原始字节不同，规范化后一致）'
-        $ev += "sourceRaw=$($parts.robin.Substring(0,12)) deployedRaw=$([string]$depBase.robinSha256.ToString().Substring(0,12))"
+    # 原始字节不同是常态（源是模板、PAD 落盘还会追加 @@ 头），只记录不判失败
+    $note = '（源是模板，含占位符，与部署产物原始字节不同属正常）'
+    $ev += "deployed=$DeployedRobinPath"
+    $depRaw = (Get-FileHash -LiteralPath $DeployedRobinPath -Algorithm SHA256).Hash.ToLower()
+    if ([string]$depBase.robinSha256 -and $depRaw -ne [string]$depBase.robinSha256) {
+        $note += '（部署产物与已发布副本原始字节不同，规范化后一致）'
+        $ev += "deployedRaw=$($depRaw.Substring(0,12)) workspaceRaw=$([string]$depBase.robinSha256.ToString().Substring(0,12))"
     }
     return [ordered]@{
         status = 'pass'; code = 'OK'
