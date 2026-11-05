@@ -260,11 +260,11 @@ CLI 外壳：
 
 ## 7. 落地顺序（4 步，每步可验收）
 
-**规模**：新增 4 个文件（`TriggerRegistry.psm1`、`pad-trigger.ps1`、`tests/trigger-registry.Tests.ps1`、`tests/eval/trigger.cases.json`）+ 2 处校验改动（`eval-flow.js`、`pad-admit.ps1`）。守望逻辑并入 `pad-trigger.ps1 -Watch`，不单开第 5 个文件。
+**规模**：新增 4 个文件（`TriggerRegistry.psm1`、`pad-trigger.ps1`、`tests/trigger-registry.Tests.ps1`、`tests/eval/trigger.cases.json`）+ 2 个用例 fixture（`tests/eval/fixtures/trigger-*.json`，测试数据）+ 2 处校验改动（`eval-flow.js`、`pad-admit.ps1`）。守望逻辑并入 `pad-trigger.ps1 -Watch`，不单开第 5 个文件。
 
 | 步骤 | 内容 | 验收命令与判据 |
 |---|---|---|
-| 1 声明层 | `trigger` 规范 + `eval-flow.js` 两个新 op + 正/反用例 | `node tools\pad-robin\eval-flow.js tests\eval` 退出 0；单跑反用例文件退出 1 且 detail 含 `TRIGGER_` 结果码 |
+| 1 声明层 | `trigger` 规范 + `eval-flow.js` 两个新 op + 正/反用例 | `node tools\pad-robin\eval-flow.js tests\eval` 退出 0；反例用 `expect=invalid` + `code` 断言命中 `TRIGGER_*`（整套仍绿）；把反例改成默认“期望合法”时退出 1 并打印结果码 |
 | 2 准入层 | `pad-admit` 第 14 项 `TRIGGER`，默认 warn | `.\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<流程名>.json -Json` 输出含 `"id":"TRIGGER"`；无 `trigger` 的存量流为 warn 且退出码不变；`kind=mail` 的样例退出 1 |
 | 3 计划任务注册器 | `TriggerRegistry.psm1` + `pad-trigger.ps1`（schedule） | `-Register -DryRun` 只打印动作不写系统；真注册到 `flow-ir-<计划任务名>-selftest` 后 `-Test` 返回 `ok=true`；`schtasks /Query /TN <计划任务名> /XML` 中时间/星期与声明一致；再注册一次返回 `unchanged`；`-Unregister` 后 `-Test` 返回未注册 |
 | 4 文件落地注册器 | `file` 分支 + `-Watch` + 状态账本 | 指向临时 `<附件目录>` 注册；投放一个稳定大小的探针文件 → 出现新 runId；再投放同名同大小文件 → 不重复触发；`-Test` 全程只读（目录 mtime 不变） |
