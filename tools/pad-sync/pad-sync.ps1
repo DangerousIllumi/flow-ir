@@ -107,6 +107,8 @@ Import-Module (Join-Path $PSScriptRoot 'PadDesigner.psm1') -Force -DisableNameCh
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PadAcceptance.psm1') -Force
+# 失败告警：与 pad-schedule 共用同一份实现（kind 口径与去重规则只有一处）
+Import-Module (Join-Path $PSScriptRoot 'PadAlerts.psm1') -Force
 # 集中配置：只在显式传 -ConfigPath 时读取；缺项/路径不存在/类型错误一律硬失败
 Import-Module (Join-Path $PSScriptRoot 'PadConfig.psm1') -Force
 if ($ConfigPath) {
@@ -601,6 +603,28 @@ if (-not $NoManifest -and $ManifestPath) {
 
 # 释放互斥锁：正常结束、异常结束都要走这里；进程被强杀时系统会自动释放
 Exit-PadRunLock
+
+# ── 失败告警：直调路径（手工点运行 / URL 触发）也要落 alerts.jsonl ──
+# 与 pad-schedule 共用 PadAlerts.psm1；成功（exit 0 且无失败标记）不写。
+# 同一 runId + 同一 kind 只写一条，重试不会刷屏。
+$alertDir = $null
+$alertRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (Test-Path (Join-Path $alertRepo 'tools')) { $alertDir = Join-Path $alertRepo 'business\logs' }
+if ($alertDir) {
+    $alertExit = 0
+    if ($script:LockTimedOut) { $alertExit = 4 }
+    elseif ($script:Result.needsHumanConfirm) { $alertExit = 3 }
+    elseif ($script:Result.ok -eq $false) { $alertExit = 1 }
+    try {
+        $alert = Write-RunAlert -FlowName $FlowName -ExitCode $alertExit -Stage $script:Result.stage `
+            -Status $script:Result.status -SyncResult $script:Result -LogPath $script:Result.logPath `
+            -RunId ([string]$script:Result.runId) -Dir $alertDir
+        if ($alert -and -not $alert.skipped) { Write-Log "失败告警已写入：$($alert.path)" }
+    } catch {
+        # 告警写入失败不能影响运行结果与退出码，只提示
+        Write-Log "告警写入失败（不影响运行结果）：$($_.Exception.Message)"
+    }
+}
 
 # 供 agent 解析的最终结果（最后一行固定前缀）
 Write-Output ("PAD_SYNC_RESULT=" + ($script:Result | ConvertTo-Json -Depth 8 -Compress))

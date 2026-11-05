@@ -88,6 +88,23 @@ $result = [ordered]@{
 function Log([string]$m) { Write-Host "[deploy] $m" }
 # 子进程末行 PAD_SYNC_RESULT 的解析统一由 PadTelemetry 提供，本脚本不再自带正则
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
+# 失败告警：与 pad-schedule / pad-sync 共用同一份实现（kind 常量集中在模块里）
+Import-Module (Join-Path $here 'PadAlerts.psm1') -Force
+
+# 告警目录：只有脚本位于仓库 tools\pad-sync 时才写 business\logs
+$alertDir = $null
+$alertRepo = Split-Path -Parent (Split-Path -Parent $here)
+if (Test-Path (Join-Path $alertRepo 'tools')) { $alertDir = Join-Path $alertRepo 'business\logs' }
+
+# 部署阶段失败告警：写不进去也不影响部署结果与输出
+function Write-DeployAlert([string]$Stage, [string]$Kind, [string]$Note, [string]$RunId) {
+    if (-not $alertDir) { return }
+    try {
+        $r = Write-RunAlert -FlowName $FlowName -ExitCode 1 -Stage $Stage -Status $null `
+            -Kind $Kind -Note $Note -RunId $RunId -Dir $alertDir
+        if ($r -and -not $r.skipped) { Log "失败告警已写入：$($r.path)" }
+    } catch { Log "告警写入失败（不影响部署结果）：$($_.Exception.Message)" }
+}
 
 # 按 schema 校验 config，返回问题清单（每条都点名到字段），空数组 = 通过
 # 支持的 schema 子集：required / additionalProperties:false / properties.{type,pattern,minLength,enum,description}
@@ -252,10 +269,23 @@ try {
                       elseif ($res.error -and $res.error.message) { $res.error.message }
                       else { [string]$res.status }
             $result.errors += "运行失败：$reason"
+            # 按子流程失败阶段分类，kind 常量统一从 PadAlerts 取
+            $ak = Get-AlertKindConstants
+            $st = [string]$res.stage
+            $alertKind = if ($st -in @('inject', 'find-designer', 'static-check', 'admit')) { $ak.DeployInjectFailed }
+                elseif ($st -eq 'publish') { $ak.DeployPublishFailed }
+                else { $ak.RunFailed }
+            Write-DeployAlert $st $alertKind "部署失败于 stage=$st：$reason。下一步：修正后重新部署，未自动重试。" ([string]$res.runId)
         }
     } else { throw "pad-sync 无 PAD_SYNC_RESULT" }
 }
 catch {
     $result.errors += $_.Exception.Message; Log "部署失败：$($_.Exception.Message)"
+    # 用户主动取消不算失败告警；其余前置阶段（配置/占位符/确认）失败各写一条
+    if ($_.Exception.Message -notmatch '用户取消上线') {
+        $ak = Get-AlertKindConstants
+        $st = if ($DryRun) { 'dryrun' } else { 'precheck' }
+        Write-DeployAlert $st $ak.DeployPrecheckFailed "部署前置阶段失败：$($_.Exception.Message)。下一步：修正配置或源 .robin 后重新部署。" $null
+    }
 }
 finally { Write-Output ("PAD_DEPLOY_RESULT=" + ($result | ConvertTo-Json -Depth 10 -Compress)) }

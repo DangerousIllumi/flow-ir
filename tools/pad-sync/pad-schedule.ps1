@@ -197,121 +197,10 @@ function Get-CalendarFailure([string]$Message) {
     return [ordered]@{ exitCode = 1; reason = 'calendar-unavailable'; stale = $false }
 }
 
-# 失败告警分级：把退出码与结果标记映射成 kind / reason / note
-#
-# 单独抽成纯函数，便于 Pester 直接断言分类结果，不必真跑 PAD。
-# 分类优先级：人工确认 > 等锁超时 > 日历不可用 > 触发失败 > 运行超时 > 一般运行失败。
-function Get-RunAlertKind {
-    param(
-        [int]$ExitCode,
-        [Nullable[bool]]$CalendarOk,
-        $SyncResult
-    )
-    $isHumanConfirm = ($ExitCode -eq 3 -or ($SyncResult -and $SyncResult.needsHumanConfirm))
-    $isLockTimeout = ($ExitCode -eq 4)
-    $isCalendarDown = ($CalendarOk -eq $false)
-    $isTriggerFailed = ($SyncResult -and $SyncResult.triggerFailed)
-    $isRunTimeout = ($SyncResult -and $SyncResult.runTimeout)
-
-    if ($isHumanConfirm) {
-        return [ordered]@{ kind = 'run-needs-human-confirm'; reason = $null
-            note = "流程停在人工确认弹窗「$($SyncResult.dialogTitle)」，未自动点击，请人工确认后重跑" }
-    }
-    if ($isLockTimeout) {
-        return [ordered]@{ kind = 'run-lock-timeout'; reason = $null; note = '排队超时未执行，可稍后重跑' }
-    }
-    if ($isCalendarDown) {
-        return [ordered]@{ kind = 'calendar-unavailable'; reason = $null; note = '日历不可用，本次未运行' }
-    }
-    if ($isTriggerFailed) {
-        $reason = [string]$SyncResult.triggerReason
-        if (-not $reason) { $reason = 'unknown' }
-        $note = switch ($reason) {
-            'identity-mismatch' { '流程名解析不出 flowId，本次未触发；请在 PAD 控制台确认流程名并至少成功运行一次，未自动重试' }
-            'no-evidence' { '触发后没有出现运行日志（协议处理器无响应 / flowId 不符 / PAD 报错弹窗）；请人工查看 PAD 控制台，未自动重试' }
-            'no-robot' { '触发已被接受但机器人未启动（PAD 错误框或确认框被取消）；请人工处理后重跑，未自动重试' }
-            default { '触发失败（原因未分类）；请人工查看 PAD 控制台，未自动重试' }
-        }
-        return [ordered]@{ kind = 'trigger-failed'; reason = $reason; note = $note }
-    }
-    if ($isRunTimeout) {
-        return [ordered]@{ kind = 'run-timeout'; reason = $null
-            note = '运行超过超时阈值仍未拿到终止状态；请人工确认 PAD 中是否仍卡着，未自动重试' }
-    }
-    return [ordered]@{ kind = 'run-failed'; reason = $null; note = $null }
-}
-
-# 失败告警：只追加到 business\logs\alerts.jsonl，不发送任何外部消息
-#
-# 为什么放在调度层而不是 PAD 流程里：流程内的发信动作覆盖不到「进程崩溃 / 超时被杀 /
-# 09:00 没启动」，而这三类恰恰是调度层唯一能看见的失败。只写日志则不需要任何凭据，
-# 也不会因为告警通道本身故障而影响主流程。
-function Write-RunAlert {
-    param(
-        [string]$FlowName,
-        [int]$ExitCode,
-        [string]$Stage,
-        [string]$Status,
-        $SyncResult,
-        [string]$LogPath,
-        [string]$Dir,
-        # 日历是否可用：$false 表示本次因日历不可用而未运行，供告警分级使用
-        [Nullable[bool]]$CalendarOk,
-        # 日历过期：日历能读，但今天不在覆盖范围内；必须单列，不能算「今天休息」
-        [switch]$CalendarStale,
-        [string]$CalendarRange
-    )
-    if (-not $Dir) { $Dir = Join-Path $script:RepoRoot 'business\logs' }
-    if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
-    $file = Join-Path $Dir 'alerts.jsonl'
-
-    $errCode = $null
-    $errMsg = $null
-    $acc = $null
-    if ($SyncResult) {
-        if ($SyncResult.error) {
-            if ($SyncResult.error.code) { $errCode = $SyncResult.error.code }
-            if ($SyncResult.error.message) { $errMsg = $SyncResult.error.message }
-        }
-        $acc = $SyncResult.acceptance
-    }
-
-    # 分级统一由 Get-RunAlertKind 决定：退出码 4（等锁超时，根本没跑）与 1（跑了但失败）
-    # 必须分开；3（停在人工确认）、触发失败、运行超时各自单独成类，避免运维误读
-    $grade = Get-RunAlertKind -ExitCode $ExitCode -CalendarOk $CalendarOk -SyncResult $SyncResult
-    # 日历过期单独成类：事件名固定 calendar-stale（触发层上线后复用同名，不另造新名）
-    if ($CalendarStale) {
-        $grade = [ordered]@{
-            kind   = 'calendar-stale'
-            reason = 'calendar-stale'
-            note   = "日历不覆盖今天（覆盖 $CalendarRange），本次未运行；请更新日历文件"
-        }
-    }
-    $rec = [ordered]@{
-        ts         = (Get-Date).ToString('o')
-        kind       = $grade.kind
-        flow       = $FlowName
-        exitCode   = $ExitCode
-        stage      = $Stage
-        status     = $Status
-        errorCode  = $errCode
-        error      = $errMsg
-        logPath    = $LogPath
-        acceptance = $acc
-        note       = $grade.note
-    }
-    # 触发失败额外带 reason 分类（identity-mismatch / no-evidence / no-robot）
-    if ($grade.reason) { $rec['reason'] = $grade.reason }
-    if ($CalendarStale) {
-        $rec['calendarStale'] = $true
-        $rec['calendarRange'] = $CalendarRange
-    }
-    if ($null -ne $CalendarOk) { $rec['calendarOk'] = [bool]$CalendarOk }
-    # 不用 Add-Content：PS 5.1 首次写入会带 BOM，JSONL 逐行解析会失败
-    [IO.File]::AppendAllText($file, (($rec | ConvertTo-Json -Depth 8 -Compress) + "`n"),
-        (New-Object Text.UTF8Encoding($false)))
-    return [ordered]@{ path = $file; record = $rec }
-}
+# 失败告警分级与写入的唯一实现见 PadAlerts.psm1：
+# 调度层与直调层（pad-sync / pad-deploy / pad-release）共用同一份 kind 口径与去重规则，
+# 本脚本不再保留副本。
+Import-Module (Join-Path $here 'PadAlerts.psm1') -Force
 
 # 查日历判断今天是否「本月最后一个工作日」。返回 [ordered]@{ lastWorkday; calendarOk }
 # 与 Test-TodayWorkday 同一口径：日历/脚本有问题就硬失败，不再按周一到周五猜测
@@ -401,7 +290,8 @@ if (-not $NoMain) {
                 $status = if ($sync) { [string]$sync.status } else { $null }
                 $logPath = if ($sync) { [string]$sync.logPath } else { $null }
                 $alert = Write-RunAlert -FlowName $FlowName -ExitCode $exitCode -Stage $stage `
-                    -Status $status -SyncResult $sync -LogPath $logPath
+                    -Status $status -SyncResult $sync -LogPath $logPath `
+                    -RunId $(if ($sync) { [string]$sync.runId } else { $null })
                 $result.alertLog = $alert.path
                 $tip = if ($exitCode -eq 3) { '流程停在人工确认弹窗（未自动点击），已写入告警日志' }
                     elseif ($exitCode -eq 4) { '排队超时，本次未执行（可稍后重跑）' }

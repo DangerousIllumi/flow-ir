@@ -57,6 +57,8 @@ Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force -Global
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
 # 子进程末行 RESULT 的解析统一由 PadTelemetry 提供
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force -Global
+# 失败告警：与 pad-schedule / pad-sync / pad-deploy 共用同一份实现（kind 常量集中在模块里）
+Import-Module (Join-Path $PSScriptRoot 'PadAlerts.psm1') -Force -Global
 
 
 # 已发布流程的本地定义副本定位与身份解析已迁移到 PadFingerprint.psm1（唯一实现）：
@@ -346,6 +348,23 @@ if (-not $NoMain) {
     catch {
         $result.errors += $_.Exception.Message
         Log "发布流水线失败于 [$($result.stage)]：$($_.Exception.Message)"
+        # DryRun 不触碰 PAD，失败不写告警，避免污染真实运维记录
+        if (-not $DryRun) {
+            $ak = Get-AlertKindConstants
+            $msg = $_.Exception.Message
+            $kind = if ($msg -match '画布不一致') { $ak.ReleaseCanvasMismatch }
+                elseif ($result.stage -in @('publish', 'verify')) { $ak.DeployPublishFailed }
+                else { $ak.DeployPrecheckFailed }
+            if (Test-Path (Join-Path $script:RepoRoot 'tools')) {
+                try {
+                    $r = Write-RunAlert -FlowName $result.flow -ExitCode 1 -Stage $result.stage `
+                        -Status $result.runStatus -Kind $kind -RunId ([string]$result.runId) `
+                        -Dir (Join-Path $script:RepoRoot 'business\logs') `
+                        -Note "发布流水线失败于 stage=$($result.stage)：$msg。下一步：按提示处理后重新发布，未自动重试。"
+                    if ($r -and -not $r.skipped) { Log "失败告警已写入：$($r.path)" }
+                } catch { Log "告警写入失败（不影响发布结果）：$($_.Exception.Message)" }
+            }
+        }
     }
     finally {
         # ── 阶段 7：manifest（DryRun 不写；成功失败都记录，供回滚与审计） ──
