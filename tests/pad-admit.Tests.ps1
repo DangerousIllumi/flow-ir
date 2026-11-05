@@ -206,6 +206,56 @@ Describe 'pad-admit TRIGGER 第 14 项（观察期 warn）' {
         $r[0].status | Should Be 'pass'
         $r[0].message | Should Match 'manual'
     }
+
+    It '节点全是 reversible=true：不报可逆性 warn' {
+        $nodes = @(
+            [pscustomobject]@{ id = '3'; pad_hint = 'Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments'; run_mode = 'auto'; idempotent = $false; reversible = $true },
+            [pscustomobject]@{ id = '46'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'; idempotent = $false; reversible = $true }
+        )
+        $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'pass'
+        @($r | Where-Object { $_.code -eq 'TRIGGER_UNATTENDED_IRREVERSIBLE' }).Count | Should Be 0
+        @($r | Where-Object { $_.code -eq 'TRIGGER_MISSING_REVERSIBILITY' }).Count | Should Be 0
+    }
+
+    It '存在 reversible=false：warn + TRIGGER_UNATTENDED_IRREVERSIBLE，证据带节点与说明' {
+        $nodes = @(
+            [pscustomobject]@{ id = '43'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'; idempotent = $false
+                reversible = $false; reversibility_note = '过账需冲销凭证' }
+        )
+        $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'warn'
+        $r[0].code | Should Be 'TRIGGER_UNATTENDED_IRREVERSIBLE'
+        ($r[0].evidence -join ' ') | Should Match '节点 43'
+        ($r[0].evidence -join ' ') | Should Match '过账需冲销凭证'
+    }
+
+    It 'idempotent=false 缺 reversible：warn + TRIGGER_MISSING_REVERSIBILITY' {
+        $nodes = @(
+            [pscustomobject]@{ id = '29'; pad_hint = 'Outlook.SendEmailThroughOutlook.SendEmail'; run_mode = 'auto'; idempotent = $false }
+        )
+        $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r[0].status | Should Be 'warn'
+        $r[0].code | Should Be 'TRIGGER_MISSING_REVERSIBILITY'
+        ($r[0].evidence -join ' ') | Should Match '节点 29'
+    }
+
+    It 'manual 声明：reversible=false 也不报可逆性 warn' {
+        $nodes = @(
+            [pscustomobject]@{ id = '43'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
+                idempotent = $false; reversible = $false }
+        )
+        $f = [pscustomobject]@{ nodes = $nodes; trigger = [pscustomobject]@{ kind = 'manual' } }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $r.Count | Should Be 1
+        $r[0].status | Should Be 'pass'
+    }
 }
 
 Describe 'pad-admit 不再默认到具体业务流程' {

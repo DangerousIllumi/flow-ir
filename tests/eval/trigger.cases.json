@@ -118,6 +118,28 @@
       "expect": [
         { "op": "trigger", "def": { "kind": "manual", "assisted": true }, "expect": "invalid", "code": "TRIGGER_INVALID" }
       ]
+    },
+    {
+      "id": "trigger-reversible-all-true",
+      "requirement": "节点全是 reversible=true 时不给可逆性告警（正例）",
+      "flow": "tests/eval/fixtures/trigger-schedule-reversible.json",
+      "expect": [{ "op": "trigger" }]
+    },
+    {
+      "id": "trigger-irreversible-node",
+      "requirement": "schedule 触发 + reversible=false 节点必须报 TRIGGER_UNATTENDED_IRREVERSIBLE",
+      "flow": "tests/eval/fixtures/trigger-schedule-irreversible.json",
+      "expect": [
+        { "op": "trigger", "expect": "invalid", "code": "TRIGGER_UNATTENDED_IRREVERSIBLE" }
+      ]
+    },
+    {
+      "id": "trigger-missing-reversibility",
+      "requirement": "idempotent=false 但未声明 reversible 必须报 TRIGGER_MISSING_REVERSIBILITY",
+      "flow": "tests/eval/fixtures/trigger-schedule-missing-reversibility.json",
+      "expect": [
+        { "op": "trigger", "expect": "invalid", "code": "TRIGGER_MISSING_REVERSIBILITY" }
+      ]
     }
   ]
 }

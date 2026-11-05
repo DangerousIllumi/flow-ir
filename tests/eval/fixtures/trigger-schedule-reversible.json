@@ -1,0 +1,28 @@
+{
+  "name": "<流程名>",
+  "description": "触发声明断言用：schedule 触发 + 节点全是 reversible=true（可逆性正例）",
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-trigger-fixture",
+    "time": "09:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday",
+    "timeout_sec": 4200
+  },
+  "nodes": [
+    {
+      "id": "3",
+      "type": "mail.attachments",
+      "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments",
+      "label": "保存附件",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": false,
+      "reversible": true,
+      "reversibility_note": "附件可重新检索保存"
+    }
+  ]
+}

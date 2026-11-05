@@ -1,0 +1,28 @@
+{
+  "name": "<流程名>",
+  "description": "触发声明断言用：schedule 触发 + 一个后果不可回退的节点（可逆性反例）",
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-trigger-fixture",
+    "time": "09:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday",
+    "timeout_sec": 4200
+  },
+  "nodes": [
+    {
+      "id": "43",
+      "type": "script.run",
+      "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand",
+      "label": "MIGO 过账",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": false,
+      "reversible": false,
+      "reversibility_note": "过账需冲销凭证"
+    }
+  ]
+}

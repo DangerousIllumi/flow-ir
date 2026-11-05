@@ -16,12 +16,16 @@ function New-TestFlow {
         [Parameter(Mandatory)][string]$Dir,
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)]$Trigger,
-        [string]$NodeRunMode = 'auto'
+        [string]$NodeRunMode = 'auto',
+        # 追加到占位节点的声明字段（幂等/可逆性用例用）
+        [hashtable]$NodeProps = @{}
     )
+    $node = [ordered]@{ id = '1'; pad_hint = 'Comment.Comment'; run_mode = $NodeRunMode }
+    foreach ($k in $NodeProps.Keys) { $node[$k] = $NodeProps[$k] }
     $obj = [ordered]@{
         name = 'PESTER_TRIGGER'
         trigger = $Trigger
-        nodes = @([ordered]@{ id = '1'; pad_hint = 'Comment.Comment'; run_mode = $NodeRunMode })
+        nodes = @($node)
     }
     $path = Join-Path $Dir ($Name + '.json')
     [IO.File]::WriteAllText($path, ($obj | ConvertTo-Json -Depth 8),
@@ -138,6 +142,45 @@ Describe 'TriggerRegistry 声明解析' {
             timeout_sec = 4200; assisted = 'yes' }
         $f = New-TestFlow -Dir $TestDrive -Name 'assisted-not-bool' -Trigger $t
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
+    }
+}
+
+Describe 'TriggerRegistry 可逆性交叉校验（收窄后）' {
+
+    It '节点全是 reversible=true：warnings 里没有可逆性提示' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'rev-all-true' -Trigger $t `
+            -NodeProps @{ idempotent = $false; reversible = $true }
+        $spec = Get-TriggerSpec -FlowFile $f
+        @($spec.warnings).Count | Should Be 0
+    }
+
+    It '存在 reversible=false：warnings 含 TRIGGER_UNATTENDED_IRREVERSIBLE（带节点与说明）' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'rev-false' -Trigger $t `
+            -NodeProps @{ idempotent = $false; reversible = $false; reversibility_note = '邮件已发出不可撤回' }
+        $spec = Get-TriggerSpec -FlowFile $f
+        $codes = @($spec.warnings | ForEach-Object { $_.code })
+        ($codes -join ',') | Should Match 'TRIGGER_UNATTENDED_IRREVERSIBLE'
+        (@($spec.warnings | Where-Object { $_.code -eq 'TRIGGER_UNATTENDED_IRREVERSIBLE' })[0].evidence -join ' ') |
+            Should Match '邮件已发出不可撤回'
+    }
+
+    It 'idempotent=false 缺 reversible：warnings 含 TRIGGER_MISSING_REVERSIBILITY' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'rev-missing' -Trigger $t `
+            -NodeProps @{ idempotent = $false }
+        $spec = Get-TriggerSpec -FlowFile $f
+        $codes = @($spec.warnings | ForEach-Object { $_.code })
+        ($codes -join ',') | Should Match 'TRIGGER_MISSING_REVERSIBILITY'
+    }
+
+    It 'manual：即使 reversible=false 也不产生可逆性提示' {
+        $t = [ordered]@{ kind = 'manual' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'rev-manual' -Trigger $t `
+            -NodeProps @{ idempotent = $false; reversible = $false }
+        $spec = Get-TriggerSpec -FlowFile $f
+        @($spec.warnings).Count | Should Be 0
     }
 }
 
