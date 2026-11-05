@@ -25,7 +25,8 @@
   "time": "09:00",
   "days": ["mon", "tue", "wed", "thu", "fri"],
   "gate": "workday",
-  "timeout_sec": 4200
+  "timeout_sec": 4200,
+  "assisted": true
 }
 ```
 
@@ -37,6 +38,7 @@
 | `days` | 否 | 默认 `mon`–`fri`；取值 `mon..sun` | 不做节假日推断，节假日交给 `gate` |
 | `gate` | 否 | `none` / `workday` / `last-workday`，默认 `none` | `workday`/`last-workday` 复用现有工作日历；日历不可用时硬失败，不猜测 |
 | `timeout_sec` | 否 | 默认取运行时配置的 `RunTimeoutSec` | 与 `pad-schedule` 的 `-RunTimeoutSec` 同口径 |
+| `assisted` | 否 | 布尔，默认 `false` | 语义：到点自动启动、中途有人确认。只在 `kind=schedule/file` 允许；`kind=manual` 出现即 `TRIGGER_INVALID`。`true` 时必须显式写 `timeout_sec`（否则 `TRIGGER_ASSISTED_NO_TIMEOUT`），没人点确认时靠超时告警兜底 |
 | `file.dir` | `file` 必填 | 必须是 `{{config.<KEY>}}` 引用 | 禁止字面绝对路径，注册时用 `-ConfigFile` 解析 |
 | `file.pattern` | `file` 必填 | glob，如 `*.xlsx` | 只做文件名匹配，不按修改时间判断新旧 |
 | `file.poll_sec` | 否 | 默认 60，最小 15 | 轮询间隔 |
@@ -44,7 +46,7 @@
 | `file.max_wait_sec` | 否 | 默认 7200 | 守望上限；超时静默退出 0，不算失败 |
 | `file.once_per_file` | 否 | 默认 `true` | 以“文件名+大小+最后写入时间”做本次标记，写入状态账本；不参与新旧文件挑选 |
 
-`manual` 只允许 `{ "kind": "manual" }`，出现 `time`/`file` 等字段一律非法（避免“声明了但没人执行”）。
+`manual` 只允许 `{ "kind": "manual" }`，出现 `time`/`file`/`assisted` 等字段一律非法（避免“声明了但没人执行”）。
 
 **旧形状迁移**：现有 `{ "type": "...", "config": {...} }` 视为遗留形状，报 `TRIGGER_LEGACY_SHAPE`（观察期 warn，迁移完成后改 fail），不做静默映射——`type: "event"` 与 `config.dayOfMonth` 无法可靠映射到 `kind`。
 
@@ -54,7 +56,7 @@
 |---|---|
 | `budget` | 不同维度：`budget` 管循环上界，`trigger` 管启动时刻；不互相推导。`timeout_sec` 只是运行外壳超时，不改变预算判定 |
 | `guard` | 无关。注册动作不碰业务数据，不需要 `DryRun` 守卫；`trigger` 块内不允许出现节点 id |
-| 节点 `run_mode` | **交叉校验**：`kind != manual` 时，任何节点 `run_mode=confirm` 判 `TRIGGER_UNATTENDED_CONFIRM`（fail）。无人值守流程不可能等人工点确认 |
+| 节点 `run_mode` | **交叉校验**：`kind != manual` 且存在 `run_mode=confirm` 节点时——`assisted=true` 判 **pass**（到点自动启动、中途有人确认，没人点时靠 `timeout_sec` 超时告警兜底）；`assisted` 缺失或 `false` 判 `TRIGGER_UNATTENDED_CONFIRM`（fail）。完全无人值守的流程等不到人工点确认 |
 | 节点 `idempotent` | **交叉校验**：`kind != manual` 且存在副作用节点 `idempotent=false` 时，报 `TRIGGER_UNATTENDED_NONIDEMPOTENT`（warn，证据列节点 id）。`idempotent=false` 是给人看的重跑风险提示，v1 不因此阻断 |
 | 自动重试 | `trigger` **不引入重试**：错过时刻不补跑，失败不重触发；与全链路“告警 + 人工重跑”口径一致 |
 
@@ -101,7 +103,7 @@
 
 违反两条：
 1. `file.dir` 是字面绝对路径，未用 `{{config.<KEY>}}` → `TRIGGER_PATH_LITERAL`（fail）。注册器无法在别的机器上复用，且违反“外部参数从配置读取”。
-2. `kind=file`（无人值守）+ 节点 `run_mode=confirm` → `TRIGGER_UNATTENDED_CONFIRM`（fail）。文件落地触发时没有人在旁边点确认。
+2. `kind=file` 且未声明 `assisted=true` + 节点 `run_mode=confirm` → `TRIGGER_UNATTENDED_CONFIRM`（fail）。文件落地触发时没有人在旁边点确认；若确实“中途有人确认”，须显式写 `assisted: true` 且给出 `timeout_sec`。
 
 **例 C —— 缺必填项**
 
@@ -222,9 +224,10 @@ CLI 外壳：
 | `TRIGGER_LEGACY_SHAPE` | warn | 只有旧 `type/config`，没有 `kind` |
 | `TRIGGER_UNKNOWN_KIND` | **fail** | `kind` 不在 `manual/schedule/file` |
 | `TRIGGER_KIND_UNSUPPORTED` | **fail** | `kind` 写 `mail`/`callback` 等保留值 |
-| `TRIGGER_INVALID` | **fail** | 缺必填、`time` 非 `HH:mm`、`days` 非法、`pattern` 为空 |
+| `TRIGGER_INVALID` | **fail** | 缺必填、`time` 非 `HH:mm`、`days` 非法、`pattern` 为空、`assisted` 非布尔、`manual` 声明 `assisted` |
+| `TRIGGER_ASSISTED_NO_TIMEOUT` | **fail** | `assisted=true` 但未显式声明 `timeout_sec` |
 | `TRIGGER_PATH_LITERAL` | **fail** | `file.dir` 是字面路径，未用 `{{config.<KEY>}}` |
-| `TRIGGER_UNATTENDED_CONFIRM` | **fail** | `kind != manual` 且存在 `run_mode=confirm` |
+| `TRIGGER_UNATTENDED_CONFIRM` | **fail** | `kind != manual` 且存在 `run_mode=confirm`，且未声明 `assisted=true` |
 | `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn | `kind != manual` 且副作用节点 `idempotent=false` |
 | `TRIGGER_NO_GATE` | warn | `kind=schedule` 且 `gate=none`（节假日会误跑） |
 | `TRIGGER_NOT_REGISTERED` | warn（仅 `-TriggerLive`） | 本机查不到对应计划任务 |

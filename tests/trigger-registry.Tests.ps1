@@ -113,6 +113,32 @@ Describe 'TriggerRegistry 声明解析' {
         $f = New-TestFlow -Dir $TestDrive -Name 'schedule-confirm' -Trigger $t -NodeRunMode 'confirm'
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_UNATTENDED_CONFIRM'
     }
+
+    It 'assisted=true 遇到 confirm 节点放行：NO_ERROR' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'
+            timeout_sec = 4200; assisted = $true }
+        $f = New-TestFlow -Dir $TestDrive -Name 'assisted-ok' -Trigger $t -NodeRunMode 'confirm'
+        (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'NO_ERROR'
+    }
+
+    It 'assisted 缺 timeout_sec 被拒：TRIGGER_ASSISTED_NO_TIMEOUT' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; assisted = $true }
+        $f = New-TestFlow -Dir $TestDrive -Name 'assisted-no-timeout' -Trigger $t
+        (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_ASSISTED_NO_TIMEOUT'
+    }
+
+    It 'manual 声明 assisted 被拒：TRIGGER_INVALID' {
+        $t = [ordered]@{ kind = 'manual'; assisted = $true }
+        $f = New-TestFlow -Dir $TestDrive -Name 'manual-assisted' -Trigger $t
+        (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
+    }
+
+    It 'assisted 非布尔被拒：TRIGGER_INVALID' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'
+            timeout_sec = 4200; assisted = 'yes' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'assisted-not-bool' -Trigger $t
+        (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
+    }
 }
 
 Describe 'TriggerRegistry 指纹与幂等' {
@@ -139,6 +165,19 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $f2 = New-TestFlow -Dir $TestDrive -Name 'hash-d' -Trigger $t2
         $s2 = Get-TriggerSpec -FlowFile $f2
         (Get-TriggerFingerprint -Spec $s2) | Should Not Be $base
+    }
+
+    It 'assisted 进入 specHash：改它 hash 必变' {
+        $t1 = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('mon'); gate = 'none'
+            timeout_sec = 4200; assisted = $false }
+        $t2 = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('mon'); gate = 'none'
+            timeout_sec = 4200; assisted = $true }
+        $f1 = New-TestFlow -Dir $TestDrive -Name 'hash-assisted-a' -Trigger $t1
+        $f2 = New-TestFlow -Dir $TestDrive -Name 'hash-assisted-b' -Trigger $t2
+        $h1 = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f1)
+        $h2 = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f2)
+        $h1.Length | Should Be 64
+        $h2 | Should Not Be $h1
     }
 
     It '描述前缀能取出 hash，非法描述返回空' {

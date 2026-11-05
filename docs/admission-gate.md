@@ -59,9 +59,10 @@
 | `TRIGGER_LEGACY_SHAPE` | warn（观察期） | 只有旧 `type/config`，没有 `kind` |
 | `TRIGGER_UNKNOWN_KIND` | fail | `kind` 不在 `manual/schedule/file` |
 | `TRIGGER_KIND_UNSUPPORTED` | fail | `kind` 是保留值（`mail`/`callback`），v1 无注册器 |
-| `TRIGGER_INVALID` | fail | 缺必填、`time` 非 `HH:mm`、`days`/`gate` 非法、`file.pattern` 为空 |
+| `TRIGGER_INVALID` | fail | 缺必填、`time` 非 `HH:mm`、`days`/`gate` 非法、`file.pattern` 为空、`assisted` 非布尔或 `manual` 声明 `assisted` |
+| `TRIGGER_ASSISTED_NO_TIMEOUT` | fail | `assisted=true` 但未显式声明 `timeout_sec` |
 | `TRIGGER_PATH_LITERAL` | fail | `file.dir` 写死路径，未用 `{{config.<KEY>}}` 引用 |
-| `TRIGGER_UNATTENDED_CONFIRM` | fail | 非 `manual` 触发但存在 `run_mode=confirm` 节点 |
+| `TRIGGER_UNATTENDED_CONFIRM` | fail | 非 `manual` 触发且存在 `run_mode=confirm` 节点，但未声明 `assisted=true` |
 | `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn | 非 `manual` 触发但存在 `idempotent=false` 节点 |
 | `TRIGGER_NO_GATE` | warn | `schedule` 未声明 `gate`，节假日会照跑 |
 | `TRIGGER_AMBIGUOUS` | fail | 任务名已被 `business/flows` 下其他流程占用 |

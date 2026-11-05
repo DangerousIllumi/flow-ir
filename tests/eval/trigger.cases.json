@@ -87,6 +87,37 @@
       "expect": [
         { "op": "trigger", "expect": "invalid", "code": "TRIGGER_UNATTENDED_CONFIRM" }
       ]
+    },
+    {
+      "id": "trigger-assisted-confirm-under-schedule",
+      "requirement": "assisted=true 时 schedule 触发 + confirm 节点合法（中途有人确认）",
+      "flow": "tests/eval/fixtures/trigger-schedule-assisted.json",
+      "expect": [{ "op": "trigger" }]
+    },
+    {
+      "id": "trigger-assisted-no-timeout",
+      "requirement": "assisted=true 但缺 timeout_sec 必须被拒绝（TRIGGER_ASSISTED_NO_TIMEOUT）",
+      "expect": [
+        {
+          "op": "trigger",
+          "def": {
+            "kind": "schedule",
+            "time": "09:00",
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "gate": "workday",
+            "assisted": true
+          },
+          "expect": "invalid",
+          "code": "TRIGGER_ASSISTED_NO_TIMEOUT"
+        }
+      ]
+    },
+    {
+      "id": "trigger-manual-with-assisted",
+      "requirement": "manual 声明 assisted 必须被拒绝（TRIGGER_INVALID）",
+      "expect": [
+        { "op": "trigger", "def": { "kind": "manual", "assisted": true }, "expect": "invalid", "code": "TRIGGER_INVALID" }
+      ]
     }
   ]
 }
