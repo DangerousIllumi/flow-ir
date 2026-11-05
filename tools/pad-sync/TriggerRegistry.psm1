@@ -86,6 +86,7 @@ function Get-TriggerSpec {
     $days = @('mon', 'tue', 'wed', 'thu', 'fri')
     $gate = 'none'
     $timeoutSec = 4200
+    $assisted = $false
     $fileDir = $null
     $filePattern = $null
     # file 触发默认值，与设计稿 2.1 一致；poll 下限 15 秒，避免空转打满磁盘
@@ -95,7 +96,7 @@ function Get-TriggerSpec {
     $fileOncePerFile = $true
 
     if ($kind -eq 'manual') {
-        foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file')) {
+        foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file', 'assisted')) {
             if (Test-TriggerProp $trg $k) {
                 throw (New-TriggerException 'TRIGGER_INVALID' "manual 不允许声明 $k（声明了也没人执行）")
             }
@@ -167,11 +168,22 @@ function Get-TriggerSpec {
                 $fileOncePerFile = [bool]$f.once_per_file
             }
         }
-        # 无人值守触发遇到人工确认节点是硬矛盾，注册前就拦住
+        # assisted：到点自动启动、中途有人确认；必须显式声明 timeout_sec，没人点时靠超时告警兜底
+        if (Test-TriggerProp $trg 'assisted') {
+            if (-not ($trg.assisted -is [bool])) {
+                throw (New-TriggerException 'TRIGGER_INVALID' "assisted=$($trg.assisted)（应为 true/false）")
+            }
+            $assisted = [bool]$trg.assisted
+            if ($assisted -and -not (Test-TriggerProp $trg 'timeout_sec')) {
+                throw (New-TriggerException 'TRIGGER_ASSISTED_NO_TIMEOUT' `
+                    'assisted=true 必须显式声明 timeout_sec（没人点确认时靠超时告警兜底）')
+            }
+        }
+        # 无人值守触发遇到人工确认节点是硬矛盾；显式 assisted=true 表示中途有人确认，放行
         $confirm = @($flow.nodes | Where-Object {
             $_ -and (Test-TriggerProp $_ 'run_mode') -and [string]$_.run_mode -eq 'confirm'
         })
-        if ($confirm.Count -gt 0) {
+        if ($confirm.Count -gt 0 -and -not $assisted) {
             throw (New-TriggerException 'TRIGGER_UNATTENDED_CONFIRM' `
                 ("无人值守触发但节点需要人工确认：" + (@($confirm | ForEach-Object { $_.id }) -join ',')))
         }
@@ -198,6 +210,7 @@ function Get-TriggerSpec {
         days         = $days
         gate         = $gate
         timeoutSec   = $timeoutSec
+        assisted     = $assisted
         fileDir      = $fileDir
         filePattern  = $filePattern
         filePollSec  = $filePollSec
@@ -219,6 +232,7 @@ function Get-TriggerFingerprint {
         days       = @($Spec.days)
         gate       = [string]$Spec.gate
         timeoutSec = [int]$Spec.timeoutSec
+        assisted   = [bool]$Spec.assisted
     }
     if ([string]$Spec.kind -eq 'file') {
         $canon['fileDir'] = [string]$Spec.fileDir

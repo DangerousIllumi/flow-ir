@@ -79,7 +79,7 @@ function validateTrigger(flow, trg, opts = {}) {
   }
 
   if (kind === "manual") {
-    for (const key of ["time", "days", "gate", "timeout_sec", "file"]) {
+    for (const key of ["time", "days", "gate", "timeout_sec", "file", "assisted"]) {
       if (hasOwn(trg, key)) err("TRIGGER_INVALID", `manual 不允许声明 ${key}（声明了也没人执行）`);
     }
     return { errors, warnings };
@@ -106,6 +106,19 @@ function validateTrigger(flow, trg, opts = {}) {
   }
   if (hasOwn(trg, "timeout_sec") && !isPositiveInt(trg.timeout_sec)) {
     err("TRIGGER_INVALID", `timeout_sec=${JSON.stringify(trg.timeout_sec)}（应为正整数秒）`);
+  }
+
+  // assisted：到点自动启动、中途有人确认；只对 schedule/file 有意义，manual 已在上面拒绝
+  let assisted = false;
+  if (hasOwn(trg, "assisted")) {
+    if (typeof trg.assisted !== "boolean") {
+      err("TRIGGER_INVALID", `assisted=${JSON.stringify(trg.assisted)}（应为 true/false）`);
+    } else {
+      assisted = trg.assisted;
+    }
+    if (assisted && !hasOwn(trg, "timeout_sec")) {
+      err("TRIGGER_ASSISTED_NO_TIMEOUT", "assisted=true 必须显式声明 timeout_sec（没人点确认时靠超时告警兜底）");
+    }
   }
 
   if (kind === "file") {
@@ -138,7 +151,7 @@ function validateTrigger(flow, trg, opts = {}) {
   if (!opts.skipCrossCheck) {
     const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
     const confirmNodes = nodes.filter((n) => n && n.run_mode === "confirm");
-    if (confirmNodes.length > 0) {
+    if (confirmNodes.length > 0 && assisted !== true) {
       err("TRIGGER_UNATTENDED_CONFIRM", `无人值守触发但节点需要人工确认：${confirmNodes.map((n) => n.id).join(",")}`);
     }
     const nonIdem = nodes.filter((n) => n && n.idempotent === false);

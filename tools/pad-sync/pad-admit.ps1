@@ -338,13 +338,14 @@ function Invoke-TriggerCheck {
 
     if ($kind -eq 'manual') {
         # manual 声明了时刻/目录也不会执行，直接判非法，避免“写了但没人跑”
-        foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file')) {
+        foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file', 'assisted')) {
             if (Test-PropExists $trg $k) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
                     message = "manual 不允许声明 $k（声明了也没人执行）"; evidence = @("trigger.$k") }
             }
         }
     } else {
+        $assisted = $false
         $timeText = $null
         if (Test-PropExists $trg 'time') { $timeText = [string]$trg.time }
         if (-not $timeText -or $timeText -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
@@ -378,6 +379,21 @@ function Invoke-TriggerCheck {
         if ((Test-PropExists $trg 'timeout_sec') -and -not (Test-TriggerPositiveInt $trg.timeout_sec)) {
             $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
                 message = "timeout_sec=$($trg.timeout_sec)（应为正整数秒）"; evidence = @('timeout_sec') }
+        }
+
+        # assisted：到点自动启动、中途有人确认；必须显式声明 timeout_sec，没人点时靠超时告警兜底
+        if (Test-PropExists $trg 'assisted') {
+            if (-not ($trg.assisted -is [bool])) {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
+                    message = "assisted=$($trg.assisted)（应为 true/false）"; evidence = @('assisted') }
+            } else {
+                $assisted = [bool]$trg.assisted
+                if ($assisted -and -not (Test-PropExists $trg 'timeout_sec')) {
+                    $issues += @{ status = 'fail'; code = 'TRIGGER_ASSISTED_NO_TIMEOUT'
+                        message = 'assisted=true 必须显式声明 timeout_sec（没人点确认时靠超时告警兜底）'
+                        evidence = @('timeout_sec 缺失') }
+                }
+            }
         }
 
         $pattern = $null
@@ -415,12 +431,13 @@ function Invoke-TriggerCheck {
             }
         }
 
-        # 交叉校验：无人值守触发遇到人工确认节点是硬矛盾；重跑不安全只提醒
+        # 交叉校验：无人值守触发遇到人工确认节点是硬矛盾；
+        # 显式 assisted=true 表示到点自动启动、中途有人确认，放行（没人点时靠 timeout_sec 告警兜底）
         $nodes = @($Flow.nodes)
         $confirm = @($nodes | Where-Object {
             $_ -and (Test-PropExists $_ 'run_mode') -and [string]$_.run_mode -eq 'confirm'
         })
-        if ($confirm.Count -gt 0) {
+        if ($confirm.Count -gt 0 -and -not $assisted) {
             $issues += @{ status = 'fail'; code = 'TRIGGER_UNATTENDED_CONFIRM'
                 message = '无人值守触发但节点需要人工确认'
                 evidence = @($confirm | ForEach-Object { "节点 $($_.id) run_mode=confirm" }) }
