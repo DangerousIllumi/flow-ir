@@ -63,7 +63,9 @@
 | `TRIGGER_ASSISTED_NO_TIMEOUT` | fail | `assisted=true` 但未显式声明 `timeout_sec` |
 | `TRIGGER_PATH_LITERAL` | fail | `file.dir` 写死路径，未用 `{{config.<KEY>}}` 引用 |
 | `TRIGGER_UNATTENDED_CONFIRM` | fail | 非 `manual` 触发且存在 `run_mode=confirm` 节点，但未声明 `assisted=true` |
-| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn | 非 `manual` 触发但存在 `idempotent=false` 节点 |
+| `TRIGGER_UNATTENDED_IRREVERSIBLE` | warn | 非 `manual` 触发且存在 `reversible=false` 节点（后果不可回退）；证据列节点 id 与 `reversibility_note` |
+| `TRIGGER_MISSING_REVERSIBILITY` | warn | 节点 `idempotent=false` 但未声明 `reversible`，要求补声明（不默认填充） |
+| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn（兼容别名，**已收窄**） | 仅当存量用例/调用方仍引用旧码时保留名称；判定不再由 `idempotent=false` 触发，改由上面两条可逆性规则触发 |
 | `TRIGGER_NO_GATE` | warn | `schedule` 未声明 `gate`，节假日会照跑 |
 | `TRIGGER_AMBIGUOUS` | fail | 任务名已被 `business/flows` 下其他流程占用 |
 | `TRIGGER_NOT_REGISTERED` | warn | 仅 `-TriggerLive`（本次未实现） |

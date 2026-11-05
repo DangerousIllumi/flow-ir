@@ -57,7 +57,7 @@
 | `budget` | 不同维度：`budget` 管循环上界，`trigger` 管启动时刻；不互相推导。`timeout_sec` 只是运行外壳超时，不改变预算判定 |
 | `guard` | 无关。注册动作不碰业务数据，不需要 `DryRun` 守卫；`trigger` 块内不允许出现节点 id |
 | 节点 `run_mode` | **交叉校验**：`kind != manual` 且存在 `run_mode=confirm` 节点时——`assisted=true` 判 **pass**（到点自动启动、中途有人确认，没人点时靠 `timeout_sec` 超时告警兜底）；`assisted` 缺失或 `false` 判 `TRIGGER_UNATTENDED_CONFIRM`（fail）。完全无人值守的流程等不到人工点确认 |
-| 节点 `idempotent` | **交叉校验**：`kind != manual` 且存在副作用节点 `idempotent=false` 时，报 `TRIGGER_UNATTENDED_NONIDEMPOTENT`（warn，证据列节点 id）。`idempotent=false` 是给人看的重跑风险提示，v1 不因此阻断 |
+| 节点 `idempotent` / `reversible` | **交叉校验（可逆性口径）**：这两个字段是两个正交的轴——`idempotent` 管「同一输入重跑是否收敛」，`reversible` 管「已产生的后果能否撤回」。`kind != manual` 且存在 `reversible=false` 节点 → `TRIGGER_UNATTENDED_IRREVERSIBLE`（warn，证据列节点 id 与 `reversibility_note`）；节点 `idempotent=false` 但未声明 `reversible` → `TRIGGER_MISSING_REVERSIBILITY`（warn，要求补声明，不默认填充）。旧码 `TRIGGER_UNATTENDED_NONIDEMPOTENT` 仅作兼容别名保留，**不再由 `idempotent=false` 触发**（已收窄） |
 | 自动重试 | `trigger` **不引入重试**：错过时刻不补跑，失败不重触发；与全链路“告警 + 人工重跑”口径一致 |
 
 ### 2.3 合法示例
@@ -228,7 +228,9 @@ CLI 外壳：
 | `TRIGGER_ASSISTED_NO_TIMEOUT` | **fail** | `assisted=true` 但未显式声明 `timeout_sec` |
 | `TRIGGER_PATH_LITERAL` | **fail** | `file.dir` 是字面路径，未用 `{{config.<KEY>}}` |
 | `TRIGGER_UNATTENDED_CONFIRM` | **fail** | `kind != manual` 且存在 `run_mode=confirm`，且未声明 `assisted=true` |
-| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn | `kind != manual` 且副作用节点 `idempotent=false` |
+| `TRIGGER_UNATTENDED_IRREVERSIBLE` | warn | `kind != manual` 且存在 `reversible=false` 节点（后果不可回退） |
+| `TRIGGER_MISSING_REVERSIBILITY` | warn | 节点 `idempotent=false` 但未声明 `reversible` |
+| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn（兼容别名，**已收窄**） | 保留名称供存量用例引用；不再由 `idempotent=false` 触发 |
 | `TRIGGER_NO_GATE` | warn | `kind=schedule` 且 `gate=none`（节假日会误跑） |
 | `TRIGGER_NOT_REGISTERED` | warn（仅 `-TriggerLive`） | 本机查不到对应计划任务 |
 | `TRIGGER_DRIFT` | **fail**（仅 `-TriggerLive`） | 任务存在但 `specHash`/动作参数与声明不一致 |

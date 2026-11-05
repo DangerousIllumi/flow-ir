@@ -13,6 +13,11 @@
 
 **例外（不得以“简洁”为由删除）**：副作用守卫（DRY_RUN/确认）、幂等、审计（manifest）、错误处理、数据正确性校验、安全边界。奥卡姆剃刀只砍“多余”，不砍“必要”。
 
+副作用节点必须回答两个正交的问题，分别落到 `flow.json` 的两个字段：
+- `idempotent`：同一输入重跑是否收敛（重跑安全），为 `false` 时写 `idempotency_note`；
+- `reversible`：已经产生的后果能否撤回，为 `false` 时写 `reversibility_note`（必须说清回退办法）。
+保存附件、导出文件、核对文件、标记已读属于可逆；发信、MIGO 过账属于不可逆。
+
 ## 一、外部脚本输出规范（RunDOSCommand hook 解析依据）
 
 PAD 的 RunDOSCommand 调 VBS/Python 失败时，Actions.log 只记录 exitCode + stdout/stderr。

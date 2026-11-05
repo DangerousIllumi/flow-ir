@@ -46,10 +46,15 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 |---|---|---|---|
 | 1 | 这个节点怎么运行 | `auto` 自动执行 / `confirm` 需人工确认 / `observe` 只读观察 | 节点级 `run_mode` |
 | 2 | 重跑会发生什么（重跑安全性） | `true` 重跑结果一致 / `false` 重跑会改变状态或丢失输入 | 节点级 `idempotent`；为 `false` 时必须再写 `idempotency_note` |
+| 2b | 后果能不能回退（可逆性） | `true` 删掉可重建、可改回（保存附件/导出文件/核对文件/标记已读）/ `false` 发信、过账等不可撤回 | 节点级 `reversible`；为 `false` 时必须再写 `reversibility_note`（说清回退办法，如"过账需冲销凭证"） |
 | 3 | 多文件落盘 + 需清理旧文件时，怎么区分「本次产物」 | `是` 采用运行时间目录 / `否` 说明用什么可靠标记 | 本次落盘目录 + 清理节点的选取条件 |
 
 判定口径：
+- **`idempotent` 与 `reversible` 是两个正交的轴，不能互相代替**：
+  `idempotent` 回答「同一输入重跑会不会叠加」，`reversible` 回答「已经产生的后果能不能撤回」。
 - **`idempotent` 的语义是「重跑安全性」**：回答「人工点运行之前需要知道什么」，不是「是否允许自动重试」。
+- **`reversible=false` 的节点必须能说出回退办法**（如「过账需冲销凭证」「邮件已发出，只能再发一封说明」），
+  说不出来就说明这个副作用不该放进无人值守流程。
 - **控制节点（SET / IF / LOOP / SWITCH / GUARD）也要标注**，不能只标业务动作。
 - 发信、过账、删文件、改状态这类副作用节点，默认要问清楚；问不出重跑后果就按 `idempotent=false`。
 - `idempotency_note` 必须是一到两句**给人看的中文**，写清「重跑会发生什么 / 要注意什么」，
@@ -63,7 +68,8 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 - 反例必须记住：
   - **MB51 导出可重跑**：每次生成新的带时间戳导出文件，`idempotent=true`。
   - **MIGO 过账不可重跑**：重复过账会产生重复物料凭证，必须 `idempotent=false`，
-    `idempotency_note` 写明人工前置检查（如「重跑前必须确认过账账本完整」）。
+    `idempotency_note` 写明人工前置检查（如「重跑前必须确认过账账本完整」）；
+    且 `reversible=false`，`reversibility_note` 写「过账需冲销凭证」。
 
 缺字段的后果：`eval-flow.js` 的 `declarationsComplete` / `nodeDeclaration` 会直接判失败（退出码 1），
 不会降级成警告。自检命令：
