@@ -8,6 +8,7 @@
 # 用法：
 #   .\pad-admit.ps1 -FlowFile business\flows\sample-report.json -ConfigFile business\config\sample-report.json
 #   .\pad-admit.ps1 -FlowFile ... -Unattended      # 定时任务场景：ask 一律按 deny
+#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # 第 14 项追加只读的计划任务注册校验
 #   .\pad-admit.ps1 -FlowFile ... -Json            # 只输出 JSON
 #
 # 退出码：0 全部通过 / 1 存在 fail / 2 仅存在 ask
@@ -30,6 +31,8 @@ param(
     [string]$ApproveFile,
     # 定时任务/无人值守：ask 按 deny 处理
     [switch]$Unattended,
+    # 第 14 项 live 校验：默认关闭，离线可复现；开启后只读查询本机计划任务
+    [switch]$TriggerLive,
     [switch]$Json,
     # 仅供 Pester dot-source
     [switch]$NoMain
@@ -281,11 +284,14 @@ function Find-TriggerTaskCollision {
     return $hits
 }
 
-# 第 14 项主体：只做静态校验。
-# 后续接入点（本次不实现）：加 -TriggerLive 后查 Get-ScheduledTask 与 specHash，
-# 补 TRIGGER_NOT_REGISTERED（warn）/ TRIGGER_DRIFT（fail）两个 live 结果码。
+# 第 14 项主体：静态校验 + 可选 live 校验。
+# -TriggerLive 默认关闭：只读查询本机计划任务与 specHash，
+# 未注册记 TRIGGER_NOT_REGISTERED（warn），声明与任务不一致记 TRIGGER_DRIFT（fail）。
 function Invoke-TriggerCheck {
-    param($Flow, [string]$FlowName, [string]$Repo, [string]$SelfFile)
+    param(
+        $Flow, [string]$FlowName, [string]$Repo, [string]$SelfFile,
+        [string]$ConfigFile, [switch]$TriggerLive
+    )
     $issues = @()
 
     $trg = $null
@@ -429,6 +435,37 @@ function Invoke-TriggerCheck {
         }
     }
 
+    # live 校验：只对 schedule，且静态检查没有 fail 才查本机任务
+    # Test-Trigger 只读（Get-ScheduledTask / Get-ScheduledTaskInfo），不注册、不触发
+    $staticFails = @($issues | Where-Object { $_.status -eq 'fail' })
+    if ($staticFails.Count -eq 0 -and $TriggerLive -and $kind -eq 'schedule' -and
+        $SelfFile -and (Test-Path -LiteralPath $SelfFile)) {
+        try {
+            Import-Module (Join-Path $PSScriptRoot 'TriggerRegistry.psm1') -Force
+            $live = Test-Trigger -FlowFile $SelfFile -ConfigFile $ConfigFile
+        } catch {
+            # 查询失败（含运行时配置缺失）不能静默放过，按 fail 报源码
+            $liveCode = 'TRIGGER_DRIFT'
+            if ($_.Exception.Data -and $_.Exception.Data.Contains('code')) {
+                $liveCode = [string]$_.Exception.Data['code']
+            }
+            $issues += @{ status = 'fail'; code = $liveCode
+                message = "无法查询计划任务：$($_.Exception.Message)" ; evidence = @("kind=$kind") }
+            $live = $null
+        }
+        if ($null -ne $live) {
+            if (-not $live.ok -and [string]$live.code -eq 'TRIGGER_NOT_REGISTERED') {
+                $issues += @{ status = 'warn'; code = 'TRIGGER_NOT_REGISTERED'
+                    message = "计划任务尚未注册：$($live.taskName)（-TriggerLive 下只提示，不阻断）"
+                    evidence = @("taskName=$($live.taskName)", "specHash=$($live.specHash)") }
+            } elseif (-not $live.ok) {
+                $issues += @{ status = 'fail'; code = 'TRIGGER_DRIFT'
+                    message = [string]$live.message
+                    evidence = @("taskName=$($live.taskName)", "specHash=$($live.specHash)") }
+            }
+        }
+    }
+
     if ($issues.Count -eq 0) {
         $dayText = '周一~周五'
         if (Test-PropExists $trg 'days') {
@@ -451,7 +488,8 @@ function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,
         [string]$RobinPath, [string]$AcceptancePath, [string]$RequirementsPath,
-        $Policy, [string]$ApprovePath, [hashtable]$Paths
+        $Policy, [string]$ApprovePath, [hashtable]$Paths,
+        [bool]$TriggerLive = $false
     )
     $checks = @()
     $nodes = @($Flow.nodes)
@@ -676,9 +714,10 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' '通用脚本动作都有 intent' @()
     }
 
-    # 14 TRIGGER（静态校验；live 注册校验留待 -TriggerLive 接入）
+    # 14 TRIGGER（静态校验；-TriggerLive 时追加只读的注册校验）
     $checks += @(Invoke-TriggerCheck -Flow $Flow -FlowName $FlowName `
-        -Repo $Paths.Repo -SelfFile $Paths.FlowFile)
+        -Repo $Paths.Repo -SelfFile $Paths.FlowFile -ConfigFile $Paths.ConfigFile `
+        -TriggerLive:$TriggerLive)
 
     return $checks
 }
@@ -770,7 +809,8 @@ if (-not $NoMain) {
         $result.flow = $FlowName
         $result.checks = @(Invoke-AdmitChecks -Flow $flow -FlowName $FlowName -Config $config -Kb $kb `
             -RobinPath $RobinFile -AcceptancePath $AcceptanceFile -RequirementsPath $RequirementsFile `
-            -Policy $policy -ApprovePath $ApproveFile -Paths $paths)
+            -Policy $policy -ApprovePath $ApproveFile -Paths $paths `
+            -TriggerLive:([bool]$TriggerLive))
 
         $fail = @($result.checks | Where-Object { $_.status -eq 'fail' })
         $ask = @($result.checks | Where-Object { $_.status -eq 'ask' })
