@@ -120,9 +120,17 @@ Describe 'PadFingerprint 比对' {
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
         $base = Join-Path $work 'baseline.json'
+        # 新格式（source/deployed 拆分）；源哈希故意写成错的，验证 Mode 只改级别不改判定
         Write-FingerprintBaseline $base ([ordered]@{
-            version = 1; flow = 'F'; flowGuid = $g; environmentId = $null; machine = $env:COMPUTERNAME
-            sourceRobin = $fake.robin; workspaceRobin = $fake.robin; workspaceMtime = $null
+            version = 2; flow = 'F'; flowGuid = $g; environmentId = $null; machine = $env:COMPUTERNAME
+            source = [ordered]@{
+                robinPath = $fake.robin; robinSha256 = 'deadbeef'
+                robinLogicHash = (Get-RobinLogicHash $fake.robin); configSha256 = $null; acceptanceSha256 = $null
+            }
+            deployed = [ordered]@{
+                robinPath = $fake.robin; robinSha256 = (Get-FileHash $fake.robin -Algorithm SHA256).Hash.ToLower()
+                logicHash = (Get-RobinLogicHash $fake.robin); workspaceMtime = $null
+            }
             hashes = [ordered]@{ robin = 'deadbeef'; config = $null; acceptance = $null }
             seededAt = '2026-11-03T00:00:00Z'
         })
@@ -209,6 +217,110 @@ Describe 'PadFingerprint 比对' {
     }
 }
 
+Describe 'PadFingerprint 身份解析与哈希域拆分' {
+
+    # 造一条新格式基线：源与已发布各自一份，避免任何跨域比较
+    function New-BaselineV2([string]$Work, [string]$SourceRobin, [string]$DeployedRobin, [string]$DisplayName, [string]$FlowGuid) {
+        $base = Join-Path $Work 'baseline.json'
+        $srcParts = Get-FingerprintParts $SourceRobin $null $null
+        $depRaw = if ($DeployedRobin -and (Test-Path $DeployedRobin)) {
+            (Get-FileHash $DeployedRobin -Algorithm SHA256).Hash.ToLower()
+        } else { $null }
+        $depLogic = Get-RobinLogicHash $DeployedRobin
+        $null = Write-FingerprintBaseline $base ([ordered]@{
+            version = 2; flow = $DisplayName; flowGuid = $FlowGuid; environmentId = $null; machine = $env:COMPUTERNAME
+            source = [ordered]@{
+                robinPath = $SourceRobin; robinSha256 = $srcParts.robin
+                robinLogicHash = (Get-RobinLogicHash $SourceRobin); configSha256 = $null; acceptanceSha256 = $null
+            }
+            deployed = [ordered]@{
+                robinPath = $DeployedRobin; robinSha256 = $depRaw
+                logicHash = $depLogic; workspaceMtime = $null
+            }
+            hashes = $srcParts
+            seededAt = '2026-11-03T00:00:00Z'
+        })
+        return $base
+    }
+
+    It '身份解析：用基线里的 PAD 显示名，业务名不同也能命中' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work '示例流程显示名' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineV2 $work $fake.robin $fake.robin '示例流程显示名' $g
+        # 入参是业务文件名，和 PAD 里的显示名完全不同
+        $r = Test-FlowFingerprint -FlowName 'demo-flow' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'pass'
+        $r.code | Should Be 'OK'
+    }
+
+    It '身份解析：搜不到 → UNKNOWN，并把搜过的名字写进 evidence' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineV2 $work $fake.robin $fake.robin '不存在的显示名' $g
+        $r = Test-FlowFingerprint -FlowName 'demo-flow' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.code | Should Be 'FINGERPRINT_UNKNOWN'
+        ($r.evidence -join ' ') | Should Match 'searched=不存在的显示名'
+    }
+
+    It '旧基线缺 deployed 段 → UNKNOWN（提示重新播种，不许当 pass）' {
+        $work = New-Work
+        $robin = Join-Path $work 'x.robin'
+        [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
+        $parts = Get-FingerprintParts $robin $null $null
+        $base = Join-Path $work 'old.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 1; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            sourceRobin = $robin; workspaceRobin = $robin; workspaceMtime = $null
+            hashes = $parts; seededAt = '2026-11-03T00:00:00Z'
+        })
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $robin -BaselinePath $base
+        $r.code | Should Be 'FINGERPRINT_UNKNOWN'
+        $r.message | Should Match '缺少已发布哈希'
+        $r.status | Should Be 'warn'
+    }
+
+    It '形态一：源与已发布完全一致 → pass' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineV2 $work $fake.robin $fake.robin 'F' $g
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'pass'
+        $r.code | Should Be 'OK'
+    }
+
+    It '形态二：原始字节不同、规范化一致 → 仍 pass，并注明字节差异' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        # PAD 落盘会追加 @@ 元数据头；规范化后与源完全一致
+        $txt = "SET A TO 'x'"
+        $deployedTxt = "@@ConnectionString TO 'x'`r`n" + $txt
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222' -RobinText $deployedTxt
+        $src = Join-Path $work 'src.robin'
+        [IO.File]::WriteAllText($src, $txt, (New-Object Text.UTF8Encoding($false)))
+        $base = New-BaselineV2 $work $src $fake.robin 'F' $g
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $src -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'pass'
+        $r.message | Should Match '原始字节不同'
+    }
+
+    It '形态三：规范化后真漂移 → FINGERPRINT_DEPLOYED_MISMATCH（默认 warn）' {
+        $work = New-Work
+        $g = '11111111-1111-1111-1111-111111111111'
+        $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
+        $base = New-BaselineV2 $work $fake.robin $fake.robin 'F' $g
+        # 已发布副本被改成了别的动作：逻辑哈希不再等于基线
+        $j = [IO.File]::ReadAllText($base, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        $j.deployed.logicHash = 'deadbeef'
+        [IO.File]::WriteAllText($base, ($j | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'FINGERPRINT_DEPLOYED_MISMATCH'
+    }
+}
+
 Describe 'pad-fingerprint 基线命名与 pad-admit 同口径' {
     It '按 pad_flow_name 反查 flow.json：基线落在 <flow文件名>.json，准入能读到' {
         $work = New-Work
@@ -217,7 +329,8 @@ Describe 'pad-fingerprint 基线命名与 pad-admit 同口径' {
         # PAD 流程名与业务流文件名不同：这正是中文流程名的真实形态
         $padName = '示例流程显示名'
         $bizName = 'demo-flow'
-        $fake = New-FakePad $work $padName $g $runId
+        # 已发布副本必须与源同逻辑，否则拆分后的基线会判 DRIFT
+        $fake = New-FakePad $work $padName $g $runId -RobinText "SET A TO 'src'"
 
         $flows = Join-Path $work 'business\flows'
         New-Item -ItemType Directory -Path $flows -Force | Out-Null
