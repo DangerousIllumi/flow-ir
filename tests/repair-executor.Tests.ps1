@@ -35,10 +35,12 @@ function Write-Ctx([string]$Path, [string]$Code, [string]$Msg = '', [string]$Sys
 }
 
 # 在子进程里跑执行器，返回真实退出码（脚本内部用 exit，不能在同进程调）
+# -PadRoot 为空时不传该参数：用于验证执行器自身的根目录解析优先级
 # -RulesFile 可选：用于验证「新增错误码只改 JSON、不改脚本」
-function Invoke-Executor([string]$CtxPath, [string]$InRobin, [string]$OutRobin, [string]$PadRoot, [string]$RulesFile = '') {
+function Invoke-Executor([string]$CtxPath, [string]$InRobin, [string]$OutRobin, [string]$PadRoot = '', [string]$RulesFile = '') {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:Executor,
-        '-ContextFile', $CtxPath, '-InputRobin', $InRobin, '-OutputRobin', $OutRobin, '-PadRoot', $PadRoot)
+        '-ContextFile', $CtxPath, '-InputRobin', $InRobin, '-OutputRobin', $OutRobin)
+    if ($PadRoot) { $argList += @('-PadRoot', $PadRoot) }
     if ($RulesFile) { $argList += @('-RulesFile', $RulesFile) }
     & powershell @argList | Out-Null
     return $LASTEXITCODE
@@ -250,6 +252,55 @@ Describe 'repair-executor 规则测试' {
         [IO.File]::WriteAllText($rules, ($custom | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
 
         (Invoke-Executor $ctx $in $out $pad $rules) | Should Be 0
+        ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
+    }
+
+    It '未传 -PadRoot 时由环境变量 FLOW_IR_PAD_ROOT 决定搜索根（不再固定 C:\PAD）' {
+        $work = New-Work
+        $pad = Join-Path $work 'pad'
+        $real = Join-Path $pad 'Scripts\target.py'
+        New-Item -ItemType File -Path $real -Force | Out-Null
+        $missing = Join-Path $pad 'Old\target.py'
+        $in = Join-Path $work 'in.robin'
+        Write-Robin $in ("SET Target TO '{0}'" -f (To-Raw $missing))
+        $out = Join-Path $work 'out.robin'
+        $ctx = Join-Path $work 'ctx.json'
+        Write-Ctx $ctx 'FileNotFound'
+
+        $old = $env:FLOW_IR_PAD_ROOT
+        try {
+            $env:FLOW_IR_PAD_ROOT = $pad
+            (Invoke-Executor $ctx $in $out) | Should Be 0
+        } finally {
+            if ($old) { $env:FLOW_IR_PAD_ROOT = $old }
+            else { Remove-Item Env:FLOW_IR_PAD_ROOT -ErrorAction SilentlyContinue }
+        }
+        ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
+    }
+
+    It '显式 -PadRoot 优先于环境变量 FLOW_IR_PAD_ROOT' {
+        $work = New-Work
+        $explicit = Join-Path $work 'explicit'
+        $fromEnv = Join-Path $work 'from-env'
+        # 两侧都放同名文件，改到哪个根就说明哪个来源生效
+        $real = Join-Path $explicit 'Scripts\target.py'
+        New-Item -ItemType File -Path $real -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $fromEnv 'Scripts\target.py') -Force | Out-Null
+        $missing = Join-Path $work 'Old\target.py'
+        $in = Join-Path $work 'in.robin'
+        Write-Robin $in ("SET Target TO '{0}'" -f (To-Raw $missing))
+        $out = Join-Path $work 'out.robin'
+        $ctx = Join-Path $work 'ctx.json'
+        Write-Ctx $ctx 'FileNotFound'
+
+        $old = $env:FLOW_IR_PAD_ROOT
+        try {
+            $env:FLOW_IR_PAD_ROOT = $fromEnv
+            (Invoke-Executor $ctx $in $out $explicit) | Should Be 0
+        } finally {
+            if ($old) { $env:FLOW_IR_PAD_ROOT = $old }
+            else { Remove-Item Env:FLOW_IR_PAD_ROOT -ErrorAction SilentlyContinue }
+        }
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }
 }

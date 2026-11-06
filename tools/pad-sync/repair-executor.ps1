@@ -16,13 +16,53 @@ param(
     [Parameter(Mandatory = $true)][string]$ContextFile,
     [Parameter(Mandatory = $true)][string]$InputRobin,
     [Parameter(Mandatory = $true)][string]$OutputRobin,
-    # 路径修复的搜索根目录：只在它下面找同名项、建目录。测试时指向临时目录即可脱离真实环境
-    [string]$PadRoot = 'C:\PAD',
+    # 路径修复的搜索根目录：只在它下面找同名项、建目录。测试时指向临时目录即可脱离真实环境。
+    # 不传时按下方的优先级自动解析，不再把 C:\PAD 写死成参数默认值
+    [string]$PadRoot,
     # 错误码 → 修复规则与提示模板的 JSON：新增错误码只改它，不改本脚本
     [string]$RulesFile
 )
 $ErrorActionPreference = 'Stop'
-$PadRoot = $PadRoot.TrimEnd('\')
+
+# PAD 根目录取值优先级（R1/R2 只在这个目录下找同名项、建目录）：
+#   1) 显式传入 -PadRoot：调用方或测试明确指定，优先级最高；
+#   2) 环境变量 FLOW_IR_PAD_ROOT：同一台机器存在多套部署时用它切换；
+#   3) 本地运行时配置 business\config\runtime.json 的 PadRoot 字段（该文件不入库）；
+#   4) 兜底 C:\PAD：让既有调用方式（如 pad-repair-loop 不传 -PadRoot）行为保持不变。
+# 2)/3) 只在目录真实存在时才采用，避免一个拼错的变量名把搜索根悄悄换到空目录。
+function Resolve-PadRoot([string]$Explicit) {
+    # 1) 显式传参：原样采用，不做存在性判断（测试可能故意指向尚未创建的目录）
+    if ($Explicit) { return $Explicit }
+
+    # 2) 环境变量
+    $envRoot = [string]$env:FLOW_IR_PAD_ROOT
+    if ($envRoot) {
+        if (Test-Path -LiteralPath $envRoot) { return $envRoot }
+        Write-Host "[executor] 环境变量 FLOW_IR_PAD_ROOT 指向的目录不存在，已忽略：$envRoot"
+    }
+
+    # 3) 本地运行时配置：只读 PadRoot 一个字段，不走 PadConfig 的全量必填校验
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $runtimeConfig = Join-Path $repoRoot 'business\config\runtime.json'
+    if (Test-Path -LiteralPath $runtimeConfig) {
+        try {
+            $cfg = [IO.File]::ReadAllText($runtimeConfig, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $cfgRoot = [string]$cfg.PadRoot
+            if ($cfgRoot) {
+                if (Test-Path -LiteralPath $cfgRoot) { return $cfgRoot }
+                Write-Host "[executor] 运行时配置的 PadRoot 指向的目录不存在，已忽略：$cfgRoot"
+            }
+        } catch {
+            # 配置损坏不应让修复循环直接崩掉：记录原因继续走兜底
+            Write-Host "[executor] 运行时配置无法解析，已忽略：$($_.Exception.Message)"
+        }
+    }
+
+    # 4) 兼容兜底
+    return 'C:\PAD'
+}
+
+$PadRoot = (Resolve-PadRoot $PadRoot).TrimEnd('\')
 
 # 规则表默认取脚本同目录的 repair-rules.json
 if (-not $RulesFile) { $RulesFile = Join-Path $PSScriptRoot 'repair-rules.json' }
