@@ -21,10 +21,3 @@ out.robin
 Results/
 *.log
 !tests/fixtures/telemetry/*.log
-migo_plan.json
-migo_plan_info.txt
-migo_posted.jsonl
-migo201.csv
-migo501.csv
-reconcile_export_path.txt
-reconcile_report_path.txt

@@ -95,7 +95,8 @@ Describe 'PadFingerprint 比对' {
         $base = Join-Path $work 'baseline.json'
         Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid $g `
             -EnvironmentId $null -SourceRobin $fake.robin -WorkspaceRobin $fake.robin `
-            -ConfigPath $cfg -AcceptancePath $null)
+            -ConfigPath $cfg -AcceptancePath $null `
+            -ScriptPaths @('tools/workday/workday.py') -ExternalPaths @())
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -ConfigPath $cfg `
             -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'pass'
@@ -109,7 +110,8 @@ Describe 'PadFingerprint 比对' {
         $base = Join-Path $work 'baseline.json'
         Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid $g `
             -EnvironmentId $null -SourceRobin $fake.robin -WorkspaceRobin $fake.robin `
-            -ConfigPath $null -AcceptancePath $null)
+            -ConfigPath $null -AcceptancePath $null `
+            -ScriptPaths @('tools/workday/workday.py') -ExternalPaths @())
         # 改了定义再比对
         [IO.File]::WriteAllText($fake.robin, "SET A TO 'changed'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
@@ -202,7 +204,8 @@ Describe 'PadFingerprint 比对' {
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
         $base = Join-Path $work 'baseline.json'
         Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid '33333333-3333-3333-3333-333333333333' `
-            -EnvironmentId $null -SourceRobin $fake.robin -WorkspaceRobin $fake.robin -ConfigPath $null -AcceptancePath $null)
+            -EnvironmentId $null -SourceRobin $fake.robin -WorkspaceRobin $fake.robin -ConfigPath $null -AcceptancePath $null `
+            -ScriptPaths @('tools/workday/workday.py') -ExternalPaths @())
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.code | Should Be 'FINGERPRINT_FLOW_STALE'
     }
@@ -216,7 +219,8 @@ Describe 'PadFingerprint 比对' {
         $base = Join-Path $work 'baseline.json'
         Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid $g `
             -EnvironmentId $null -SourceRobin $fake.robin -WorkspaceRobin $fake.robin `
-            -ConfigPath $cfg -AcceptancePath $null)
+            -ConfigPath $cfg -AcceptancePath $null `
+            -ScriptPaths @('tools/workday/workday.py') -ExternalPaths @())
         [IO.File]::WriteAllText($cfg, '{"A":"2"}', (New-Object Text.UTF8Encoding($false)))
         (Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -ConfigPath $cfg `
             -BaselinePath $base -ScriptsRoot $fake.scripts).code | Should Be 'FINGERPRINT_CONFIG_STALE'
@@ -350,7 +354,8 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $base = Join-Path $Work 'baseline-deployed.json'
         $null = Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid $Guid `
             -EnvironmentId $null -SourceRobin $Fake.robin -WorkspaceRobin $Fake.deployed `
-            -ConfigPath $null -AcceptancePath $null)
+            -ConfigPath $null -AcceptancePath $null `
+            -ScriptPaths @('tools/workday/workday.py') -ExternalPaths @())
         return $base
     }
 
@@ -514,7 +519,7 @@ Describe 'PadFingerprint scripts 段（v3）' {
             New-Item -ItemType Directory -Path (Split-Path -Parent $full) -Force | Out-Null
             [IO.File]::WriteAllText($full, "content of $rel", (New-Object Text.UTF8Encoding($false)))
         }
-        $ext = @((Join-Path $Work 'pad\MIGO201_501.vbs'), (Join-Path $Work 'pad\读取msg.vbs'))
+        $ext = @((Join-Path $Work 'pad\posting.vbs'), (Join-Path $Work 'pad\mail-reader.vbs'))
         foreach ($p in $ext) {
             New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force | Out-Null
             [IO.File]::WriteAllText($p, "content of $p", (New-Object Text.UTF8Encoding($false)))
@@ -586,8 +591,8 @@ Describe 'PadFingerprint scripts 段（v3）' {
         $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
         $r.status | Should Be 'warn'
         $r.code | Should Be 'SCRIPT_FINGERPRINT_MISMATCH'
-        ($r.evidence -join ' ') | Should Match '读取msg\.vbs'
-        ($r.evidence -join ' ') | Should Not Match 'MIGO201_501'
+        ($r.evidence -join ' ') | Should Match 'mail-reader\.vbs'
+        ($r.evidence -join ' ') | Should Not Match 'posting\.vbs'
         ($r.evidence -join ' ') | Should Not Match 'scripts/a\.vbs'
     }
 

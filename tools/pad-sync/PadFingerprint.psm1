@@ -18,24 +18,37 @@ Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force
 # 模块所在的仓库根：本模块位于 tools\pad-sync，退两级即仓库根
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-# 指纹 v3 收录的脚本清单（相对仓库根，统一用正斜杠）
-# 收录依据是「流程实际引用」而不是目录扫描：
-#   - flow.json 直接引用的过账脚本、导出脚本与核对脚本（具体路径见下方默认表）；
-#   - 导出链路依赖的保存对话框、关闭 Excel 辅助脚本，收信链路依赖的邮件读取脚本；
-#   - 核对脚本的 workday 从仓库根 tools\workday\workday.py 导入（见其文件头 sys.path 候选），
-#     不是 business 下的副本；
-#   - 核对脚本的 Excel 读取（表头定位、日期/数值转换、整表读取）从
-#     tools\xlsx\xlsx_io.py 导入，同属流程实际引用的通用脚本。
-$script:DefaultScriptPaths = @(
-    'business/scripts/MB51导出.vbs'
-    'business/scripts/MIGO201_501.vbs'
-    'business/scripts/handle_saveas_dialog_v7_final.ps1'
-    'business/scripts/close_excel_window.ps1'
-    'business/scripts/读取msg.vbs'
-    'business/tools/reconcile/reconcile.py'
-    'tools/workday/workday.py'
-    'tools/xlsx/xlsx_io.py'
-)
+# 脚本指纹清单属于业务层数据（含具体业务脚本路径），配置在 business\config\fingerprint-scripts.json：
+#   repoScripts     —— 仓库内脚本，相对仓库根，统一用正斜杠；
+#   externalScripts —— 仓库外旧拷贝的绝对路径，播种时可用 -ExternalPaths 覆盖（显式参数优先）。
+# 配置缺失或解析失败一律硬失败：静默退化成空清单等于悄悄关掉脚本漂移检测。
+function Read-FingerprintScriptConfig {
+    param(
+        [string]$RepoRoot,
+        [string]$ConfigPath
+    )
+    if (-not $RepoRoot) { $RepoRoot = $script:RepoRoot }
+    if (-not $ConfigPath) {
+        $ConfigPath = Join-Path (Join-Path (Join-Path $RepoRoot 'business') 'config') 'fingerprint-scripts.json'
+    }
+    if (-not (Test-Path -LiteralPath $ConfigPath)) {
+        throw "缺少脚本指纹清单配置：$ConfigPath（业务层配置缺失时不允许跳过脚本漂移检测）"
+    }
+    try {
+        $j = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    } catch {
+        throw "脚本指纹清单配置无法解析：${ConfigPath}；$($_.Exception.Message)"
+    }
+    $repo = @($j.repoScripts | Where-Object { $_ })
+    if ($repo.Count -eq 0) {
+        throw "脚本指纹清单配置的 repoScripts 为空：$ConfigPath"
+    }
+    return [ordered]@{
+        path            = $ConfigPath
+        repoScripts     = $repo
+        externalScripts = @($j.externalScripts | Where-Object { $_ })
+    }
+}
 
 # 指纹 v3 的 external 段：仓库外的旧拷贝（只能用绝对路径锁），播种时由调用方显式传入。
 # 公共代码不写死具体业务路径；路径只落进 business\ 下的基线文件。
@@ -135,7 +148,10 @@ function Get-ScriptFingerprintParts {
     )
     if (-not $RepoRoot) { $RepoRoot = $script:RepoRoot }
     $list = @($Paths)
-    if ($list.Count -eq 0) { $list = @($script:DefaultScriptPaths) }
+    if ($list.Count -eq 0) {
+        # 未显式传清单时读业务层配置；配置缺失由 Read-FingerprintScriptConfig 硬失败
+        $list = @((Read-FingerprintScriptConfig -RepoRoot $RepoRoot).repoScripts)
+    }
     $parts = [ordered]@{}
     foreach ($rel in $list) {
         if (-not $rel) { continue }
@@ -323,14 +339,21 @@ function New-FingerprintBaseline {
         [string]$FlowName, [string]$FlowGuid, [string]$EnvironmentId,
         [string]$SourceRobin, [string]$WorkspaceRobin,
         [string]$ConfigPath, [string]$AcceptancePath, [string]$Machine,
-        # 仓库外旧拷贝的绝对路径清单；由 CLI 显式传入，公共模块不写死业务路径
+        # 仓库内脚本清单：显式传入优先（测试/特殊流程）；不传时读业务层配置
+        [string[]]$ScriptPaths,
+        # 仓库外旧拷贝的绝对路径清单：显式传入优先（含显式空数组）；不传时读业务层配置
         [string[]]$ExternalPaths
     )
     $parts = Get-FingerprintParts $SourceRobin $ConfigPath $AcceptancePath
+    # 两段清单都需要走配置时只读一次；显式参数优先，避免与配置语义重叠
+    $needCfg = (-not $PSBoundParameters.ContainsKey('ScriptPaths')) -or (-not $PSBoundParameters.ContainsKey('ExternalPaths'))
+    $cfg = $(if ($needCfg) { Read-FingerprintScriptConfig -RepoRoot $script:RepoRoot } else { $null })
     # v3 新增：流程实际引用的脚本文件（相对仓库路径 + 原始字节 SHA256）
-    $scripts = Get-ScriptFingerprintParts -RepoRoot $script:RepoRoot
+    $scriptList = $(if ($PSBoundParameters.ContainsKey('ScriptPaths')) { @($ScriptPaths) } else { @($cfg.repoScripts) })
+    $scripts = Get-ScriptFingerprintParts -RepoRoot $script:RepoRoot -Paths $scriptList
     # v3 新增：仓库外旧拷贝（绝对路径 + 原始字节 SHA256）
-    $external = Get-ExternalScriptFingerprintParts -Paths $ExternalPaths
+    $extList = $(if ($PSBoundParameters.ContainsKey('ExternalPaths')) { @($ExternalPaths) } else { @($cfg.externalScripts) })
+    $external = Get-ExternalScriptFingerprintParts -Paths $extList
     $mtime = $null
     $deployedRaw = $null
     if ($WorkspaceRobin -and (Test-Path -LiteralPath $WorkspaceRobin)) {
@@ -577,5 +600,6 @@ function Test-FlowFingerprint {
 Export-ModuleMember -Function Get-FlowGuidFromLogPath, Find-LatestFlowRun, Find-WorkspaceRobin,
     Get-PadEnvironmentId, Get-FingerprintParts, Get-FingerprintBaselinePath,
     Get-RobinLogicHash, Get-WorkspaceRootFromScriptsRoot,
+    Read-FingerprintScriptConfig,
     Get-ScriptFingerprintParts, Get-ExternalScriptFingerprintParts, Test-ScriptFingerprint,
     Read-FingerprintBaseline, Write-FingerprintBaseline, New-FingerprintBaseline, Test-FlowFingerprint
