@@ -22,51 +22,18 @@ from datetime import date, datetime, timedelta
 
 from openpyxl import load_workbook
 
+# Excel 读取层是通用件，实现在仓库 tools/xlsx/xlsx_io.py：
+# 表头定位、日期转换等口径全仓库共用一份，避免各写一份后漂移。
+# 源码树里位于 tools/workday/，部署后可能与 xlsx_io.py 同目录或放在上一级。
+_here = os.path.dirname(os.path.abspath(__file__))
+for _cand in (os.path.join(_here, "..", "xlsx"), _here):
+    if os.path.isfile(os.path.join(_cand, "xlsx_io.py")):
+        sys.path.insert(0, _cand)
+        break
+from xlsx_io import norm, to_date, find_col  # noqa: E402
+
 # 日历里代表「上班」的写法，大小写不敏感
 TRUE_FLAGS = ("Y", "YES", "TRUE", "1", "是", "工作日")
-
-
-def norm(v):
-    """把任意单元格值规整成用于表头匹配的字符串（去空白 + 小写）"""
-    return str(v).strip().lower() if v is not None else ""
-
-
-def to_date(v):
-    """把单元格值转成 date：支持 datetime / date / Excel 序列号 / 常见字符串日期"""
-    if v is None:
-        return None
-    if isinstance(v, datetime):
-        return v.date()
-    if isinstance(v, date):
-        return v
-    if isinstance(v, (int, float)):
-        # Excel 序列号：以 1899-12-30 为原点
-        try:
-            return (datetime(1899, 12, 30) + timedelta(days=float(v))).date()
-        except Exception:
-            return None
-    s = str(v).strip()
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%d.%m.%Y", "%d/%m/%Y", "%Y%m%d"):
-        try:
-            return datetime.strptime(s, fmt).date()
-        except Exception:
-            continue
-    return None
-
-
-def find_col(header, names, prefix=None):
-    """在表头行中按名称找列号（1 起）。names 精确匹配，prefix 作前缀兜底。"""
-    for want in names:
-        w = norm(want)
-        for i, v in enumerate(header):
-            if norm(v) == w:
-                return i + 1
-    if prefix:
-        p = norm(prefix)
-        for i, v in enumerate(header):
-            if norm(v).startswith(p):
-                return i + 1
-    return None
 
 
 def load_calendar(cal_path):

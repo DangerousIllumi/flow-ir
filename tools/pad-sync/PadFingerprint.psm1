@@ -24,7 +24,9 @@ $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 #   - MB51 导出链路依赖 handle_saveas_dialog_v7_final.ps1 / close_excel_window.ps1，
 #     收信链路依赖 读取msg.vbs；
 #   - reconcile.py 的 workday 从仓库根 tools\workday\workday.py 导入（见其文件头 sys.path 候选），
-#     不是 business 下的副本。
+#     不是 business 下的副本；
+#   - reconcile.py 的 Excel 读取（表头定位、日期/数值转换、整表读取）从
+#     tools\xlsx\xlsx_io.py 导入，同属流程实际引用的通用脚本。
 $script:DefaultScriptPaths = @(
     'business/scripts/MB51导出.vbs'
     'business/scripts/MIGO201_501.vbs'
@@ -33,6 +35,7 @@ $script:DefaultScriptPaths = @(
     'business/scripts/读取msg.vbs'
     'business/tools/reconcile/reconcile.py'
     'tools/workday/workday.py'
+    'tools/xlsx/xlsx_io.py'
 )
 
 # 指纹 v3 的 external 段：仓库外的旧拷贝（只能用绝对路径锁），播种时由调用方显式传入。
