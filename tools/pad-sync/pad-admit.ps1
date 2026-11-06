@@ -479,7 +479,9 @@ function Invoke-TriggerCheck {
         $SelfFile -and (Test-Path -LiteralPath $SelfFile)) {
         try {
             Import-Module (Join-Path $PSScriptRoot 'TriggerRegistry.psm1') -Force
-            $live = Test-Trigger -FlowFile $SelfFile -ConfigFile $ConfigFile
+            # 不传 -ConfigFile：本轮只校验 schedule，该参数只会被拼进期望动作参数，
+            # 而注册器建任务时不带它，传了会把「一致」误判成 TRIGGER_DRIFT。
+            $live = Test-Trigger -FlowFile $SelfFile
         } catch {
             # 查询失败（含运行时配置缺失）不能静默放过，按 fail 报源码
             $liveCode = 'TRIGGER_DRIFT'
@@ -520,7 +522,7 @@ function Invoke-TriggerCheck {
     })
 }
 
-# 主体检查：一次跑完 14 项
+# 主体检查：一次跑完 14 项 + SCRIPT_FINGERPRINT（v3 脚本指纹，观察期只 warn）
 function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,
@@ -739,6 +741,14 @@ function Invoke-AdmitChecks {
         -ScriptsRoot $Paths.ScriptsRoot -EnvironmentId $Paths.EnvironmentId `
         -ApprovePath $ApprovePath -Mode $script:FingerprintMode
     $checks += New-AdmitCheck 'FINGERPRINT' $fp.status $fp.code $fp.message $fp.evidence
+
+    # 12.5 SCRIPT_FINGERPRINT（v3 观察期：只 warn 不阻断）
+    # 旧基线没有 scripts 段时模块返回 warn（SCRIPT_FINGERPRINT_LEGACY），不会判 fail；
+    # 不一致时 evidence 逐条点名文件与两侧短哈希
+    if ($basePath) {
+        $sf = Test-ScriptFingerprint -BaselinePath $basePath -RepoRoot $Paths.Repo
+        $checks += New-AdmitCheck 'SCRIPT_FINGERPRINT' $sf.status $sf.code $sf.message $sf.evidence
+    }
 
     # 13 INTENT
     $noIntent = @($actionNodes | Where-Object {

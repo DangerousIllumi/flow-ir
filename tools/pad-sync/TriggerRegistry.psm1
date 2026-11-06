@@ -77,13 +77,21 @@ function Get-TriggerSpec {
         throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$kind 不在 manual/schedule/file")
     }
 
-    # 流程名：优先 name 字段，其次文件名；与 pad-schedule 的任务名派生同口径
+    # 流程名：优先 PAD 显示名 pad_flow_name，其次内部 name，最后文件名。
+    # 任务名与 -FlowName 都从这里派生，两处必须同源：内部名与 PAD 显示名不一致时，
+    # 用内部名会派生出错的任务名，pad-sync 也按显示名找不到流程。
     $flowName = $null
-    if ((Test-TriggerProp $flow 'name') -and [string]$flow.name) { $flowName = [string]$flow.name }
+    if ((Test-TriggerProp $flow 'pad_flow_name') -and [string]$flow.pad_flow_name) {
+        $flowName = [string]$flow.pad_flow_name
+    }
+    if (-not $flowName -and (Test-TriggerProp $flow 'name') -and [string]$flow.name) {
+        $flowName = [string]$flow.name
+    }
     if (-not $flowName) { $flowName = [IO.Path]::GetFileNameWithoutExtension((Resolve-Path -LiteralPath $FlowFile).Path) }
 
     $time = $null
     $days = @('mon', 'tue', 'wed', 'thu', 'fri')
+    $daysDeclared = $false
     $gate = 'none'
     $timeoutSec = 4200
     $assisted = $false
@@ -109,6 +117,7 @@ function Get-TriggerSpec {
             throw (New-TriggerException 'TRIGGER_INVALID' "time=$time（应为 HH:mm，如 09:00）")
         }
         if ((Test-TriggerProp $trg 'days')) {
+            $daysDeclared = $true
             $days = @($trg.days)
             $bad = @($days | Where-Object { $script:TriggerDays -notcontains [string]$_ })
             if ($days.Count -eq 0 -or $bad.Count -gt 0) {
@@ -219,6 +228,14 @@ function Get-TriggerSpec {
         }
     }
 
+    # 计划任务触发器形态：声明了 days 就按对应星期建 weekly（周末不唤醒，工作日再交日历判断）；
+    # file 守望固定 weekly；没声明 days 且带日历门禁时保持旧行为 daily。
+    $scheduleKind = $null
+    if ($kind -ne 'manual') {
+        $scheduleKind = 'daily'
+        if ($kind -eq 'file' -or $daysDeclared -or $gate -eq 'none') { $scheduleKind = 'weekly' }
+    }
+
     $taskName = $null
     if ($kind -ne 'manual') {
         if ((Test-TriggerProp $trg 'task_name')) {
@@ -238,6 +255,8 @@ function Get-TriggerSpec {
         taskName     = $taskName
         time         = $time
         days         = $days
+        daysDeclared = $daysDeclared
+        scheduleKind = $scheduleKind
         gate         = $gate
         timeoutSec   = $timeoutSec
         assisted     = $assisted
@@ -262,6 +281,8 @@ function Get-TriggerFingerprint {
         taskName   = [string]$Spec.taskName
         time       = [string]$Spec.time
         days       = @($Spec.days)
+        # 触发器形态进 hash：显式 days 与未声明 days 的行为不同，不能判成未变更
+        scheduleKind = [string]$Spec.scheduleKind
         gate       = [string]$Spec.gate
         timeoutSec = [int]$Spec.timeoutSec
         assisted   = [bool]$Spec.assisted
@@ -351,14 +372,24 @@ function Get-TaskSpecHash([string]$Description) {
     return $null
 }
 
-# 任务是否与声明一致：描述 hash + 动作可执行文件/参数都要对上
+# 任务是否与声明一致：描述 hash + 动作可执行文件/参数都要对上。
+# -AllowProd 是注册时的调用开关，不在 trigger 的 canonical 指纹里；
+# -Test 只核对声明一致性，忽略该 token，否则生产任务永远被判 drift。
+# 注册/回读仍严格比较，防止漏掉 -AllowProd 后任务在生产里拒绝运行。
 function Test-TriggerTaskMatch {
-    param($Task, $ActionSpec, [string]$SpecHash)
+    param($Task, $ActionSpec, [string]$SpecHash, [switch]$IgnoreAllowProd)
     if (-not $Task) { return $false }
     if ((Get-TaskSpecHash ([string]$Task.Description)) -ne $SpecHash) { return $false }
     $action = @($Task.Actions)[0]
     if (-not $action) { return $false }
-    return ([string]$action.Execute -eq [string]$ActionSpec.exe -and [string]$action.Arguments -eq [string]$ActionSpec.args)
+    $expected = [string]$ActionSpec.args
+    $actual = [string]$action.Arguments
+    if ($IgnoreAllowProd) {
+        $stripped = { param($s) ([regex]::Replace([string]$s, '\s+-AllowProd(?=\s|$)', '')).Trim() }
+        $expected = (& $stripped $expected)
+        $actual = (& $stripped $actual)
+    }
+    return ([string]$action.Execute -eq [string]$ActionSpec.exe -and $actual -eq $expected)
 }
 
 function Assert-TriggerReadback {
@@ -505,6 +536,19 @@ function Add-TriggerLedgerKey([string]$Path, [string]$Key) {
 
 # ---- 按 kind 拆分的注册器 ----
 
+# 任务触发器形态：weekly 按声明/默认的星期建；daily 保持每天唤醒、由日历门禁自行跳过
+function New-ScheduleTaskTrigger($Spec) {
+    if ([string]$Spec.scheduleKind -eq 'weekly') {
+        $dayMap = @{
+            mon = 'Monday'; tue = 'Tuesday'; wed = 'Wednesday'; thu = 'Thursday'
+            fri = 'Friday'; sat = 'Saturday'; sun = 'Sunday'
+        }
+        $daysOfWeek = @($Spec.days | ForEach-Object { $dayMap[[string]$_] })
+        return (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $daysOfWeek -At (ConvertTo-ScheduleTime $Spec.time))
+    }
+    return (New-ScheduledTaskTrigger -Daily -At (ConvertTo-ScheduleTime $Spec.time))
+}
+
 function Register-ScheduleTrigger {
     param($Spec, [string]$RuntimeConfigPath, [switch]$DryRun, [switch]$AllowProd)
     $runtime = Resolve-TriggerRuntimeConfig -RuntimeConfigPath $RuntimeConfigPath
@@ -533,17 +577,7 @@ function Register-ScheduleTrigger {
 
     try {
         # 与 pad-schedule 完全同形态：隐藏窗口 + Interactive 身份 + 忽略新实例
-        if ($Spec.gate -eq 'none') {
-            $daysOfWeek = @($Spec.days | ForEach-Object {
-                switch ([string]$_) {
-                    'mon' { 'Monday' }; 'tue' { 'Tuesday' }; 'wed' { 'Wednesday' }
-                    'thu' { 'Thursday' }; 'fri' { 'Friday' }; 'sat' { 'Saturday' }; 'sun' { 'Sunday' }
-                }
-            })
-            $taskTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $daysOfWeek -At (ConvertTo-ScheduleTime $Spec.time)
-        } else {
-            $taskTrigger = New-ScheduledTaskTrigger -Daily -At (ConvertTo-ScheduleTime $Spec.time)
-        }
+        $taskTrigger = New-ScheduleTaskTrigger $Spec
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
             -ExecutionTimeLimit (New-TimeSpan -Minutes 180) -MultipleInstances IgnoreNew
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
@@ -588,7 +622,7 @@ function Test-ScheduleTrigger {
             code = 'TRIGGER_NOT_REGISTERED'; message = "本机找不到计划任务 $($Spec.taskName)"
         }
     }
-    if (-not (Test-TriggerTaskMatch $task $actionSpec $hash)) {
+    if (-not (Test-TriggerTaskMatch $task $actionSpec $hash -IgnoreAllowProd)) {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; status = 'drift'
@@ -711,13 +745,7 @@ function Register-FileTrigger {
         $changed = $(if ($existing) { 'updated' } else { 'created' })
 
         # 与 schedule 分支同形态：周几 + 起始时刻；执行上限覆盖整段守望
-        $daysOfWeek = @($Spec.days | ForEach-Object {
-            switch ([string]$_) {
-                'mon' { 'Monday' }; 'tue' { 'Tuesday' }; 'wed' { 'Wednesday' }
-                'thu' { 'Thursday' }; 'fri' { 'Friday' }; 'sat' { 'Saturday' }; 'sun' { 'Sunday' }
-            }
-        })
-        $taskTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $daysOfWeek -At (ConvertTo-ScheduleTime $Spec.time)
+        $taskTrigger = New-ScheduleTaskTrigger $Spec
         $limitMin = [math]::Max(180, [math]::Ceiling(([double]$Spec.fileMaxWaitSec + 300) / 60))
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
             -ExecutionTimeLimit (New-TimeSpan -Minutes $limitMin) -MultipleInstances IgnoreNew

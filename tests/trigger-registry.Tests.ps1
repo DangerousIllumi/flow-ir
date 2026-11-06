@@ -18,7 +18,9 @@ function New-TestFlow {
         [Parameter(Mandatory)]$Trigger,
         [string]$NodeRunMode = 'auto',
         # 追加到占位节点的声明字段（幂等/可逆性用例用）
-        [hashtable]$NodeProps = @{}
+        [hashtable]$NodeProps = @{},
+        # PAD 显示名：与内部 name 不同，用于验证任务名/-FlowName 的派生口径
+        [string]$PadFlowName
     )
     $node = [ordered]@{ id = '1'; pad_hint = 'Comment.Comment'; run_mode = $NodeRunMode }
     foreach ($k in $NodeProps.Keys) { $node[$k] = $NodeProps[$k] }
@@ -27,6 +29,7 @@ function New-TestFlow {
         trigger = $Trigger
         nodes = @($node)
     }
+    if ($PadFlowName) { $obj['pad_flow_name'] = $PadFlowName }
     $path = Join-Path $Dir ($Name + '.json')
     [IO.File]::WriteAllText($path, ($obj | ConvertTo-Json -Depth 8),
         (New-Object Text.UTF8Encoding($false)))
@@ -295,6 +298,27 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $miss | Should Be $false
     }
 
+    It '-Test 忽略 -AllowProd：注册带该开关也不误判 drift，严格比较仍判不一致' {
+        $hash = 'f' * 64
+        $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'flow watch' }
+        $task = [pscustomobject]@{
+            Description = "flow-ir-spec:$hash；说明"
+            Actions     = @([pscustomobject]@{ Execute = 'wscript.exe'; Arguments = 'flow watch -AllowProd' })
+        }
+        # -Test 口径：忽略注册开关，声明本身一致
+        $ignore = & $script:TriggerModule {
+            param($Task, $ActionSpec, $Hash)
+            Test-TriggerTaskMatch $Task $ActionSpec $Hash -IgnoreAllowProd
+        } $task $actionSpec $hash
+        $ignore | Should Be $true
+        # 注册/回读口径：严格比较，带不带 -AllowProd 都算差异
+        $strict = & $script:TriggerModule {
+            param($Task, $ActionSpec, $Hash)
+            Test-TriggerTaskMatch $Task $ActionSpec $Hash
+        } $task $actionSpec $hash
+        $strict | Should Be $false
+    }
+
     It '回读校验失败：描述 hash 不一致抛 TRIGGER_DRIFT' {
         $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'a b c' }
         $task = [pscustomobject]@{
@@ -390,5 +414,84 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         $r = [regex]::Match($out, 'PAD_TRIGGER_RESULT=(\{.*\})').Groups[1].Value | ConvertFrom-Json
         $r.code | Should Be 'TRIGGER_NOT_REGISTERED'
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
+    }
+}
+
+Describe 'TriggerRegistry 流程名派生（pad_flow_name 优先）' {
+
+    It 'pad_flow_name 与 name 不同：任务名与 -FlowName 都用 pad_flow_name' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'pad-name' -Trigger $t -PadFlowName 'PESTER_DISPLAY'
+        $spec = Get-TriggerSpec -FlowFile $f
+        # 任务名取显示名，而不是内部 name
+        $spec.flowName | Should Be 'PESTER_DISPLAY'
+        $spec.taskName | Should Be 'flow-ir-PESTER_DISPLAY'
+        $runtime = New-TestRuntime -Dir $TestDrive
+        $action = & $script:TriggerModule {
+            param($Spec, $RuntimePath)
+            $rt = [IO.File]::ReadAllText($RuntimePath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            Get-TriggerActionSpec -Spec $Spec -Runtime $rt
+        } $spec $runtime
+        # -FlowName 必须与任务名同源，pad-sync 才能按显示名找到流程
+        $action.args | Should Match '-FlowName "PESTER_DISPLAY"'
+    }
+
+    It '没有 pad_flow_name 时回退内部 name' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'no-pad-name' -Trigger $t
+        $spec = Get-TriggerSpec -FlowFile $f
+        $spec.flowName | Should Be 'PESTER_TRIGGER'
+        $spec.taskName | Should Be 'flow-ir-PESTER_TRIGGER'
+    }
+}
+
+Describe 'TriggerRegistry days 生效为 Weekly' {
+
+    It '声明 days：按对应星期建 Weekly（mon..fri = 62），日历门禁参数保留' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'
+            days = @('mon', 'tue', 'wed', 'thu', 'fri'); gate = 'workday' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'days-weekly' -Trigger $t
+        $spec = Get-TriggerSpec -FlowFile $f
+        $spec.scheduleKind | Should Be 'weekly'
+        $trigger = & $script:TriggerModule { param($Spec) New-ScheduleTaskTrigger $Spec } $spec
+        $trigger.CimClass.CimClassName | Should Be 'MSFT_TaskWeeklyTrigger'
+        $trigger.DaysOfWeek | Should Be 62
+        # 门禁仍在：周末不唤醒，工作日再判法定节假日与调休
+        $runtime = New-TestRuntime -Dir $TestDrive
+        $action = & $script:TriggerModule {
+            param($Spec, $RuntimePath)
+            $rt = [IO.File]::ReadAllText($RuntimePath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            Get-TriggerActionSpec -Spec $Spec -Runtime $rt
+        } $spec $runtime
+        $action.args | Should Match '-RunIfWorkday'
+    }
+
+    It '只声明周六周日：Weekly 只含 sat/sun（64 + 1 = 65）' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('sat', 'sun'); gate = 'none' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'days-weekend' -Trigger $t
+        $spec = Get-TriggerSpec -FlowFile $f
+        $trigger = & $script:TriggerModule { param($Spec) New-ScheduleTaskTrigger $Spec } $spec
+        $trigger.CimClass.CimClassName | Should Be 'MSFT_TaskWeeklyTrigger'
+        $trigger.DaysOfWeek | Should Be 65
+    }
+
+    It '未声明 days 且带日历门禁：保持 Daily' {
+        $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $f = New-TestFlow -Dir $TestDrive -Name 'days-undeclared' -Trigger $t
+        $spec = Get-TriggerSpec -FlowFile $f
+        $spec.scheduleKind | Should Be 'daily'
+        $trigger = & $script:TriggerModule { param($Spec) New-ScheduleTaskTrigger $Spec } $spec
+        $trigger.CimClass.CimClassName | Should Be 'MSFT_TaskDailyTrigger'
+    }
+
+    It '显式 days 与未声明 days 的 specHash 不同：不能判成未变更' {
+        $t1 = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
+        $t2 = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday'
+            days = @('mon', 'tue', 'wed', 'thu', 'fri') }
+        $f1 = New-TestFlow -Dir $TestDrive -Name 'days-hash-a' -Trigger $t1
+        $f2 = New-TestFlow -Dir $TestDrive -Name 'days-hash-b' -Trigger $t2
+        $h1 = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f1)
+        $h2 = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f2)
+        $h2 | Should Not Be $h1
     }
 }
