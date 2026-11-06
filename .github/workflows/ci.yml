@@ -112,7 +112,7 @@ jobs:
       - name: 生成结果与仓库生产 .robin 一致（仅当 business 存在）
         shell: powershell
         run: |
-          # business/ is never committed; private repo only
+          # business/ is never committed; only the tool layer ships in this repo
           $flows = @(Get-ChildItem 'business\flows\*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*.requirements.json' -and $_.Name -notlike '*.acceptance.json' })
           if (-not $flows) { Write-Host 'skip: business layer not present'; exit 0 }
           foreach ($f in $flows) {
