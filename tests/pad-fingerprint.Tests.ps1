@@ -485,3 +485,112 @@ Describe 'pad-fingerprint 播种必须人工确认' {
         (Test-Path -LiteralPath $baseline) | Should Be $false
     }
 }
+
+Describe 'PadFingerprint scripts 段（v3）' {
+
+    # 造一个最小仓库：两个仓库内脚本 + 两个仓库外（绝对路径）旧拷贝
+    function New-ScriptRepo([string]$Work) {
+        $rels = @('scripts/a.vbs', 'tools/b.py')
+        foreach ($rel in $rels) {
+            $full = Join-Path $Work $rel
+            New-Item -ItemType Directory -Path (Split-Path -Parent $full) -Force | Out-Null
+            [IO.File]::WriteAllText($full, "content of $rel", (New-Object Text.UTF8Encoding($false)))
+        }
+        $ext = @((Join-Path $Work 'pad\MIGO201_501.vbs'), (Join-Path $Work 'pad\读取msg.vbs'))
+        foreach ($p in $ext) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force | Out-Null
+            [IO.File]::WriteAllText($p, "content of $p", (New-Object Text.UTF8Encoding($false)))
+        }
+        return [ordered]@{ repo = $rels; external = $ext }
+    }
+
+    It '全部一致 → pass' {
+        $work = New-Work
+        $paths = New-ScriptRepo $work
+        $base = Join-Path $work 'baseline.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 3; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
+            # 用模块自带的计算函数生成两段，避免测试自己写一份哈希规则
+            scripts = (Get-ScriptFingerprintParts -RepoRoot $work -Paths $paths.repo)
+            external = (Get-ExternalScriptFingerprintParts -Paths $paths.external)
+            seededAt = '2026-11-06T00:00:00Z'
+        })
+        $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
+        $r.status | Should Be 'pass'
+        $r.code | Should Be 'OK'
+    }
+
+    It '旧基线缺 scripts 段 → warn（不判 fail，向后兼容）' {
+        $work = New-Work
+        $paths = New-ScriptRepo $work
+        $base = Join-Path $work 'old-baseline.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 2; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
+            seededAt = '2026-11-06T00:00:00Z'
+        })
+        $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'SCRIPT_FINGERPRINT_LEGACY'
+        $r.status | Should Not Be 'fail'
+    }
+
+    It '已有 scripts 段但缺 external 段 → 仍按 legacy warn，不判 fail' {
+        $work = New-Work
+        $paths = New-ScriptRepo $work
+        $base = Join-Path $work 'no-external.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 3; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
+            scripts = (Get-ScriptFingerprintParts -RepoRoot $work -Paths $paths.repo)
+            seededAt = '2026-11-06T00:00:00Z'
+        })
+        $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'SCRIPT_FINGERPRINT_LEGACY'
+        ($r.message) | Should Match 'external'
+    }
+
+    It '仓库外旧拷贝被改动 → MISMATCH，evidence 点名其绝对路径' {
+        $work = New-Work
+        $paths = New-ScriptRepo $work
+        $base = Join-Path $work 'baseline.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 3; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
+            scripts = (Get-ScriptFingerprintParts -RepoRoot $work -Paths $paths.repo)
+            external = (Get-ExternalScriptFingerprintParts -Paths $paths.external)
+            seededAt = '2026-11-06T00:00:00Z'
+        })
+        # 只改仓库外的第二份拷贝，仓库内脚本与另一份外部拷贝保持不动
+        [IO.File]::AppendAllText($paths.external[1], "`r`nchanged", (New-Object Text.UTF8Encoding($false)))
+        $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'SCRIPT_FINGERPRINT_MISMATCH'
+        ($r.evidence -join ' ') | Should Match '读取msg\.vbs'
+        ($r.evidence -join ' ') | Should Not Match 'MIGO201_501'
+        ($r.evidence -join ' ') | Should Not Match 'scripts/a\.vbs'
+    }
+
+    It '单个仓库脚本被改动 → SCRIPT_FINGERPRINT_MISMATCH，evidence 点名该文件' {
+        $work = New-Work
+        $paths = New-ScriptRepo $work
+        $base = Join-Path $work 'baseline.json'
+        Write-FingerprintBaseline $base ([ordered]@{
+            version = 3; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
+            hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
+            scripts = (Get-ScriptFingerprintParts -RepoRoot $work -Paths $paths.repo)
+            external = (Get-ExternalScriptFingerprintParts -Paths $paths.external)
+            seededAt = '2026-11-06T00:00:00Z'
+        })
+        # 只改其中一个脚本，另一个保持不动
+        [IO.File]::AppendAllText((Join-Path $work 'scripts\a.vbs'), "`r`nchanged", (New-Object Text.UTF8Encoding($false)))
+        $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
+        $r.status | Should Be 'warn'
+        $r.code | Should Be 'SCRIPT_FINGERPRINT_MISMATCH'
+        ($r.evidence -join ' ') | Should Match 'scripts/a.vbs'
+        ($r.evidence -join ' ') | Should Not Match 'tools/b.py'
+    }
+}
+

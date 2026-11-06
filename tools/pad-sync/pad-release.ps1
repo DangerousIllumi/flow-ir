@@ -47,11 +47,6 @@ $script:ConfirmPath = Join-Path $PSScriptRoot 'confirm-deploy.ps1'
 function Log([string]$m) { Write-Host "[release] $m" }
 
 # ═══ 纯函数（供主流程与 Pester 单测共用） ═══
-# robin 规范化 / 哈希 / 逐行比对统一放在 RobinText.psm1：
-# 发布后校验（本脚本）与 -VerifyCanvas 画布回读（PadDesigner）必须使用同一套规则
-# 必须用 -Global：阶段 1 的 Invoke-Pester 会在自己的作用域里跑完再销毁，
-# 普通导入的模块函数随后就取不到了（表现为 Get-RobinHash 找不到）
-Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force -Global
 # 指纹定位与身份解析唯一实现（pad-fingerprint / pad-admit / pad-rollback 共用）
 Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force -Global
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
@@ -59,6 +54,14 @@ Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force -Global
 # 失败告警：与 pad-schedule / pad-sync / pad-deploy 共用同一份实现（kind 常量集中在模块里）
 Import-Module (Join-Path $PSScriptRoot 'PadAlerts.psm1') -Force -Global
+# robin 规范化 / 哈希 / 逐行比对统一放在 RobinText.psm1：
+# 发布后校验（本脚本）与 -VerifyCanvas 画布回读（PadDesigner）必须使用同一套规则
+# 必须用 -Global：阶段 1 的 Invoke-Pester 会在自己的作用域里跑完再销毁，
+# 普通导入的模块函数随后就取不到了（表现为 Get-RobinHash 找不到）。
+# 必须放在 PadFingerprint 之后：PadFingerprint 内部会 Import-Module RobinText -Force，
+# 先导入 RobinText 会被那次嵌套导入从全局作用域里卸载掉，
+# 表现为 dot-source 后 ConvertTo-NormalizedRobin / Get-RobinHash / Compare-RobinText 全部找不到。
+Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force -Global
 
 
 # 已发布流程的本地定义副本定位与身份解析已迁移到 PadFingerprint.psm1（唯一实现）：

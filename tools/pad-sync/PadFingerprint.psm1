@@ -15,6 +15,34 @@
 # 规范化与哈希的唯一实现（RobinText.psm1）：本模块不另写一份规范化规则
 Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force
 
+# 模块所在的仓库根：本模块位于 tools\pad-sync，退两级即仓库根
+$script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
+# 指纹 v3 收录的脚本清单（相对仓库根，统一用正斜杠）
+# 收录依据是「流程实际引用」而不是目录扫描：
+#   - flow.json 直接引用 MB51导出.vbs / MIGO201_501.vbs / reconcile.py；
+#   - MB51 导出链路依赖 handle_saveas_dialog_v7_final.ps1 / close_excel_window.ps1，
+#     收信链路依赖 读取msg.vbs；
+#   - reconcile.py 的 workday 从仓库根 tools\workday\workday.py 导入（见其文件头 sys.path 候选），
+#     不是 business 下的副本。
+$script:DefaultScriptPaths = @(
+    'business/scripts/MB51导出.vbs'
+    'business/scripts/MIGO201_501.vbs'
+    'business/scripts/handle_saveas_dialog_v7_final.ps1'
+    'business/scripts/close_excel_window.ps1'
+    'business/scripts/读取msg.vbs'
+    'business/tools/reconcile/reconcile.py'
+    'tools/workday/workday.py'
+)
+
+# 指纹 v3 的 external 段：仓库外的旧拷贝（只能用绝对路径锁），播种时由调用方显式传入。
+# 公共代码不写死具体业务路径；路径只落进 business\ 下的基线文件。
+# 单开一段而不是混进 scripts：这些文件不在仓库里、路径与本机环境绑定，
+# 混在一起会让人误以为键都能在仓库内找到。
+# 注意：外部旧拷贝与 business\scripts 同名文件本就因路径常量（PS1_PATH / CLOSE_PS1_PATH /
+# 日志路径等）不同而哈希不同，属预期差异；纳入哈希只能发现「某一侧被单独改动」，
+# 不能判断两侧语义是否等价。
+
 # 从 Actions.log 路径解析流程 GUID 与 runId：
 #   ...\Console\Scripts\<flowGuid>\Runs\<runId>\Actions.log
 function Get-FlowGuidFromLogPath([string]$LogPath) {
@@ -96,6 +124,140 @@ function Get-FingerprintParts([string]$RobinPath, [string]$ConfigPath, [string]$
     return $parts
 }
 
+# 指纹 v3 的 scripts 段：逐文件算原始字节 SHA256，键是相对仓库路径（正斜杠），值是哈希。
+# 文件缺失记 null，由比对侧判「当前缺失」，不在计算阶段抛异常（准入要一次报全）。
+function Get-ScriptFingerprintParts {
+    param(
+        [string]$RepoRoot,
+        [string[]]$Paths
+    )
+    if (-not $RepoRoot) { $RepoRoot = $script:RepoRoot }
+    $list = @($Paths)
+    if ($list.Count -eq 0) { $list = @($script:DefaultScriptPaths) }
+    $parts = [ordered]@{}
+    foreach ($rel in $list) {
+        if (-not $rel) { continue }
+        # 统一成正斜杠再拼本机路径：基线里的键与平台无关，便于跨机器读
+        $key = ([string]$rel).Replace('\', '/')
+        $full = Join-Path $RepoRoot ($key.Replace('/', '\'))
+        if (Test-Path -LiteralPath $full) {
+            $parts[$key] = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLower()
+        } else {
+            $parts[$key] = $null
+        }
+    }
+    return $parts
+}
+
+# 指纹 v3 的 external 段：逐个绝对路径算原始字节 SHA256，键保留绝对路径（正斜杠）。
+# 文件缺失同样记 null，由比对侧判「当前缺失」。
+function Get-ExternalScriptFingerprintParts {
+    param([string[]]$Paths)
+    $list = @($Paths)
+    $parts = [ordered]@{}
+    foreach ($p in $list) {
+        if (-not $p) { continue }
+        $full = [string]$p
+        $key = $full.Replace('\', '/')
+        if (Test-Path -LiteralPath $full) {
+            $parts[$key] = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLower()
+        } else {
+            $parts[$key] = $null
+        }
+    }
+    return $parts
+}
+
+# 比对基线里的 scripts 段与当前脚本文件，返回 status/code/message/evidence。
+# 观察期只报 warn 不阻断：旧基线没有 scripts 段属于「还没播种」而不是被篡改，
+# 一律 warn（SCRIPT_FINGERPRINT_LEGACY），绝不因为缺段就判 fail。
+function Test-ScriptFingerprint {
+    param(
+        [string]$BaselinePath,
+        [string]$RepoRoot,
+        [string[]]$Paths
+    )
+    if (-not $RepoRoot) { $RepoRoot = $script:RepoRoot }
+    $read = Read-FingerprintBaseline $BaselinePath
+    if (-not $read.ok) {
+        return [ordered]@{
+            status = 'warn'; code = $read.code
+            message = "$($read.message)，无法核对脚本指纹：$BaselinePath"
+            evidence = @("baseline=$BaselinePath")
+        }
+    }
+    $base = $read.data
+    $props = @($base.PSObject.Properties.Name)
+    $hasScripts = ($props -contains 'scripts') -and $base.scripts
+    if (-not $hasScripts) {
+        # 向后兼容：v2 及更早基线没有 scripts 段，按 warn 提示重新播种
+        return [ordered]@{
+            status = 'warn'; code = 'SCRIPT_FINGERPRINT_LEGACY'
+            message = '基线缺少 scripts 段（v3 之前的旧基线），请重新播种后再核对脚本指纹'
+            evidence = @("baseline=$BaselinePath")
+        }
+    }
+    $hasExternal = ($props -contains 'external') -and $base.external
+    if (-not $hasExternal) {
+        # 已播种 v3 但还没收录 PAD 旧拷贝的基线：同样按 legacy 提示重播，不判 fail
+        return [ordered]@{
+            status = 'warn'; code = 'SCRIPT_FINGERPRINT_LEGACY'
+            message = '基线缺少 external 段（PAD 旧拷贝未收录），请重新播种后再核对脚本指纹'
+            evidence = @("baseline=$BaselinePath")
+        }
+    }
+
+    $expected = $base.scripts
+    $expectedKeys = @($expected.PSObject.Properties.Name)
+    $keys = @($Paths)
+    if ($keys.Count -eq 0) { $keys = $expectedKeys }
+    $keys = @($keys | Where-Object { $_ } | ForEach-Object { ([string]$_).Replace('\', '/') })
+    $now = Get-ScriptFingerprintParts -RepoRoot $RepoRoot -Paths $keys
+
+    # external 段按基线里的绝对路径键逐项核对（不看 -Paths，避免和仓库相对路径混淆）
+    $expectedExternal = $base.external
+    $extKeys = @($expectedExternal.PSObject.Properties.Name)
+    $nowExt = Get-ExternalScriptFingerprintParts -Paths $extKeys
+
+    $bad = @()
+    foreach ($k in $keys) {
+        $was = $null
+        if ($expectedKeys -contains $k) { $was = [string]$expected.$k }
+        $cur = [string]$now[$k]
+        if (-not $was) {
+            $bad += "$k 基线未记录"
+        } elseif (-not $cur) {
+            $bad += "$k 当前缺失（基线 $($was.Substring(0, 12))）"
+        } elseif ($cur -ne $was) {
+            $bad += "$k 基线 $($was.Substring(0, 12)) 当前 $($cur.Substring(0, 12))"
+        }
+    }
+    foreach ($k in $extKeys) {
+        $was = [string]$expectedExternal.$k
+        $cur = [string]$nowExt[$k]
+        if (-not $was) {
+            $bad += "$k 基线未记录"
+        } elseif (-not $cur) {
+            $bad += "$k 当前缺失（基线 $($was.Substring(0, 12))）"
+        } elseif ($cur -ne $was) {
+            $bad += "$k 基线 $($was.Substring(0, 12)) 当前 $($cur.Substring(0, 12))"
+        }
+    }
+    $total = $keys.Count + $extKeys.Count
+    if ($bad.Count -gt 0) {
+        return [ordered]@{
+            status = 'warn'; code = 'SCRIPT_FINGERPRINT_MISMATCH'
+            message = ("$($bad.Count)/$total 个脚本哈希与基线不一致（观察期只提醒，不阻断）")
+            evidence = $bad
+        }
+    }
+    return [ordered]@{
+        status = 'pass'; code = 'OK'
+        message = "$($keys.Count) 个仓库脚本 + $($extKeys.Count) 个 PAD 旧拷贝哈希与基线一致"
+        evidence = @("baseline=$BaselinePath")
+    }
+}
+
 # .robin 的规范化哈希（逻辑哈希）：剥掉注释/元数据/缩进与转义差异后再算 SHA256。
 # 源文件与已发布副本的原始字节必然不同（PAD 会加 @@ 头、IMPORT 行、重写转义），
 # 只有逻辑哈希才能安全地跨"落盘格式"比较。
@@ -158,9 +320,15 @@ function New-FingerprintBaseline {
     param(
         [string]$FlowName, [string]$FlowGuid, [string]$EnvironmentId,
         [string]$SourceRobin, [string]$WorkspaceRobin,
-        [string]$ConfigPath, [string]$AcceptancePath, [string]$Machine
+        [string]$ConfigPath, [string]$AcceptancePath, [string]$Machine,
+        # 仓库外旧拷贝的绝对路径清单；由 CLI 显式传入，公共模块不写死业务路径
+        [string[]]$ExternalPaths
     )
     $parts = Get-FingerprintParts $SourceRobin $ConfigPath $AcceptancePath
+    # v3 新增：流程实际引用的脚本文件（相对仓库路径 + 原始字节 SHA256）
+    $scripts = Get-ScriptFingerprintParts -RepoRoot $script:RepoRoot
+    # v3 新增：仓库外旧拷贝（绝对路径 + 原始字节 SHA256）
+    $external = Get-ExternalScriptFingerprintParts -Paths $ExternalPaths
     $mtime = $null
     $deployedRaw = $null
     if ($WorkspaceRobin -and (Test-Path -LiteralPath $WorkspaceRobin)) {
@@ -168,7 +336,7 @@ function New-FingerprintBaseline {
         $deployedRaw = (Get-FileHash -LiteralPath $WorkspaceRobin -Algorithm SHA256).Hash.ToLower()
     }
     return [ordered]@{
-        version       = 2
+        version       = 3
         flow          = $FlowName
         flowGuid      = $FlowGuid
         environmentId = $EnvironmentId
@@ -190,6 +358,10 @@ function New-FingerprintBaseline {
         }
         # 兼容旧读取方：robin 仍指源 .robin 的原始字节哈希，别再往里塞已发布哈希
         hashes        = $parts
+        # v3：脚本清单（相对仓库路径 -> sha256）；观察期仅告警，不参与 .robin 的严格比对
+        scripts       = $scripts
+        # v3：PAD 运行目录下的旧拷贝（绝对路径 -> sha256）；与 scripts 分开存放
+        external      = $external
         seededAt      = [datetime]::UtcNow.ToString('o')
     }
 }
@@ -382,4 +554,5 @@ function Test-FlowFingerprint {
 Export-ModuleMember -Function Get-FlowGuidFromLogPath, Find-LatestFlowRun, Find-WorkspaceRobin,
     Get-PadEnvironmentId, Get-FingerprintParts, Get-FingerprintBaselinePath,
     Get-RobinLogicHash, Get-WorkspaceRootFromScriptsRoot,
+    Get-ScriptFingerprintParts, Get-ExternalScriptFingerprintParts, Test-ScriptFingerprint,
     Read-FingerprintBaseline, Write-FingerprintBaseline, New-FingerprintBaseline, Test-FlowFingerprint

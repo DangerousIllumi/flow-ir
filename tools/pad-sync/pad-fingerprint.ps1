@@ -32,6 +32,8 @@ param(
     # 业务流文件；不传时按 -FlowName 的 pad_flow_name 在 business\flows 反查
     [string]$FlowFile,
     [string]$EnvironmentId,
+    # 仓库外旧拷贝的绝对路径（PAD 运行目录下的同名文件）；只在播种时写入 external 段
+    [string[]]$ExternalPaths,
     [switch]$Set,
     [switch]$DryRun,
     [switch]$Confirm,
@@ -150,7 +152,8 @@ try {
         } else {
             $base = New-FingerprintBaseline -FlowName $FlowName -FlowGuid $result.flowGuid `
                 -EnvironmentId $result.environmentId -SourceRobin $sourceRobin `
-                -WorkspaceRobin $wsRobin -ConfigPath $ConfigFile -AcceptancePath $AcceptanceFile
+                -WorkspaceRobin $wsRobin -ConfigPath $ConfigFile -AcceptancePath $AcceptanceFile `
+                -ExternalPaths $ExternalPaths
             [void](Write-FingerprintBaseline $BaselinePath $base)
             $result.written = $true
             $result.stage = 'done'; $result.ok = $true; $result.code = 'OK'
