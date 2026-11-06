@@ -28,6 +28,13 @@
      "name": "copy-text",
      "trigger": { "kind": "manual" },
      "budget": { "maxLoop": 1 },
+     "acceptance": {
+       "description": "复制成功后目标文件存在且非空",
+       "checks": [
+         { "name": "目标文件存在", "type": "fileExists",
+           "path": "{{variables.OutputFile}}", "minBytes": 1 }
+       ]
+     },
      "variables": [
        { "name": "InputFile",  "type": "string", "default": "C:\\Temp\\input.txt" },
        { "name": "OutputFile", "type": "string", "default": "C:\\Temp\\output.txt" }
@@ -60,8 +67,31 @@
    `required` 显式布尔）；该字段只用于准入与结构校验，**不进入 `.robin` 生成产物**。
 
 4. 产出配套声明（缺了准入会拦）：
-   - `business/flows/copy-text.requirements.json`：环境依赖（目录、Python 等）
-   - `acceptance`：写进 flow.json 或 `business/flows/copy-text.acceptance.json`
+   - `business/flows/copy-text.requirements.json`：环境依赖。最小内容就是 `{ "checks": [] }`
+     （本示例不依赖外部环境）；真实流程按下列字段写：
+
+     ```json
+     {
+       "checks": [
+         { "name": "PAD 根目录", "type": "dirs", "base": "PadRoot",
+           "paths": ["Scripts", "Results"], "hint": "先安装或拷贝 PAD 部署包" }
+       ]
+     }
+     ```
+
+     字段：`name` 检查项名；`type` 为 `dirs`（子目录齐全）或 `files`（文件齐全）；
+     `base` 引用 `flow.json` 里的变量名；`paths` 是相对 `base` 的子路径；
+     `hint` 是失败时给人看的中文建议。
+   - `acceptance`：写进 flow.json（上面的示例已含一条 `fileExists` 判据），也可拆成
+     `business/flows/copy-text.acceptance.json`。生成判据文件：
+
+     ```powershell
+     .\tools\pad-sync\build-acceptance.ps1 -FlowFile business\flows\copy-text.json -OutFile business\flows\copy-text.acceptance.json
+     # 预期：[build-acceptance] 已生成 …（1 条判据）
+     ```
+
+     注意 `acceptance.checks` 是必需的：缺了会报
+     `Write-Error: flow.json 里没有 acceptance.checks，无法生成验收判据`。
    - `business/tests/eval/copy-text.cases.json`：把"需求里必须成立的事实"写成断言。
      **不要直接跑仓库自带的 `tests/eval/*.cases.json`**——那评的是仓库里的中性样例，不是你自己写的流程。
      正确做法是复制一份、把 `flow` 指到自己的文件：
@@ -72,7 +102,7 @@
      ```
 
 > **样例与业务用例的边界**：`tests/eval/fixtures`（16 个中性合成样例：10 个流程 + 6 个 trigger）
-> 与 `tests/eval/*.cases.json`（11 个结构断言）随仓库分发，供演示与 CI 使用；
+> 与 `tests/eval/*.cases.json`（11 个用例文件，内含结构断言）随仓库分发，供演示与 CI 使用；
 > 真实流程的断言一律放 `business/tests/eval/`（该目录不入库）。
 > 两者格式相同、跑法相同：`eval-flow.js` 既接受单个用例文件，也接受整个目录。
 
@@ -85,21 +115,33 @@ node tools\pad-robin\check.js out.robin
 node tools\pad-robin\eval-flow.js business\tests\eval\copy-text.cases.json
 ```
 
-预期输出：
+预期输出（下面数字是本仓库实测值）：
 
 ```text
 已生成: out.robin（2 个节点）          <- 生成器把"已生成"写 stderr，属正常
 OK   out.robin: 2 action lines, 0 errors
-[admit] 通过 10 / 警告 5 / 待批 0 / 失败 1
+[admit] 通过 10 / 警告 6 / 待批 0 / 失败 0
 PASS  read-then-write  需求：先读源文件，再写目标文件
 PASS  content-passed-through  需求：写的内容来自上一步读取结果，不能是空串
 [eval-flow] 通过 2 / 2（1 个流程样例）
 ```
 
-准入的 5 条警告是"没给 config / 没写验收判据 / 没声明输入文件"这类**信息性**提示。
-唯一的 `fail` 是 `FINGERPRINT_NO_BASELINE`：新流程还没有指纹基线，属预期；首次发布后用
-`pad-fingerprint -Set` 播种，重跑时 `FINGERPRINT` / `SCRIPT_FINGERPRINT` 会转为 pass。
-除这个基线项外，只要出现别的 `[FAIL]` 就不能继续。
+6 条警告都是**信息性**的，不是故障；按顺序是：
+
+| 检查项 | 代码 | 为什么正常 |
+|---|---|---|
+| `ACCEPTANCE` | `ACCEPTANCE_MISSING` | 还没生成验收判据文件。跑上面 step 4 的 `build-acceptance.ps1` 后转 pass（变 11 通过 / 5 警告） |
+| `CONFIG` | `CONFIG_MISSING` | 本机 `business\config\runtime.json` 还没按 `docs\config.example.json` 填好 |
+| `PREFLIGHT` | `PREFLIGHT_SKIPPED` | 没有 config 时前置探查无法执行，属跳过而非失败 |
+| `FINGERPRINT` | `FINGERPRINT_NO_BASELINE` | 新流程第一次跑还没有指纹基线（旧版会判 fail，现为 warn） |
+| `SCRIPT_FINGERPRINT` | `FINGERPRINT_NO_BASELINE` | 同上，基线种子包含产物与脚本两项 |
+| `INPUT` | `INPUT_UNDECLARED` | 本示例是"给定两个路径就复制"，不依赖目录里的输入文件；真实流程补节点级 `inputs` 后转 pass |
+
+只要没有 `[FAIL]`，这 6 条警告都不阻断交付。补充两个常见变体：
+
+- 若 `trigger` 仍写成旧的 `type` 形状，会多一条 `TRIGGER_LEGACY_SHAPE`（即 **9 通过 / 7 警告**），按上文改成 `kind` 即可消除。
+- 若已按 step 4 生成验收判据文件，`ACCEPTANCE` 转 pass，结果为 **11 通过 / 5 警告**。
+- 首次发布并真实运行一次后，用 `pad-fingerprint -Set` 播种基线，重跑时两项指纹检查转 pass。
 
 最后：PAD 新建流程 → 粘贴 `out.robin` → 补 UI 元素（本示例没有）→ 运行。
 

@@ -96,6 +96,9 @@ git clone https://github.com/DangerousIllumi/flow-ir.git flow-ir
 cd flow-ir
 .\tools\check-env.ps1    # 先确认 Node >= 18、Git、PowerShell 可用
 .\setup.ps1              # 安装 Node 依赖、启用提交前门禁、克隆动作知识库
+
+# 验证环境是否可用（不需要 business/、动作知识库或 node_modules，全过返回 0）
+.\examples\smoke.ps1
 ```
 
 `setup.ps1` 做四件事：

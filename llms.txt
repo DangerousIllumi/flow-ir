@@ -21,6 +21,9 @@
 .\setup.ps1              # Node 依赖 + 提交前门禁 + 克隆 PAD 动作知识库
 ```
 
+验证环境是否可用：`.\examples\smoke.ps1`（画布 → 生成 → 静态校验 → 准入 → 结构评估一条龙，
+不依赖 `business/`、动作知识库或 `node_modules`，全过返回 0）。
+
 然后照 `docs/nl-to-flow-guide.md` 走一遍：需求 → `flow.json` → 生成 → 静态校验 → 准入。
 
 ## 红线
