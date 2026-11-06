@@ -6,19 +6,15 @@
     2. 克隆 pad-robin-action-kb（Agent B 的知识库）
     3. 验证 check-flows.js 自检可用
     4. 创建工程目录结构
-.PARAMETER SkipDrawIO
-    跳过 next-ai-draw-io 安装（默认跳过，需要画流程图时再装）
 .EXAMPLE
     .\setup.ps1
-    .\setup.ps1 -SkipDrawIO:$false
 .NOTES
     运行前请先运行 .\tools\check-env.ps1 确认环境就绪
 #>
 
 param(
-    [switch]$SkipDrawIO = $true,
     # 动作知识库的克隆地址；默认先试 HTTPS 再试 SSH，
-    # 公司网络拦截 HTTPS 时可指定镜像或本地路径
+    # 受限网络或经由代理/防火墙访问时可能无法直连 GitHub，可指定镜像或本地路径
     [string]$KbRepo = ""
 )
 
@@ -87,8 +83,33 @@ if (Test-Path (Join-Path $WorkDir "package.json")) {
 # ── 2. 克隆 KB ───────────────────────────────────────────────
 Write-Step "2/4 克隆 pad-robin-action-kb（PAD 动作知识库）"
 
-# 公司网络常拦截 HTTPS 直连 GitHub（表现为 Recv failure: Connection was reset），
+# 受限网络、代理或防火墙环境下，HTTPS 直连 GitHub 可能被重置（表现为 Recv failure: Connection was reset），
 # 所以 HTTPS 失败后自动改用 SSH 再试一次；两者都不通时给手动步骤，而不是只报“克隆失败”
+
+# 网络等待上限：HTTPS 低速 20 秒即放弃；SSH 连接 15 秒超时并禁用交互式提示，
+# 避免受限网络下 git 长时间无输出地卡住（进度统一由下面的 Invoke-GitNet 打印）
+$gitNetArgs = @(
+    '-c', 'http.lowSpeedLimit=1000',
+    '-c', 'http.lowSpeedTime=20',
+    '-c', 'core.sshCommand=ssh -o ConnectTimeout=15 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o BatchMode=yes'
+)
+
+function Invoke-GitNet {
+    # git 的进度与报错都走 stderr，而脚本全局 ErrorActionPreference 是 Stop：
+    # 直接 2>&1 会被当成终止错误，所以这里临时降为 Continue，并逐行回显输出
+    param([string]$WorkDir, [string[]]$GitArgs)
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    Push-Location $WorkDir
+    try {
+        & git @GitArgs 2>&1 | ForEach-Object { Write-Host $_ }
+    } finally {
+        Pop-Location
+        $ErrorActionPreference = $prevEap
+    }
+    return $LASTEXITCODE
+}
+
 $candidates = @()
 if ($KbRepo) { $candidates += $KbRepo } else { $candidates += $KBRepoHttps, $KBRepoSsh }
 
@@ -100,18 +121,15 @@ if ((Test-Path $KBDir) -and -not (Test-Path (Join-Path $KBDir "PAD_Robin_ActionK
 
 if (Test-Path $KBDir) {
     Write-Info "目录已存在，执行 git pull 更新"
-    Push-Location $KBDir
-    & git pull --ff-only
-    $pullExit = $LASTEXITCODE
-    Pop-Location
+    $pullExit = Invoke-GitNet -WorkDir $KBDir -GitArgs @($gitNetArgs + @('pull', '--ff-only'))
     if ($pullExit -ne 0) { Write-Warn "更新失败（网络或远端已变），继续使用本地已有副本" }
 } else {
     $cloned = $false
     foreach ($repo in $candidates) {
-        Write-Info "正在克隆 $repo"
-        & git clone --depth 1 $repo $KBDir
-        if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $KBDir "PAD_Robin_ActionKB.json"))) { $cloned = $true; break }
-        Write-Warn "该地址不可用，换下一个"
+        Write-Info "正在克隆 $repo（网络超时上限约 20 秒，进度如下）"
+        $cloneExit = Invoke-GitNet -WorkDir $WorkDir -GitArgs @($gitNetArgs + @('clone', '--depth', '1', '--progress', $repo, $KBDir))
+        if ($cloneExit -eq 0 -and (Test-Path (Join-Path $KBDir "PAD_Robin_ActionKB.json"))) { $cloned = $true; break }
+        Write-Warn "该地址不可用（上一条输出为 git 的原始报错），换下一个"
         if (Test-Path $KBDir) { Remove-Item $KBDir -Recurse -Force -ErrorAction SilentlyContinue }
     }
     if (-not $cloned) {
@@ -224,8 +242,5 @@ Write-Host "  1. 用任意 AI 编程助手打开本目录——它会先读到 A
 Write-Host "  2. 把 docs\prompts\nl-to-flow.md 那段话粘给它，末尾写你的需求"
 Write-Host "  3. 它跑完 生成 → 静态校验 → 准入 后，把 out.robin 粘进 PAD 画布"
 Write-Host ""
-if ($SkipDrawIO) {
-    Write-Host "提示：如需可拖拽编辑的流程图，运行：" -ForegroundColor Gray
-    Write-Host "  .\setup.ps1 -SkipDrawIO:`$false" -ForegroundColor Gray
-}
-Write-Host ""
+# 前面有可降级的失败（如 git pull 更新失败只告警），不把残留的 $LASTEXITCODE 带给调用方
+exit 0

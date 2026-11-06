@@ -18,7 +18,7 @@ function Write-Info { param($msg) Write-Host "    [INFO] $msg" -ForegroundColor 
 
 $allOk = $true
 
-Write-Step "检查 Node.js（用于运行 check-flows.js 和 next-ai-draw-io）"
+Write-Step "检查 Node.js（用于运行 check-flows.js 与流程图生成工具）"
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {
     $ver = & node -v
