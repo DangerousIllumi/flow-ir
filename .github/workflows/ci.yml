@@ -57,7 +57,31 @@ jobs:
 
       - name: 安装 Pester 3.4（与本地 PS 5.1 自带版本一致）
         shell: powershell
-        run: Install-Module Pester -RequiredVersion 3.4.0 -Force -Scope CurrentUser -SkipPublisherCheck
+        run: |
+          # keep run bodies ASCII-only: GitHub writes them as ANSI .ps1 and CJK breaks parsing
+          $ErrorActionPreference = 'Stop'
+          # PSGallery needs TLS 1.2; Windows PowerShell 5.1 may still default to older protocols
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $lastError = ''
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+              }
+              Install-Module Pester -RequiredVersion 3.4.0 -Force -Scope CurrentUser -SkipPublisherCheck -Repository PSGallery
+              break
+            } catch {
+              $lastError = $_.Exception.Message
+              Write-Host "::warning::Pester install attempt $attempt failed: $lastError"
+              if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+            }
+          }
+          $installed = @(Get-Module -ListAvailable Pester | Where-Object { $_.Version -eq [version]'3.4.0' })
+          if (-not $installed) {
+            # surface the real error in the job annotation, since job logs need auth
+            Write-Host "::error::Pester 3.4.0 still unavailable; last error: $lastError"
+            throw "Pester 3.4.0 install failed: $lastError"
+          }
 
       - name: Pester（逐个测试文件跑，任一失败即构建失败）
         shell: powershell
