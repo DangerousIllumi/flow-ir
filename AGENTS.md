@@ -23,6 +23,8 @@
 | `tools/pad-robin/` | `flow-to-robin.js` 生成器、`check.js` 静态校验、`compare-robin.js` 比对、`eval-flow.js` 结构评估 |
 | `tools/pad-sync/` | `pad-admit.ps1` 只读准入网关、`pad-sync.ps1` 注入/运行、`pad-deploy/-release/-rollback/-schedule` |
 | `tools/workday/` | 工作日历判断（通用件） |
+| `tools/xlsx/` | 只读 Excel 读取层（通用件）：按表头名定位列、宽松日期/数值转换、表头探查入口（`--dump`） |
+| `tools/publish/` | 公开层词表扫描 `check-public-safe.ps1`：推送前拦截业务词与内部路径 |
 | `skills/pad-flow-designer/` | 需求 → `flow.json` 的设计规则 |
 | `skills/pad-robin-coder/` | 生成脚本时的红线清单 |
 | `docs/nl-to-flow-guide.md` | 一句话 → flow.json → 四项校验的完整示例 |
