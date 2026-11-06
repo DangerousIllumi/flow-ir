@@ -148,14 +148,14 @@ Describe '自动点按收窄：只认外部触发确认框' {
     }
 
     It '业务弹窗（机器人进程 / 完成提示标题）：一律不点，即使按钮文字是“确定”' {
-        (Test-ExternalTriggerDialog -ProcessName 'PAD.RobotV2' -WindowTitle '样品报表·核对完成' `
+        (Test-ExternalTriggerDialog -ProcessName 'PAD.RobotV2' -WindowTitle '通用报表·处理完成' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton' -ButtonControlType 'Button') | Should Be $false
-        (Test-ExternalTriggerDialog -ProcessName 'PAD.RobotV2' -WindowTitle '样品报表' `
+        (Test-ExternalTriggerDialog -ProcessName 'PAD.RobotV2' -WindowTitle '通用报表' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton' -ButtonControlType 'Button') | Should Be $false
     }
 
     It '标题不在白名单（Designer 带流程名的窗口）：不点' {
-        (Test-ExternalTriggerDialog -ProcessName 'PAD.Console.Host' -WindowTitle 'Power Automate | 样品报表' `
+        (Test-ExternalTriggerDialog -ProcessName 'PAD.Console.Host' -WindowTitle 'Power Automate | 通用报表' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton') | Should Be $false
     }
 

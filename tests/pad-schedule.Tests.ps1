@@ -15,7 +15,7 @@ Describe 'pad-schedule 纯函数测试' {
     }
 
     It '任务名：空白与路径分隔符统一替换成下划线' {
-        (Get-ScheduleTaskName '示例流程/核对 每日报表') | Should Be 'flow-ir-示例流程_核对_每日报表'
+        (Get-ScheduleTaskName '示例流程/日常 汇总') | Should Be 'flow-ir-示例流程_日常_汇总'
     }
 
     It '任务名：空流程名直接报错' {

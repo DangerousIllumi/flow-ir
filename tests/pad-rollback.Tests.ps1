@@ -122,7 +122,7 @@ Describe 'pad-rollback 快照测试' {
         $dir = Get-ReleaseSnapshotDir $root 'A/B:C*D?E"F<G>H|I'
         (Split-Path -Leaf $dir) | Should Be 'A_B_C_D_E_F_G_H_I'
         # 正常中文流程名保持原样
-        (Split-Path -Leaf (Get-ReleaseSnapshotDir $root '样品核对流程')) | Should Be '样品核对流程'
+        (Split-Path -Leaf (Get-ReleaseSnapshotDir $root '通用示例流程')) | Should Be '通用示例流程'
     }
 
     It '快照保留：超过 20 个时只保留最新 20 个' {
