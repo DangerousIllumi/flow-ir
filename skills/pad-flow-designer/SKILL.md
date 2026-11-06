@@ -54,12 +54,12 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 - **`idempotent` 与 `reversible` 是两个正交的轴，不能互相代替**：
   `idempotent` 回答「同一输入重跑会不会叠加」，`reversible` 回答「已经产生的后果能不能撤回」。
 - **`idempotent` 的语义是「重跑安全性」**：回答「人工点运行之前需要知道什么」，不是「是否允许自动重试」。
-- **`reversible=false` 的节点必须能说出回退办法**（如「过账需冲销凭证」「邮件已发出，只能再发一封说明」），
+- **`reversible=false` 的节点必须能说出回退办法**（如「提交后需冲销才能撤回」「邮件已发出，只能再发一封说明」），
   说不出来就说明这个副作用不该放进无人值守流程。
 - **控制节点（SET / IF / LOOP / SWITCH / GUARD）也要标注**，不能只标业务动作。
 - 发信、过账、删文件、改状态这类副作用节点，默认要问清楚；问不出重跑后果就按 `idempotent=false`。
 - `idempotency_note` 必须是一到两句**给人看的中文**，写清「重跑会发生什么 / 要注意什么」，
-  例如「保存附件后重跑会取不到邮件，请先恢复未读状态」「每重跑一次会再发一封催办」。
+  例如「保存附件后重跑会取不到邮件，请先恢复未读状态」「每重跑一次会再发一封提醒邮件」。
 - **第 3 项只在流程同时满足「一次落盘多个文件」和「需要删除旧文件」时必答**：
   默认采用**运行时间目录**（每次运行新建 `YYYYMMDD-HHmmss` 子目录，本次所有文件只进该目录，
   清理按目录名保留最近 N 个），详见 `docs/script-standards.md` 的「运行时间目录」一节。
@@ -69,8 +69,8 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 - 反例必须记住：
   - **导出类脚本可重跑**：每次生成新的带时间戳导出文件，`idempotent=true`。
   - **过账类脚本不可重跑**：重复执行会产生重复凭证，必须 `idempotent=false`，
-    `idempotency_note` 写明人工前置检查（如「重跑前必须确认过账账本完整」）；
-    且 `reversible=false`，`reversibility_note` 写「过账需冲销凭证」。
+    `idempotency_note` 写明人工前置检查（如「重跑前必须确认状态账本完整」）；
+    且 `reversible=false`，`reversibility_note` 写「提交后需冲销才能撤回」。
 
 缺字段的后果：`eval-flow.js` 的 `declarationsComplete` / `nodeDeclaration` 会直接判失败（退出码 1），
 不会降级成警告。自检命令：

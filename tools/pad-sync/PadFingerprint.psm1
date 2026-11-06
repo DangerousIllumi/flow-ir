@@ -20,12 +20,11 @@ $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # 指纹 v3 收录的脚本清单（相对仓库根，统一用正斜杠）
 # 收录依据是「流程实际引用」而不是目录扫描：
-#   - flow.json 直接引用 MB51导出.vbs / MIGO201_501.vbs / reconcile.py；
-#   - MB51 导出链路依赖 handle_saveas_dialog_v7_final.ps1 / close_excel_window.ps1，
-#     收信链路依赖 读取msg.vbs；
-#   - reconcile.py 的 workday 从仓库根 tools\workday\workday.py 导入（见其文件头 sys.path 候选），
+#   - flow.json 直接引用的过账脚本、导出脚本与核对脚本（具体路径见下方默认表）；
+#   - 导出链路依赖的保存对话框、关闭 Excel 辅助脚本，收信链路依赖的邮件读取脚本；
+#   - 核对脚本的 workday 从仓库根 tools\workday\workday.py 导入（见其文件头 sys.path 候选），
 #     不是 business 下的副本；
-#   - reconcile.py 的 Excel 读取（表头定位、日期/数值转换、整表读取）从
+#   - 核对脚本的 Excel 读取（表头定位、日期/数值转换、整表读取）从
 #     tools\xlsx\xlsx_io.py 导入，同属流程实际引用的通用脚本。
 $script:DefaultScriptPaths = @(
     'business/scripts/MB51导出.vbs'

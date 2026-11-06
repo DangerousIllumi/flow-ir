@@ -95,7 +95,7 @@ node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ## 5. 明确不做的事
 
 - **不要**替用户录 UI 元素：需要 UI 选择器的动作（部分网页/桌面自动化）必须由人在 PAD 里录制，生成器会拒绝。
-- **不要**编造 SAP 脚本：`MB51导出.vbs`、`MIGO201_501.vbs` 这类是录制产物，不在仓库里。
+- **不要**编造 SAP 脚本：事务码导出/过账这类 VBS 是录制产物，不在仓库里。
 - **不要**替用户发布到生产：`pad-deploy` / `pad-release` 会触发真实运行，必须人来确认。
 - **不要**改 `.robin`：它是 `flow.json` 的产物，改了下次生成就被覆盖。
 

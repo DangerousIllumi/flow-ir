@@ -15,7 +15,7 @@
     {
       "id": "sap",
       "codePattern": "^SAP\\.",
-      "hint": "SAP 元素/会话类错误：屏幕号或元素 ID 随事务码变化，需人工核对 MIGO/MB51 脚本里的 findById 路径与当前 SAP 版本是否一致。"
+      "hint": "SAP 元素/会话类错误：屏幕号或元素 ID 随事务码变化，需人工核对业务脚本里的 findById 路径与当前 SAP 版本是否一致。"
     },
     {
       "id": "ui",

@@ -213,9 +213,9 @@ try {
     # 硬编码邮箱/密码模式 → 软警告（不阻断）
     $warns = @()
     if ($replaced -match "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}") { $warns += "疑似硬编码邮箱地址" }
-    # DRY_RUN=1 会跳过 MIGO/MB51/核对/发信；部署到生产时必须显式提示，避免误把生产关掉
+    # DRY_RUN=1 会跳过过账/导出/核对/发信；部署到生产时必须显式提示，避免误把生产关掉
     if ($FlowName -ne "PAD_SYNC_TEST" -and $cfg.ContainsKey('DRY_RUN') -and [string]$cfg['DRY_RUN'] -eq '1') {
-        $warns += "DRY_RUN=1：本次部署会跳过 MIGO/MB51/核对与发信"
+        $warns += "DRY_RUN=1：本次部署会跳过过账/导出/核对与发信"
     }
     foreach ($w in $warns) { $result.warnings += $w; Log "⚠️ $w" }
 

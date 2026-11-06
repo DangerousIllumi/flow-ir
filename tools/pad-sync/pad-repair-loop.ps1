@@ -79,7 +79,7 @@ function Read-LogAuto([string]$path, [int]$maxChars = 4000) {
 
 # 从 VBS 源码提取日志约定，而不是靠"脚本名_result.txt"猜：
 #   1) 找 Const RESULT_DIR = "..." 得到日志目录
-#   2) 找源码里所有写死的 .txt/.log 文件名（MIGO → migo_result.txt；MB51 → saveas_result.txt/saveas_stop.txt/export_excel.log）
+#   2) 找源码里所有写死的 .txt/.log 文件名（过账脚本 → posting_result.txt；导出脚本 → saveas_result.txt/saveas_stop.txt/export_excel.log）
 #   3) 只保留磁盘上真实存在的，优先名字含 result 的，其次按修改时间最新
 function Get-VbsLogFile([string]$vbsPath) {
     $src = (Read-TextFileAuto $vbsPath).text
@@ -94,7 +94,7 @@ function Get-VbsLogFile([string]$vbsPath) {
     $dirs += (Split-Path $vbsPath -Parent)
     $dirs = @($dirs | Where-Object { $_ } | Select-Object -Unique)
 
-    # 源码里出现的日志文件名（可能带反斜杠前缀或完整路径，如 "\migo_result.txt"、"%RESULT_DIR%\saveas_result.txt"）
+    # 源码里出现的日志文件名（可能带反斜杠前缀或完整路径，如 "\posting_result.txt"、"%RESULT_DIR%\saveas_result.txt"）
     $names = @([regex]::Matches($src, '"([^"\r\n]*?([A-Za-z0-9_\-\.]+\.(?:txt|log)))"') | ForEach-Object {
         [pscustomobject]@{ Full = $_.Groups[1].Value; Name = $_.Groups[2].Value }
     })

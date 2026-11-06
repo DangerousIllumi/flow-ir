@@ -171,7 +171,7 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 ### 步骤4：参数引用规则
 - `{{2.RetrievedEmails}}` → 节点2 的输出变量 `RetrievedEmails`（生成裸变量名）
 - `{{config.ManagerEmail}}` / `{{variables.X}}` → 流程级变量，生成裸变量名 `ManagerEmail`
-- 字符串里可内嵌引用，如 `"发票-{{config.Month}}"` → 生成 `$'''发票-%Month%'''`
+- 字符串里可内嵌引用，如 `"结果-{{config.Month}}"` → 生成 `$'''结果-%Month%'''`
 
 ### 步骤5：生成可评审流程图（**用工具，不要手写 XML**）
 生成 flow.json 后，执行：
@@ -459,7 +459,7 @@ OUTPUT: only the Robin script, one action per line, no header lines, no markdown
 
 ┌─────────────────────────────────────────────────────────┐
 │ 阶段1：Agent A 设计                                       │
-│  用户："每月3号从邮箱读取对账单邮件…"                       │
+│  用户："每月3号从邮箱读取带附件的邮件…"                     │
 │  Agent A：→ 写 flow.json（含 pad_hint）                    │
 │           → node flow-to-drawio.js 生成 flow.drawio       │
 │  用户：在 draw.io 拖拽/改标签评审 → 保存                    │

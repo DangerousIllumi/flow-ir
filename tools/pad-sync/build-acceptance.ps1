@@ -1,6 +1,6 @@
 ﻿# build-acceptance.ps1 — 由 flow.json 的 acceptance 声明生成验收判据文件
 #
-# 为什么要生成：验收判据里的路径（Results / MB51 / 日历）本来就是 flow 变量的派生结果。
+# 为什么要生成：验收判据里的路径（Results / 导出目录 / 日历）本来就是 flow 变量的派生结果。
 # 手写两份必然漂移——改了 ResultsDir，验收还在查旧目录，就会「运行成功但验收失败」。
 #
 # 规则：
