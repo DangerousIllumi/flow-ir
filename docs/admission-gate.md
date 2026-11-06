@@ -30,6 +30,7 @@
 | 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（默认 fail，指纹不一致即阻断） |
 | 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
 | 14 | TRIGGER | `flow.json` 的 `trigger` 块 | kind 取值域、必填字段、目录必须走配置引用、无人值守不得要求人工确认 | `TRIGGER_*`（见 2.2） | `pad-admit.ps1`（观察期未声明记 warn） |
+| 15 | INPUT | 节点级 `inputs` 声明 + `config` | 目录必须走配置引用；`required` 显式声明；必需文件 0 候选即失败；候选 ≥2 一律判歧义 | `INPUT_*`（见 2.3） | `pad-admit.ps1`（未声明记 warn，向后兼容） |
 
 ### 2.1 指纹（FINGERPRINT）结果码
 
@@ -81,12 +82,34 @@
 播种必须人工确认：`-Set` 只打印定位结果（修订目录、Workspace 路径、mtime、三个哈希），
 加 `-Confirm` 才写；`-DryRun` 永远不写；多候选直接报 `AMBIGUOUS` 停下。
 
+### 2.3 输入文件声明（INPUT）结果码
+
+节点级 `inputs` 声明回答「第 N 步只检查第 N 步需要的输入文件」，用于**准入与结构校验**。
+字段：`dir`（必须是 `{{config.<KEY>}}`）、`pattern`（文件名通配符）、`required`（显式布尔）。
+**该能力不改变 `.robin` 生成产物**：`flow-to-robin.js` 不读取 `inputs`，也不会把它写进脚本；
+`eval-flow.js` 只校验声明形状，目录可读与候选计数由本项在准入时只读核对。
+
+| 结果码 | 判级 | 含义 |
+|---|---|---|
+| `INPUT_UNDECLARED` | warn | 没有任何节点声明 `inputs`（存量流程兼容，只提示） |
+| `INPUT_INVALID` | fail | `inputs` 不是非空数组、条目不是对象、缺 `dir`/`pattern`、`required` 未显式声明 |
+| `INPUT_PATH_LITERAL` | fail | `dir` 写死字面路径，未用 `{{config.<KEY>}}` 引用 |
+| `INPUT_CONFIG_UNRESOLVED` | fail | 未提供 config、配置缺键或值为空，目录无法解析（不退回字面路径） |
+| `INPUT_DIR_UNREADABLE` | fail | 必需输入的目录不存在或不可读 |
+| `INPUT_FILE_MISSING` | fail | 必需输入在目录里 0 个候选 |
+| `INPUT_FILE_AMBIGUOUS` | fail | 候选 ≥2，一律判歧义，**绝不「取最新」**；可选输入同样适用 |
+
+判定分级说明：
+- 未声明只提示（warn），保住存量 `flow.json` 的向后兼容；
+- 一旦声明，形状/配置/文件核对一律 fail-closed：宁可阻断，也不假装核对过；
+- `required=false` 只放宽「0 候选」，不放宽「多候选」（多候选仍是歧义）。
+
 ## 3. 执行阶段
 
 | 阶段 | 跑哪些检查 | 触发点 |
 |---|---|---|
 | 离线（生成前） | 1–6、9、10、14 | `pad-admit` / `flow-to-robin` / CI |
-| 运行前 | 7、8、11、12 | `pad-sync` 注入前 |
+| 运行前 | 7、8、11、12、15 | `pad-sync` 注入前 |
 | 运行后 | 验收判据 | `pad-sync` 运行后（G6） |
 
 ## 4. 输出契约

@@ -1,0 +1,58 @@
+{
+  "flow": "tests/eval/fixtures/input-files.json",
+  "description": "需求：第 N 步只声明并核对第 N 步需要的输入文件（目录 + 文件名模式 + 必需/可选）",
+  "cases": [
+    {
+      "id": "inputs-declared",
+      "requirement": "读取步骤声明一必需一可选两份输入，声明形状合法",
+      "expect": [{ "op": "inputs" }]
+    },
+    {
+      "id": "inputs-single-node",
+      "requirement": "只验指定节点也能通过",
+      "expect": [{ "op": "inputs", "node": "1" }]
+    },
+    {
+      "id": "inputs-path-literal",
+      "requirement": "目录写死字面路径必须被拒绝（INPUT_PATH_LITERAL）",
+      "expect": [
+        {
+          "op": "inputs",
+          "def": [{ "dir": "<输入目录>/inbox", "pattern": "*.csv", "required": true }],
+          "expect": "invalid",
+          "code": "INPUT_PATH_LITERAL"
+        }
+      ]
+    },
+    {
+      "id": "inputs-required-not-explicit",
+      "requirement": "required 未显式声明必须被拒绝（INPUT_INVALID，不默认填充）",
+      "expect": [
+        {
+          "op": "inputs",
+          "def": [{ "dir": "{{config.InputDir}}", "pattern": "*.csv" }],
+          "expect": "invalid",
+          "code": "INPUT_INVALID"
+        }
+      ]
+    },
+    {
+      "id": "inputs-empty-pattern",
+      "requirement": "pattern 为空必须被拒绝（INPUT_INVALID）",
+      "expect": [
+        {
+          "op": "inputs",
+          "def": [{ "dir": "{{config.InputDir}}", "pattern": "  ", "required": true }],
+          "expect": "invalid",
+          "code": "INPUT_INVALID"
+        }
+      ]
+    },
+    {
+      "id": "inputs-undeclared",
+      "requirement": "老流程不写 inputs：只给一条 INPUT_UNDECLARED 提示，不判失败",
+      "flow": "tests/eval/fixtures/file-copy-text.json",
+      "expect": [{ "op": "inputs", "expect": "warning", "code": "INPUT_UNDECLARED" }]
+    }
+  ]
+}

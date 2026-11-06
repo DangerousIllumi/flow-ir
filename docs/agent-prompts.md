@@ -91,6 +91,9 @@
       "run_mode": "auto",
       "idempotent": true,
       "idempotency_note": "重跑会发生什么 / 要注意什么（一到两句中文，仅 idempotent=false 时必填）",
+      "inputs": [
+        { "dir": "{{config.<KEY>}}", "pattern": "*.csv", "required": true }
+      ],
       "next": ["2"],
       "branch": null
     }
@@ -108,6 +111,9 @@
 - **output_skip：不需要的输出参数名数组**。列出的输出不落变量（等同 PAD 里把输出留空），
   用于清理、打开文件、只做提示的弹窗等「只看执行不看结果」的动作；句柄类输出不允许跳过。
 - **run_mode：每个节点必填**，取值 `auto`（自动执行）/ `confirm`（需人工确认）/ `observe`（只读观察）。
+- **inputs：可选（节点级输入文件声明）**，只用于准入与结构校验，**不进入 `.robin` 生成产物**。
+  条目字段：`dir` 必须是 `{{config.<KEY>}}`（禁止字面路径）、`pattern` 是文件名通配符、
+  `required` 必须显式写 `true`/`false`。必需文件 0 候选即阻断；候选 ≥2 一律判歧义，不「取最新」。
 - **idempotent：每个节点必填**，语义是「重跑安全性」：`true` 表示重跑结果一致，`false` 表示重跑会改变状态或丢失输入，
   此时必须写 `idempotency_note`（一到两句给人看的中文，写清重跑会发生什么 / 要注意什么）。
   例：MB51 导出可重跑（true），MIGO 过账不可重跑（false）。

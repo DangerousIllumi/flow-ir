@@ -176,6 +176,60 @@ function validateTrigger(flow, trg, opts = {}) {
   return { errors, warnings };
 }
 
+// 输入文件声明（节点级 inputs）的目录写法：与 file 触发器同一口径，只接受 {{config.<KEY>}}，
+// 禁止把真实路径写进 flow.json（公开层与业务层都按这一条校验）
+const INPUT_DIR_RE = /^\{\{config\.\w+\}\}$/;
+
+/**
+ * 校验节点级输入文件声明，返回 { errors, warnings }，条目形如 { code, detail }。
+ * 只验声明形状，不碰文件系统；“目录可读 / 候选文件计数”属于 pad-admit 第 15 项。
+ * 老 flow.json 不写 inputs 时只给一条 INPUT_UNDECLARED 提示，不判失败（向后兼容）。
+ */
+function validateInputs(flow, opts = {}) {
+  const errors = [];
+  const warnings = [];
+  const err = (code, detail) => errors.push({ code, detail });
+  const warn = (code, detail) => warnings.push({ code, detail });
+
+  const nodes = Array.isArray(flow && flow.nodes) ? flow.nodes : [];
+  const targets = opts.node ? nodes.filter((n) => n && n.id === opts.node) : nodes;
+  let declared = 0;
+
+  for (const n of targets) {
+    if (!hasOwn(n, "inputs")) continue;
+    declared++;
+    if (!Array.isArray(n.inputs) || n.inputs.length === 0) {
+      err("INPUT_INVALID", `节点 ${n.id} inputs 必须是非空数组`);
+      continue;
+    }
+    n.inputs.forEach((it, i) => {
+      const at = `节点 ${n.id} inputs[${i}]`;
+      if (!isPlainObject(it)) {
+        err("INPUT_INVALID", `${at} 必须是对象`);
+        return;
+      }
+      const dir = it.dir;
+      if (typeof dir !== "string" || !dir) {
+        err("INPUT_INVALID", `${at}.dir 必填`);
+      } else if (!INPUT_DIR_RE.test(dir)) {
+        err("INPUT_PATH_LITERAL", `${at}.dir=${dir} 必须是 {{config.<KEY>}} 引用，不能是字面路径`);
+      }
+      if (typeof it.pattern !== "string" || !it.pattern.trim()) {
+        err("INPUT_INVALID", `${at}.pattern 必填且不能为空`);
+      }
+      // required 必须显式声明，不默认填充（与 run_mode / idempotent 的必答口径一致）
+      if (typeof it.required !== "boolean") {
+        err("INPUT_INVALID", `${at}.required=${JSON.stringify(it.required)}（应为 true/false）`);
+      }
+    });
+  }
+
+  if (declared === 0) {
+    warn("INPUT_UNDECLARED", "没有节点声明 inputs：运行前不会核对输入文件；依赖输入文件的流程请补声明");
+  }
+  return { errors, warnings };
+}
+
 /** 断言操作表：每个操作返回 { ok, detail } */
 const OPS = {
   // 节点总数：用于锁住结构不再漂移
@@ -322,6 +376,44 @@ const OPS = {
     return {
       ok: kindOk && errors.length === 0,
       detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("；") : `trigger=${trg.kind} 已声明`,
+    };
+  },
+  // 输入文件声明断言：
+  //   a.def 给了就验该数组（只验声明形状，挂到合成节点 inline）
+  //   a.node 给了就只验该节点，默认验全流程
+  //   a.expect=invalid 断言“确实不合法且命中 a.code”；a.expect=warning 断言命中某条提示码
+  inputs(flow, a) {
+    let target = flow;
+    let opts = {};
+    if (hasOwn(a, "def")) {
+      target = { nodes: [{ id: "inline", inputs: a.def }] };
+    } else if (a.node) {
+      const nodes = Array.isArray(flow && flow.nodes) ? flow.nodes : [];
+      if (!nodes.some((n) => n && n.id === a.node)) {
+        return { ok: false, detail: `节点 ${a.node} 不存在` };
+      }
+      opts = { node: a.node };
+    }
+    const { errors, warnings } = validateInputs(target, opts);
+    const codes = [...errors, ...warnings].map((x) => x.code);
+    if (a.expect === "invalid") {
+      return {
+        ok: codes.includes(a.code),
+        detail: `期望 ${a.code}，实际 ${codes.length ? codes.join(",") : "无问题"}`,
+      };
+    }
+    if (a.expect === "warning") {
+      return {
+        ok: warnings.some((x) => x.code === a.code),
+        detail: `期望提示 ${a.code}，实际 ${warnings.length ? warnings.map((x) => x.code).join(",") : "无提示"}`,
+      };
+    }
+    // 未声明的提示不算失败：老 flow.json 不写 inputs 时 op 仍然通过
+    return {
+      ok: errors.length === 0,
+      detail: errors.length
+        ? errors.map((x) => `${x.code}: ${x.detail}`).join("；")
+        : `inputs 声明形状合法${warnings.length ? `（${warnings.map((x) => x.code).join(",")}）` : ""}`,
     };
   },
 };

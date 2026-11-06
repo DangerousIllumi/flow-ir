@@ -2,7 +2,7 @@
 
 > 这份文档回答两个问题：
 > 1. 「需求 → flow.json → 校验通过 → 粘进 PAD」具体长什么样？
-> 2. Agent 一次生成多条需求，怎么量化它到底靠不靠谱？（公开样例集现有 9 个流程样例 + 6 个 trigger 样例）
+> 2. Agent 一次生成多条需求，怎么量化它到底靠不靠谱？（公开样例集现有 10 个流程样例 + 6 个 trigger 样例）
 
 ---
 
@@ -47,14 +47,16 @@
    另外**每个节点**（含控制节点）都必须写 `run_mode`（auto/confirm/observe）与 `idempotent`
    （语义是「重跑安全性」：false 时加一到两句中文 `idempotency_note`，写清重跑会发生什么）；
    没问清这两项就不要生成 flow.json。本工具链不做自动重试，运行失败一律「告警 + 人工重跑」，该字段不用于放行自动化。
+   读取外部文件的步骤还要声明**节点级 `inputs`**（`dir` 走 `{{config.<KEY>}}`、`pattern` 通配符、
+   `required` 显式布尔）；该字段只用于准入与结构校验，**不进入 `.robin` 生成产物**。
 
 4. 产出配套声明（缺了准入会拦）：
    - `business/flows/copy-text.requirements.json`：环境依赖（目录、Python 等）
    - `acceptance`：写进 flow.json 或 `business/flows/copy-text.acceptance.json`
    - `business/tests/eval/<需求id>.cases.json`：把"需求里必须成立的事实"写成断言
 
-> **样例与业务用例的边界**：`tests/eval/fixtures`（15 个中性合成样例：9 个流程 + 6 个 trigger）
-> 与 `tests/eval/*.cases.json`（10 个结构断言）随仓库分发，供演示与 CI 使用；
+> **样例与业务用例的边界**：`tests/eval/fixtures`（16 个中性合成样例：10 个流程 + 6 个 trigger）
+> 与 `tests/eval/*.cases.json`（11 个结构断言）随仓库分发，供演示与 CI 使用；
 > 真实流程的断言一律放 `business/tests/eval/`（该目录不入库）。
 > 两者格式相同、跑法相同：`eval-flow.js` 既接受单个用例文件，也接受整个目录。
 
@@ -85,11 +87,11 @@ PASS  read-then-write  需求：先读源文件，再写目标文件
 
 ## 2. 批量打分：衡量"生成质量"而不是"这一次跑没跑通"
 
-固定需求集就是 `tests/eval/*.cases.json`（共 10 个：9 个流程样例的断言 + 1 个 trigger 断言）。每个用例文件里的 `flow` 指向被测的 `flow.json`。
+固定需求集就是 `tests/eval/*.cases.json`（共 11 个：10 个流程样例的断言 + 1 个 trigger 断言）。每个用例文件里的 `flow` 指向被测的 `flow.json`。
 
 **打分流程**
 
-1. 把 9 条流程需求的原文交给 Agent A，要求它每条的产出落到 `candidates/<需求id>.json`
+1. 把 10 条流程需求的原文交给 Agent A，要求它每条的产出落到 `candidates/<需求id>.json`
 2. 为每条需求准备得分规则（复用现有 `*.cases.json`，把 `flow` 改指向候选文件）
 3. 逐条跑四件事：**结构断言 → 生成 → 静态校验 → 准入**
 4. 记录到表里

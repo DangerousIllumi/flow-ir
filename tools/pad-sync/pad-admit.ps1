@@ -1,6 +1,6 @@
 ﻿# pad-admit.ps1 — 只读准入网关：部署/运行前判断"这份流程、这次运行是否被允许"
 #
-# 对应 docs/admission-gate.md 的 14 项检查。硬约束：
+# 对应 docs/admission-gate.md 的 15 项检查。硬约束：
 #   1) 只读：不启动 PAD、不连 SAP、不发邮件、不写产物
 #   2) 一次返回全部问题，不因第一条失败提前退出
 #   3) 每条失败带 code + 人话 + 证据（节点 id / 参数 / 文件名）
@@ -522,7 +522,131 @@ function Invoke-TriggerCheck {
     })
 }
 
-# 主体检查：一次跑完 14 项 + SCRIPT_FINGERPRINT（v3 脚本指纹，观察期只 warn）
+# ---------- INPUT（第 15 项）：节点级输入文件声明 ----------
+# 口径与 file 触发器一致：目录必须走 {{config.<KEY>}} 引用；候选 ≥2 一律判歧义，绝不“取最新”。
+# 本项只读：只枚举目录、stat 文件，不打开、不移动、不删除任何文件。
+# 能力只用于准入与结构校验，不改变 .robin 生成产物（生成器不认识 inputs）。
+
+# 解析 inputs.dir 的 {{config.<KEY>}}：只读，解析不了就硬失败，绝不退回字面路径
+function Resolve-InputDir {
+    param([string]$Token, $Config, [string]$ConfigFile)
+    $m = [regex]::Match([string]$Token, '^\{\{config\.(\w+)\}\}$')
+    if (-not $m.Success) {
+        return @{ dir = $null; code = 'INPUT_PATH_LITERAL'
+            message = "inputs.dir 必须是 {{config.<KEY>}} 引用，不能是字面路径：$Token" }
+    }
+    $key = $m.Groups[1].Value
+    if (-not $Config) {
+        return @{ dir = $null; code = 'INPUT_CONFIG_UNRESOLVED'
+            message = "未提供 config，无法解析 {{config.$key}}；请用 -ConfigFile 指定" }
+    }
+    if (-not (Test-PropExists $Config $key) -or -not [string]$Config.$key) {
+        return @{ dir = $null; code = 'INPUT_CONFIG_UNRESOLVED'
+            message = "配置里没有可用键 $key（$ConfigFile）" }
+    }
+    return @{ dir = [string]$Config.$key; code = $null; message = $null }
+}
+
+# 第 15 项主体：静态形状 + 可选的文件系统核对（只读枚举）
+function Invoke-InputCheck {
+    param($Flow, $Config, [string]$ConfigFile)
+    $issues = @()
+    $passEvidence = @()
+    $nodes = @($Flow.nodes | Where-Object { $_ -and (Test-PropExists $_ 'inputs') })
+    if ($nodes.Count -eq 0) {
+        return @(New-AdmitCheck 'INPUT' 'warn' 'INPUT_UNDECLARED' `
+            '没有节点声明输入文件（inputs）：运行前不会核对输入；依赖输入文件的流程请补声明' @())
+    }
+
+    foreach ($n in $nodes) {
+        $list = @($n.inputs)
+        if ($list.Count -eq 0) {
+            $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
+                message = "节点 $($n.id) inputs 必须是非空数组"; evidence = @("节点 $($n.id)") }
+            continue
+        }
+        for ($i = 0; $i -lt $list.Count; $i++) {
+            $it = $list[$i]
+            $at = "节点 $($n.id) inputs[$i]"
+            $isObj = ($it -is [System.Management.Automation.PSCustomObject]) -or ($it -is [hashtable])
+            if (-not $isObj) {
+                $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
+                    message = "$at 必须是对象"; evidence = @($at) }
+                continue
+            }
+
+            $dirToken = $null
+            if ((Test-PropExists $it 'dir') -and ($it.dir -is [string])) { $dirToken = [string]$it.dir }
+            if (-not $dirToken) {
+                $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
+                    message = "$at.dir 必填且必须是字符串"; evidence = @($at) }
+                continue
+            }
+            $res = Resolve-InputDir $dirToken $Config $ConfigFile
+            if ($res.code) {
+                $issues += @{ status = 'fail'; code = $res.code
+                    message = $res.message; evidence = @("$at.dir=$dirToken") }
+                continue
+            }
+
+            $pattern = $null
+            if ((Test-PropExists $it 'pattern') -and ($it.pattern -is [string])) { $pattern = [string]$it.pattern }
+            if (-not $pattern -or $pattern.Trim().Length -eq 0) {
+                $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
+                    message = "$at.pattern 必填且不能为空"; evidence = @($at) }
+                continue
+            }
+            # required 必须显式声明，不默认填充（与 run_mode / idempotent 的必答口径一致）
+            if (-not (Test-PropExists $it 'required') -or -not ($it.required -is [bool])) {
+                $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
+                    message = "$at.required 必须是 true/false（不默认填充）"; evidence = @($at) }
+                continue
+            }
+            $required = [bool]$it.required
+
+            # 文件系统核对：目录不存在/不可读时，必需项判失败，可选项按“没有”处理
+            $dir = $res.dir
+            if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+                if ($required) {
+                    $issues += @{ status = 'fail'; code = 'INPUT_DIR_UNREADABLE'
+                        message = "必需输入的目录不存在：$dir"; evidence = @("$at $dir\$pattern") }
+                }
+                continue
+            }
+            try {
+                $cands = @(Get-ChildItem -LiteralPath $dir -Filter $pattern -File -ErrorAction Stop)
+            } catch {
+                if ($required) {
+                    $issues += @{ status = 'fail'; code = 'INPUT_DIR_UNREADABLE'
+                        message = "输入目录不可读：$dir（$($_.Exception.Message)）"; evidence = @("$at") }
+                }
+                continue
+            }
+            if ($cands.Count -ge 2) {
+                $names = @($cands | ForEach-Object { $_.Name }) -join '、'
+                $issues += @{ status = 'fail'; code = 'INPUT_FILE_AMBIGUOUS'
+                    message = "$at 有 $($cands.Count) 个候选（$names），不做'取最新'的猜测；请先清理目录"
+                    evidence = @("$at $dir\$pattern", "候选：$names") }
+                continue
+            }
+            if ($cands.Count -eq 0 -and $required) {
+                $issues += @{ status = 'fail'; code = 'INPUT_FILE_MISSING'
+                    message = "$at 必需输入未找到：$dir\$pattern"; evidence = @("$at") }
+                continue
+            }
+            $passEvidence += "$at $dir\$pattern：$($cands.Count) 个候选$(if ($required) { '（必需）' } else { '（可选）' })"
+        }
+    }
+
+    if ($issues.Count -eq 0) {
+        return @(New-AdmitCheck 'INPUT' 'pass' 'OK' "$($nodes.Count) 个节点的输入声明已核对" $passEvidence)
+    }
+    return @($issues | ForEach-Object {
+        New-AdmitCheck 'INPUT' $_.status $_.code $_.message $_.evidence
+    })
+}
+
+# 主体检查：一次跑完 15 项 + SCRIPT_FINGERPRINT（v3 脚本指纹，观察期只 warn）
 function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,
@@ -765,6 +889,9 @@ function Invoke-AdmitChecks {
     $checks += @(Invoke-TriggerCheck -Flow $Flow -FlowName $FlowName `
         -Repo $Paths.Repo -SelfFile $Paths.FlowFile -ConfigFile $Paths.ConfigFile `
         -TriggerLive:$TriggerLive)
+
+    # 15 INPUT（节点级输入文件声明：只读枚举，缺文件/多候选在运行前报出）
+    $checks += @(Invoke-InputCheck -Flow $Flow -Config $Config -ConfigFile $Paths.ConfigFile)
 
     return $checks
 }

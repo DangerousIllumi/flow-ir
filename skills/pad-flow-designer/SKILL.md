@@ -48,6 +48,7 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 | 2 | 重跑会发生什么（重跑安全性） | `true` 重跑结果一致 / `false` 重跑会改变状态或丢失输入 | 节点级 `idempotent`；为 `false` 时必须再写 `idempotency_note` |
 | 2b | 后果能不能回退（可逆性） | `true` 删掉可重建、可改回（保存附件/导出文件/核对文件/标记已读）/ `false` 发信、过账等不可撤回 | 节点级 `reversible`；为 `false` 时必须再写 `reversibility_note`（说清回退办法，如"过账需冲销凭证"） |
 | 3 | 多文件落盘 + 需清理旧文件时，怎么区分「本次产物」 | `是` 采用运行时间目录 / `否` 说明用什么可靠标记 | 本次落盘目录 + 清理节点的选取条件 |
+| 4 | 这一步开始前需要哪些输入文件 | `无` / 每个文件给出：目录（配置键）、文件名通配符、`true` 必需 / `false` 可选 | 节点级 `inputs[]`（见下方「输入文件声明」） |
 
 判定口径：
 - **`idempotent` 与 `reversible` 是两个正交的轴，不能互相代替**：
@@ -79,6 +80,32 @@ node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
 ```
 
 > `check.js` 只看生成后的 `.robin`，看不到 `flow.json` 字段；两项声明的门禁在 `eval-flow.js`。
+
+### 3.5 输入文件声明（节点级 `inputs`）
+
+只对**读取外部文件的步骤**声明，回答「第 N 步只检查第 N 步需要的输入文件」：
+
+```json
+{
+  "id": "3",
+  "pad_hint": "File.ReadTextFromFile.ReadText",
+  "inputs": [
+    { "dir": "{{config.InputDir}}", "pattern": "*.csv", "required": true },
+    { "dir": "{{config.ReferenceDir}}", "pattern": "reference-*.csv", "required": false }
+  ]
+}
+```
+
+口径：
+- `dir` 只能写 `{{config.<KEY>}}`（沿用现有配置占位符），**禁止写真实路径或字面目录**；
+  准入时解析不了就硬失败，不会退回字面路径。
+- `pattern` 是文件名通配符（如 `*.csv`），一个条目一份文件。
+- `required` 必须显式写 `true` / `false`，不做默认填充：`true` 缺文件即阻断，
+  `false` 表示「没有也能继续」。
+- **多候选一律失败**：同一目录同一模式命中 ≥2 个文件时报歧义，**不允许「取最新」**。
+- 老流程不写 `inputs` 不会报错，准入只给一条 `INPUT_UNDECLARED` 提示。
+- 该字段**只用于准入与结构校验，不进入 `.robin` 生成产物**（生成器不消费它）。
+- 自检断言用 `inputs` op：`node tools/pad-robin/eval-flow.js tests/eval/input-files.cases.json`。
 
 ### 4. 生成 flow.json
 严格遵循结构（见 `docs/agent-prompts.md` 完整 schema）。关键点：

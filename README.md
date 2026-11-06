@@ -164,8 +164,8 @@ node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ```
 
 - `flow.json` 的写法见 [docs/agent-prompts.md](docs/agent-prompts.md)；
-- 可直接抄的中性样例在 [tests/eval/fixtures](tests/eval/fixtures)：15 个合成样例（9 个流程 + 6 个 trigger），
-  对应的 `*.cases.json` 共 10 个，位于 [tests/eval](tests/eval)，可整目录一起跑：`node tools\pad-robin\eval-flow.js tests\eval`；
+- 可直接抄的中性样例在 [tests/eval/fixtures](tests/eval/fixtures)：16 个合成样例（10 个流程 + 6 个 trigger），
+  对应的 `*.cases.json` 共 11 个，位于 [tests/eval](tests/eval)，可整目录一起跑：`node tools\pad-robin\eval-flow.js tests\eval`；
 - 业务用例按 AGENTS.md 的约定放在 `business\tests\eval\`（不入库）。
 
 ### 上线链路（需要 PAD 真机）

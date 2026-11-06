@@ -269,6 +269,87 @@ Describe 'pad-admit TRIGGER 第 14 项（观察期 warn）' {
     }
 }
 
+Describe 'pad-admit INPUT 第 15 项（节点级输入文件声明）' {
+
+    function New-InputNode($Entries) {
+        return [pscustomobject]@{
+            id = '1'; pad_hint = 'File.ReadTextFromFile.ReadText'; inputs = @($Entries)
+        }
+    }
+
+    It '未声明 inputs：warn + INPUT_UNDECLARED，不判失败' {
+        $f = [pscustomobject]@{ nodes = @([pscustomobject]@{ id = '1'; pad_hint = 'File.ReadTextFromFile.ReadText' }) }
+        $r = @(Invoke-InputCheck -Flow $f -Config $null -ConfigFile $null)
+        $r.Count | Should Be 1
+        $r[0].id | Should Be 'INPUT'
+        $r[0].status | Should Be 'warn'
+        $r[0].code | Should Be 'INPUT_UNDECLARED'
+    }
+
+    It '必需输入缺失：fail + INPUT_FILE_MISSING' {
+        $dir = Join-Path $TestDrive ('in-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $node = New-InputNode @([pscustomobject]@{ dir = '{{config.InputDir}}'; pattern = '*.csv'; required = $true })
+        $f = [pscustomobject]@{ nodes = @($node) }
+        $r = @(Invoke-InputCheck -Flow $f -Config ([pscustomobject]@{ InputDir = $dir }) -ConfigFile 'demo.json')
+        $r.Count | Should Be 1
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'INPUT_FILE_MISSING'
+        ($r[0].evidence -join ' ') | Should Match '节点 1'
+    }
+
+    It '多候选：fail + INPUT_FILE_AMBIGUOUS，证据列出全部候选，绝不取最新' {
+        $dir = Join-Path $TestDrive ('in-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $dir 'a.csv'), '1', (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText((Join-Path $dir 'b.csv'), '2', (New-Object Text.UTF8Encoding($false)))
+        $node = New-InputNode @([pscustomobject]@{ dir = '{{config.InputDir}}'; pattern = '*.csv'; required = $true })
+        $f = [pscustomobject]@{ nodes = @($node) }
+        $r = @(Invoke-InputCheck -Flow $f -Config ([pscustomobject]@{ InputDir = $dir }) -ConfigFile 'demo.json')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'INPUT_FILE_AMBIGUOUS'
+        ($r[0].evidence -join ' ') | Should Match 'a.csv'
+        ($r[0].evidence -join ' ') | Should Match 'b.csv'
+    }
+
+    It '可选输入缺失：pass，不报错' {
+        $dir = Join-Path $TestDrive ('in-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $node = New-InputNode @([pscustomobject]@{ dir = '{{config.InputDir}}'; pattern = '*.csv'; required = $false })
+        $f = [pscustomobject]@{ nodes = @($node) }
+        $r = @(Invoke-InputCheck -Flow $f -Config ([pscustomobject]@{ InputDir = $dir }) -ConfigFile 'demo.json')
+        $r.Count | Should Be 1
+        $r[0].status | Should Be 'pass'
+        $r[0].code | Should Be 'OK'
+    }
+
+    It '目录是字面路径：fail + INPUT_PATH_LITERAL' {
+        $node = New-InputNode @([pscustomobject]@{ dir = '<输入目录>/inbox'; pattern = '*.csv'; required = $true })
+        $f = [pscustomobject]@{ nodes = @($node) }
+        $r = @(Invoke-InputCheck -Flow $f -Config ([pscustomobject]@{}) -ConfigFile 'demo.json')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'INPUT_PATH_LITERAL'
+    }
+
+    It '未提供 config：fail + INPUT_CONFIG_UNRESOLVED，不退回字面路径' {
+        $node = New-InputNode @([pscustomobject]@{ dir = '{{config.InputDir}}'; pattern = '*.csv'; required = $true })
+        $f = [pscustomobject]@{ nodes = @($node) }
+        $r = @(Invoke-InputCheck -Flow $f -Config $null -ConfigFile $null)
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'INPUT_CONFIG_UNRESOLVED'
+    }
+
+    It 'required 未显式声明：fail + INPUT_INVALID（不默认填充）' {
+        $dir = Join-Path $TestDrive ('in-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $node = New-InputNode @([pscustomobject]@{ dir = '{{config.InputDir}}'; pattern = '*.csv' })
+        $f = [pscustomobject]@{ nodes = @($node) }
+        $r = @(Invoke-InputCheck -Flow $f -Config ([pscustomobject]@{ InputDir = $dir }) -ConfigFile 'demo.json')
+        $r[0].status | Should Be 'fail'
+        $r[0].code | Should Be 'INPUT_INVALID'
+    }
+}
+
 Describe 'pad-admit 不再默认到具体业务流程' {
     It '未传 -FlowFile 且按流程名派生不到：非零退出，且不进入准入检查' {
         $out = Join-Path $TestDrive ('admit-' + [guid]::NewGuid().ToString('N') + '.txt')
