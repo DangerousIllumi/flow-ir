@@ -15,7 +15,7 @@
 # 与文档的差异（报告模式下更实用，已记录）：
 #   - BUDGET 未声明时记 warn 而不是 fail（否则所有存量流程都过不了）
 #   - INTENT 缺失记 warn（策略仍可用 paramsMatch 兜底）
-#   - 未提供批准记录时 FINGERPRINT 记 warn
+#   - FINGERPRINT 未与基线/批准记录一致时按 fail 阻断（基线已播种并切换为 fail）
 #   - TRIGGER 在观察期未声明记 warn（存量流程迁移完成后改为 fail）
 
 [CmdletBinding()]
@@ -42,8 +42,8 @@ $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 # 指纹机制唯一实现：定位、哈希、比对都在 PadFingerprint.psm1
 Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force
 # 指纹未通过时的处置级别：warn 只提醒、fail 阻断。
-# 切换顺序是硬要求：先播种基线并保持 warn，等真实运行观察无误后再单独提交改成 fail
-$script:FingerprintMode = 'warn'
+# 基线已播种并核对无误，默认改为 fail：指纹不一致即阻断
+$script:FingerprintMode = 'fail'
 
 $CONTROL_HINTS = @('IF', 'LOOP', 'SWITCH', 'GUARD', 'WAIT', 'EXIT LOOP', 'EXIT_LOOP')
 

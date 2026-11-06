@@ -196,7 +196,8 @@ function New-FingerprintBaseline {
 
 # 比对当前文件与基线/批准记录，返回统一结果：
 #   status = pass / warn / fail；code + message + evidence
-# 默认 Mode=warn：新基线机制先只告警，等真实运行观察无误后再单独提交切 fail
+# 默认 Mode=fail：基线已播种并核对无误，指纹不一致即按 fail 处理；
+# 需要观察期或临时降级时显式传 -Mode warn
 function Test-FlowFingerprint {
     param(
         [string]$FlowName,
@@ -207,7 +208,7 @@ function Test-FlowFingerprint {
         [string]$ApprovePath,
         # 部署产物路径（占位符替换后的 .robin）；不传时按「源文件名.deployed.robin」自动派生
         [string]$DeployedRobinPath,
-        [ValidateSet('warn', 'fail')][string]$Mode = 'warn'
+        [ValidateSet('warn', 'fail')][string]$Mode = 'fail'
     )
     if (-not $Machine) { $Machine = $env:COMPUTERNAME }
     $parts = Get-FingerprintParts $RobinPath $ConfigPath $AcceptancePath

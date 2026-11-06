@@ -132,10 +132,21 @@ Describe 'pad-admit 策略评估' {
 
     It '通用示例流程：准入端到端可跑通，退出码 0' {
         # 用仓库自带的通用示例流程，不依赖任何具体业务流程文件；
-        # 知识库是否就绪只影响检查条数，不影响结论，所以只断言总量下限
+        # 指纹默认 fail 后，没有 .robin/基线的流程会被拦截，
+        # 所以先生成临时 .robin 并写一份批准记录，让本用例只验证准入链路本身
         $out = Join-Path $TestDrive ('admit-' + [guid]::NewGuid().ToString('N') + '.txt')
+        $tmp = Join-Path $TestDrive ('e2e-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $robin = Join-Path $tmp 'example-flow.robin'
+        & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') `
+            (Join-Path $repo 'tools\flow-drawio\example-flow.json') $robin | Out-Null
+        $LASTEXITCODE | Should Be 0
+        $approve = Join-Path $tmp 'approve.jsonl'
+        $hash = (Get-FileHash -LiteralPath $robin -Algorithm SHA256).Hash.ToLower()
+        [IO.File]::WriteAllText($approve, ('{"robin":"' + $hash + '"}'), (New-Object Text.UTF8Encoding($false)))
         & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\pad-sync\pad-admit.ps1') `
-            -FlowFile (Join-Path $repo 'tools\flow-drawio\example-flow.json') *> $out
+            -FlowFile (Join-Path $repo 'tools\flow-drawio\example-flow.json') `
+            -RobinFile $robin -ApproveFile $approve *> $out
         $LASTEXITCODE | Should Be 0
         $line = @([IO.File]::ReadAllLines($out, [Text.Encoding]::UTF8) | Where-Object { $_ -match '^PAD_ADMIT_RESULT=' })
         $line.Count | Should Be 1

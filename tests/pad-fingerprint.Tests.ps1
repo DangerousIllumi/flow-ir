@@ -102,7 +102,7 @@ Describe 'PadFingerprint 比对' {
         $r.code | Should Be 'OK'
     }
 
-    It '内容漂移：源 .robin 改过 → FINGERPRINT_SOURCE_MISMATCH（默认 warn）' {
+    It '内容漂移：源 .robin 改过 → FINGERPRINT_SOURCE_MISMATCH（默认 fail）' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -113,12 +113,12 @@ Describe 'PadFingerprint 比对' {
         # 改了定义再比对
         [IO.File]::WriteAllText($fake.robin, "SET A TO 'changed'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_SOURCE_MISMATCH'
         (@($r.evidence).Count) | Should BeGreaterThan 1
     }
 
-    It 'Mode=fail 时同样的漂移直接 fail（切换开关只影响级别，不改判定）' {
+    It '显式 Mode=warn 时同样的漂移只降级为 warn（不改判定）' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -138,8 +138,8 @@ Describe 'PadFingerprint 比对' {
             seededAt = '2026-11-03T00:00:00Z'
         })
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base `
-            -ScriptsRoot $fake.scripts -Mode 'fail'
-        $r.status | Should Be 'fail'
+            -ScriptsRoot $fake.scripts -Mode 'warn'
+        $r.status | Should Be 'warn'
         $r.code | Should Be 'FINGERPRINT_SOURCE_MISMATCH'
     }
 
@@ -155,7 +155,7 @@ Describe 'PadFingerprint 比对' {
         [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $robin -BaselinePath (Join-Path $work 'baseline.json')
         $r.code | Should Be 'FINGERPRINT_NO_BASELINE'
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
     }
 
     It '基线损坏 → FINGERPRINT_BASELINE_CORRUPT' {
@@ -281,7 +281,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $robin -BaselinePath $base
         $r.code | Should Be 'FINGERPRINT_UNKNOWN'
         $r.message | Should Match '缺少已发布哈希'
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
     }
 
     It '形态一：源与已发布完全一致 → pass' {
@@ -310,7 +310,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r.message | Should Match '原始字节不同'
     }
 
-    It '形态三：规范化后真漂移 → FINGERPRINT_DEPLOYED_MISMATCH（默认 warn）' {
+    It '形态三：规范化后真漂移 → FINGERPRINT_DEPLOYED_MISMATCH（默认 fail）' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -320,7 +320,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $j.deployed.logicHash = 'deadbeef'
         [IO.File]::WriteAllText($base, ($j | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_DEPLOYED_MISMATCH'
     }
 }
@@ -357,7 +357,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $j.deployed.logicHash = 'deadbeef'
         [IO.File]::WriteAllText($base, ($j | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_DEPLOYED_MISMATCH'
         $r.message | Should Match '部署产物与已发布副本逻辑不一致'
     }
@@ -369,7 +369,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $base = New-BaselineFromDeployed $work $fake $g
         Remove-Item -LiteralPath $fake.deployed -Force
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_UNKNOWN'
         $r.message | Should Match '找不到部署产物'
     }
@@ -382,7 +382,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         # 只改源模板，部署产物不动：源对源比较必须先报出来
         [IO.File]::AppendAllText($fake.robin, "`r`nSET B TO 'y'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
-        $r.status | Should Be 'warn'
+        $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_SOURCE_MISMATCH'
     }
 }
