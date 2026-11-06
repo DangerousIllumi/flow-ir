@@ -27,7 +27,7 @@
 | 9 | ACCEPTANCE | `*.acceptance.json` | JSON 合法、检查类型已知、占位符可解析 | `ACCEPTANCE_INVALID` | `PadAcceptance.psm1` |
 | 10 | CONFIG | `business/config/*.json` + schema | schema 校验通过 | `CONFIG_INVALID` | `pad-deploy.ps1` |
 | 11 | PREFLIGHT | 机器环境 | PAD/Python/SAP/Outlook/目录齐全 | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
-| 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（默认 warn，观察期后再切 fail） |
+| 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（默认 fail，指纹不一致即阻断） |
 | 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
 | 14 | TRIGGER | `flow.json` 的 `trigger` 块 | kind 取值域、必填字段、目录必须走配置引用、无人值守不得要求人工确认 | `TRIGGER_*`（见 2.2） | `pad-admit.ps1`（观察期未声明记 warn） |
 
@@ -75,8 +75,9 @@
 确认无漏报后再单独提交改为 `fail`。
 
 切换顺序（硬要求）：先上线写入侧（`pad-release` / `pad-rollback`）与
-`pad-fingerprint.ps1 -Set`，把存量流基线播种出来，**默认级别保持 warn**；
+`pad-fingerprint.ps1 -Set`，把存量流基线播种出来，初始级别保持 warn；
 等真实运行观察无误后，再单独提交把 `pad-admit.ps1` 里的 `$script:FingerprintMode` 改为 `fail`。
+本机已完成播种并切换为 fail。
 播种必须人工确认：`-Set` 只打印定位结果（修订目录、Workspace 路径、mtime、三个哈希），
 加 `-Confirm` 才写；`-DryRun` 永远不写；多候选直接报 `AMBIGUOUS` 停下。
 
@@ -252,3 +253,35 @@ Remove-Item business\flows\_ignore-probe.json
 - 二进制文件只按 Latin1 扫 ASCII 类规则（`-Verbose` 会标注 `binary`），中文业务词可能漏掉。
 
 结论：本门禁是**降低泄漏概率**的确定性检查，不是内容脱敏的替代品；公开库仍应按最小文件集推送。
+
+### 9.7 自动闸门与覆盖边界
+
+**拦截点**
+
+| 层 | 位置 | 扫描对象 | 命中后果 |
+|---|---|---|---|
+| 提交边界（唯一真正拦截） | `.githooks/pre-commit` → `.githooks/pre-commit.ps1` | 暂存区快照（`git checkout-index` 导出） | 非零退出，提交被拒绝 |
+| CI 兜底 | `.github/workflows/ci.yml` 的 public-safe 步骤 | 仓库已跟踪文件（`git ls-files`） | 构建失败 |
+
+- `setup.ps1` 会自动执行 `git config core.hooksPath .githooks`；存量克隆手动执行一次即可。
+- **pre-commit 是唯一能在内容进入历史之前拦住的边界**；CI 只能发现**已经推送**的泄漏，
+  此时内容已在公开历史里，需要清理历史或改写提交，成本高得多。所以不要把 CI 当第一道闸门。
+- pre-commit 只扫**这次提交会入库的内容**，工作区里未暂存的改动不参与扫描；
+  `business/`、`out.robin` 等已被 `.gitignore` 忽略，不会进入暂存区，无需额外豁免逻辑。
+- 确需绕过钩子时用 `git commit --no-verify`，但必须在提交说明里写明原因，且 CI 仍会兜底。
+
+**覆盖边界**
+
+现有默认词表（`tools/publish/public-safe.denylist.json`）只剩 **5 条结构化规则**：
+
+1. `PAD` / `Robot` 根路径（`path-pad-root`）
+2. UNC 网络共享路径（`path-unc`）
+3. 内网主机后缀（`.corp` / `.intra` / `.internal` / `.lan`，`host-internal-suffix`）
+4. 邮箱地址（`email-address`）
+5. 中国大陆手机号（`mobile-number`）
+
+**拦不到**：业务名、流程名、普通本地路径、账号口令，以及尚未登记进本地词表的新词。
+这些只能靠 `public-safe.denylist.local.json` 逐条登记，或靠人工评审。
+
+**缺省词表时的行为**：只有默认词表、没有本地覆盖文件时，钩子与 CI 只打印一条显著提示
+（说明当前只有上述 5 条结构化规则），**不改变退出码**——否则公开库 CI 会因为永远没有本地词表而始终失败。

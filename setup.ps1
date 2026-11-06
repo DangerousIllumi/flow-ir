@@ -57,6 +57,14 @@ if (-not $git) {
 }
 Write-Ok "Git $(& git --version)"
 
+# 启用仓库内钩子（提交前公开库内容门禁）：新克隆无需手动配置
+& git -C $WorkDir config core.hooksPath .githooks
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "Git 钩子目录：.githooks"
+} else {
+    Write-Warn "core.hooksPath 设置失败，提交前内容门禁不会自动生效"
+}
+
 # 安装 Node 依赖（流程图 ELK 布局）
 if (Test-Path (Join-Path $WorkDir "package.json")) {
     $npm = Get-Command npm -ErrorAction SilentlyContinue
