@@ -1,0 +1,36 @@
+{
+  "name": "smoke-example",
+  "pad_flow_name": "Smoke Example",
+  "description": "中性冒烟流程：写剪贴板再读剪贴板，不含业务词、UI 选择器和外部依赖",
+  "trigger": { "kind": "manual" },
+  "budget": { "maxLoop": 5 },
+  "nodes": [
+    {
+      "id": "1",
+      "type": "clipboard.write",
+      "label": "写入剪贴板",
+      "pad_hint": "Clipboard.SetText",
+      "params": { "Text": "smoke" },
+      "output_map": {},
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "next": ["2"]
+    },
+    {
+      "id": "2",
+      "type": "clipboard.read",
+      "label": "读取剪贴板",
+      "pad_hint": "Clipboard.GetText",
+      "params": {},
+      "output_map": { "Text": "ClipboardText" },
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "next": []
+    }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" }
+  ]
+}

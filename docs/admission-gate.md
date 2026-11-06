@@ -27,10 +27,11 @@
 | 9 | ACCEPTANCE | `*.acceptance.json` | JSON 合法、检查类型已知、占位符可解析 | `ACCEPTANCE_INVALID` | `PadAcceptance.psm1` |
 | 10 | CONFIG | `business/config/*.json` + schema | schema 校验通过 | `CONFIG_INVALID` | `pad-deploy.ps1` |
 | 11 | PREFLIGHT | 机器环境 | PAD/Python/SAP/Outlook/目录齐全 | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
-| 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（默认 fail，指纹不一致即阻断） |
-| 13 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
-| 14 | TRIGGER | `flow.json` 的 `trigger` 块 | kind 取值域、必填字段、目录必须走配置引用、无人值守不得要求人工确认 | `TRIGGER_*`（见 2.2） | `pad-admit.ps1`（观察期未声明记 warn） |
-| 15 | INPUT | 节点级 `inputs` 声明 + `config` | 目录必须走配置引用；`required` 显式声明；必需文件 0 候选即失败；候选 ≥2 一律判歧义 | `INPUT_*`（见 2.3） | `pad-admit.ps1`（未声明记 warn，向后兼容） |
+| 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（不一致 fail；缺基线在报告模式 warn、`-Unattended` fail） |
+| 13 | SCRIPT_FINGERPRINT | 流程引用脚本 + 基线 `scripts`/`external` 段 | 与基线一致 | `FINGERPRINT_*` / `SCRIPT_FINGERPRINT_LEGACY` | `PadFingerprint.psm1`（缺基线、旧基线一律 warn，由 FINGERPRINT 先行把关） |
+| 14 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
+| 15 | TRIGGER | `flow.json` 的 `trigger` 块 | kind 取值域、必填字段、目录必须走配置引用、无人值守不得要求人工确认 | `TRIGGER_*`（见 2.2） | `pad-admit.ps1`（观察期未声明记 warn） |
+| 16 | INPUT | 节点级 `inputs` 声明 + `config` | 目录必须走配置引用；`required` 显式声明；必需文件 0 候选即失败；候选 ≥2 一律判歧义 | `INPUT_*`（见 2.3） | `pad-admit.ps1`（未声明记 warn，向后兼容） |
 
 ### 2.1 指纹（FINGERPRINT）结果码
 
@@ -43,7 +44,7 @@
 | `pass` | 与批准记录或基线一致 | 命中的批准记录/基线路径 |
 | `FINGERPRINT_MISMATCH` | 与批准记录不一致（始终 fail） | `approve=` + 当前三哈希 |
 | `FINGERPRINT_UNKNOWN` | 读不到 `.robin`、解析不到流程身份，或环境/机器与基线不符 | `robin=` / `scriptsRoot=` / 身份差异 |
-| `FINGERPRINT_NO_BASELINE` | 还没有基线（存量流未播种） | `baseline=` + 当前三哈希 |
+| `FINGERPRINT_NO_BASELINE` | 还没有基线（未发布流程的正常状态） | `baseline=` + 当前三哈希 + `fix=`（可直接执行的播种命令） |
 | `FINGERPRINT_FLOW_STALE` | 基线对应的 flowGuid 已变化 | 基线与当前 flowGuid |
 | `FINGERPRINT_SOURCE_MISMATCH` | 源 `.robin` 与基线不一致 | 基线路径 + 当前/基线哈希前缀 |
 | `FINGERPRINT_CONFIG_STALE` | 部署配置与基线不一致 | 同上 |
@@ -75,10 +76,15 @@
 切换顺序：先让存量流程补齐 `trigger`，观察期 `$script:TriggerMode` 保持 `warn`，
 确认无漏报后再单独提交改为 `fail`。
 
+`FINGERPRINT_NO_BASELINE` 表示「还没播种」，不是「被篡改」：`pad-admit` 报告模式降为 `warn`，
+并在报文里直接给出可执行的播种命令（含 `-FlowName` / `-FlowFile` / `-ConfigFile` /
+`-AcceptanceFile` / `-Set` / `-Confirm`）。`-Unattended`（`pad-release` / `pad-deploy` / 定时运行）
+仍判 `fail`，生产门禁不松。
+
 切换顺序（硬要求）：先上线写入侧（`pad-release` / `pad-rollback`）与
 `pad-fingerprint.ps1 -Set`，把存量流基线播种出来，初始级别保持 warn；
 等真实运行观察无误后，再单独提交把 `pad-admit.ps1` 里的 `$script:FingerprintMode` 改为 `fail`。
-本机已完成播种并切换为 fail。
+本机已完成播种并将默认级别切换为 fail；缺基线按上一段分级处理。
 播种必须人工确认：`-Set` 只打印定位结果（修订目录、Workspace 路径、mtime、三个哈希），
 加 `-Confirm` 才写；`-DryRun` 永远不写；多候选直接报 `AMBIGUOUS` 停下。
 
@@ -108,9 +114,12 @@
 
 | 阶段 | 跑哪些检查 | 触发点 |
 |---|---|---|
-| 离线（生成前） | 1–6、9、10、14 | `pad-admit` / `flow-to-robin` / CI |
-| 运行前 | 7、8、11、12、15 | `pad-sync` 注入前 |
+| 离线（生成前） | 1–16（`pad-admit` 一次跑完；缺输入时该项给 warn） | `pad-admit` / `flow-to-robin` / CI |
+| 运行前 | 复用 7、8、11、12、16 | `pad-sync` 注入前 |
 | 运行后 | 验收判据 | `pad-sync` 运行后（G6） |
+
+冒烟样例见 `examples/`（1 条中性流程、2 条结构断言）：`examples/smoke.ps1` 在全新 clone 上
+依次跑 画布 → 生成 → `check.js` → `pad-admit` → `eval-flow`，任意一步非 0 即整体退出码 1。
 
 ## 4. 输出契约
 
@@ -152,10 +161,10 @@
 - 同一层内按 `business/policy.json` 的书写顺序取第一条命中。
 - 全部未命中时按 `defaultEffect`（当前为 `deny`）。
 - `match` 匹配动作 kind（`pad_hint`）或工具名，**不匹配节点 id/label**，改名不能绕过。
-- 通用动作（`Scripting.RunDOSCommand` / `RunVBScript`）建议给节点加 `intent`（如 `sap-migo`），策略按 `intent` 匹配；否则只能靠参数里的变量名（如 `%MigoVbsPath%`）识别，变量改名就失效。
+- 通用动作（`Scripting.RunDOSCommand` / `RunVBScript`）建议给节点加 `intent`（如 `sap-posting`），策略按 `intent` 匹配；否则只能靠参数里的变量名（如 `%PostingVbsPath%`）识别，变量改名就失效。
 - `when.env`：`PAD_SYNC_TEST` = `test`，其余 = `prod`。
 - `when.dryRun`：取 config 的 `DRY_RUN`。
-- `when.paramsMatch`：对动作参数做 glob 匹配（如 MIGO 的 `DOSCommandOrApplication`）。
+- `when.paramsMatch`：对动作参数做 glob 匹配（如过账脚本的 `DOSCommandOrApplication`）。
 - `ask` 必须带 `approver`；无人值守场景按 `deny` 处理。
 
 ## 6. 预算草案（本流程）
@@ -163,11 +172,11 @@
 | 项 | 上限 | 依据 |
 |---|---|---|
 | 轮询次数 | 7 | `.robin` 的 `LOOP 1 TO 7` |
-| 单次运行时长 | 75 分钟 | 6 次 `WAIT 600`（60 分钟）+ MIGO/MB51/核对约 5–15 分钟 |
-| MIGO 过账行数 | `migo_plan.json` 的待过账行数 | 执行前预检 |
-| 发送邮件 | 1 封 | 催办分支 |
+| 单次运行时长 | 75 分钟 | 6 次 `WAIT 600`（60 分钟）+ 导出/过账/核对约 5–15 分钟 |
+| 过账行数 | `<PLAN_FILE>` 的待过账行数 | 执行前预检 |
+| 发送邮件 | 1 封 | 提醒分支 |
 | 报表附件 | 1 个（按报表文件名匹配） | 签名内联图片不计数 |
-| 业务产物修改 | 报表、MB51 导出、过账账本 | 不含附件目录里的签名图片 |
+| 业务产物修改 | 报表、导出文件、状态账本 | 不含附件目录里的签名图片 |
 
 任一预算无法从预检得到时，按 `BUDGET_UNKNOWN` 拒绝，不按“默认安全”放行。
 
@@ -184,7 +193,7 @@
 
 ## 8. 落地顺序
 
-1. **只读版**：新增 `pad-admit.ps1`，跑完 14 项只输出报告，不阻断任何现有流程。
+1. **只读版**：新增 `pad-admit.ps1`，跑完 16 项只输出报告，不阻断任何现有流程。
 2. **接入**：把 `pad-sync` 注入前、`pad-deploy` 部署前改为硬门禁。
 3. **披露**：把 `business/policy.json` 的 deny 规则渲染成清单，放进 Agent A 的设计提示词，减少无效设计。
 4. **指纹批准**：确认框显示三个哈希，发布前复核，支持“批准记录”文件。

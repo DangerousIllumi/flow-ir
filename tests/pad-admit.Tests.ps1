@@ -155,6 +155,39 @@ Describe 'pad-admit 策略评估' {
         @($res.checks).Count | Should BeGreaterThan 9
         @($res.checks | Where-Object { $_.id -eq 'BUDGET' })[0].status | Should Be 'pass'
     }
+
+    It '缺基线：报告模式放行并给修复命令，-Unattended 仍 fail' {
+        # 用 examples 的中性流程，验证「未发布 = 没基线」的分级：
+        # 普通准入 exit 0（FINGERPRINT warn），发布/部署口径 -Unattended exit 1（FINGERPRINT fail）
+        $tmp = Join-Path $TestDrive ('nobl-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $flowFile = Join-Path $repo 'examples\smoke-flow.json'
+        $robin = Join-Path $tmp 'smoke-flow.robin'
+        & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') $flowFile $robin | Out-Null
+        $LASTEXITCODE | Should Be 0
+
+        $reportOut = Join-Path $tmp 'report.txt'
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\pad-sync\pad-admit.ps1') `
+            -FlowFile $flowFile -RobinFile $robin *> $reportOut
+        $LASTEXITCODE | Should Be 0
+        $line = @([IO.File]::ReadAllLines($reportOut, [Text.Encoding]::UTF8) | Where-Object { $_ -match '^PAD_ADMIT_RESULT=' })
+        $res = ($line[0].Substring('PAD_ADMIT_RESULT='.Length) | ConvertFrom-Json)
+        $fp = @($res.checks | Where-Object { $_.id -eq 'FINGERPRINT' })[0]
+        $fp.status | Should Be 'warn'
+        $fp.code | Should Be 'FINGERPRINT_NO_BASELINE'
+        $fp.message | Should Match 'pad-fingerprint\.ps1'
+        $fp.message | Should Match '-Set -Confirm'
+
+        $prodOut = Join-Path $tmp 'prod.txt'
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\pad-sync\pad-admit.ps1') `
+            -FlowFile $flowFile -RobinFile $robin -Unattended *> $prodOut
+        $LASTEXITCODE | Should Be 1
+        $line = @([IO.File]::ReadAllLines($prodOut, [Text.Encoding]::UTF8) | Where-Object { $_ -match '^PAD_ADMIT_RESULT=' })
+        $res = ($line[0].Substring('PAD_ADMIT_RESULT='.Length) | ConvertFrom-Json)
+        $fp = @($res.checks | Where-Object { $_.id -eq 'FINGERPRINT' })[0]
+        $fp.status | Should Be 'fail'
+        $fp.code | Should Be 'FINGERPRINT_NO_BASELINE'
+    }
 }
 
 Describe 'pad-admit TRIGGER 第 14 项（观察期 warn）' {

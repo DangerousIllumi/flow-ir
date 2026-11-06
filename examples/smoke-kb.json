@@ -1,0 +1,42 @@
+{
+  "source": "examples/smoke-kb.json",
+  "note": "冒烟专用最小动作表：只保留两个不依赖 UI 的中性动作，用来让全新 clone 不依赖 pad-robin-action-kb/ 也能生成脚本。不要用它替代正式知识库。",
+  "actions": [
+    {
+      "actionId": "Clipboard.SetText",
+      "module": "Clipboard",
+      "kind": "Action",
+      "selector": null,
+      "template": "Clipboard.SetText Text: ``",
+      "golden_example": "Clipboard.SetText Text: $'''example'''",
+      "input_params": [
+        { "name": "Text", "type": "String", "required": false }
+      ],
+      "output_params": [],
+      "required_params": ["Clipboard text"],
+      "constraints": {},
+      "sibling_selectors": [],
+      "needs_ui_selector": false,
+      "error_handling": { "on_error": true, "errors": ["SetContentsError"] },
+      "validation": "smoke fixture"
+    },
+    {
+      "actionId": "Clipboard.GetText",
+      "module": "Clipboard",
+      "kind": "Action",
+      "selector": null,
+      "template": "Clipboard.GetText Text=> ClipboardText",
+      "golden_example": "Clipboard.GetText Text=> ClipboardText",
+      "input_params": [],
+      "output_params": [
+        { "name": "Text", "type": "String" }
+      ],
+      "required_params": [],
+      "constraints": {},
+      "sibling_selectors": [],
+      "needs_ui_selector": false,
+      "error_handling": { "on_error": true, "errors": ["RetrieveContentsError"] },
+      "validation": "smoke fixture"
+    }
+  ]
+}

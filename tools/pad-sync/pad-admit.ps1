@@ -15,7 +15,8 @@
 # 与文档的差异（报告模式下更实用，已记录）：
 #   - BUDGET 未声明时记 warn 而不是 fail（否则所有存量流程都过不了）
 #   - INTENT 缺失记 warn（策略仍可用 paramsMatch 兜底）
-#   - FINGERPRINT 未与基线/批准记录一致时按 fail 阻断（基线已播种并切换为 fail）
+#   - FINGERPRINT 与基线/批准记录不一致时 fail；缺基线在报告模式 warn，
+#     -Unattended（发布/部署/定时路径）仍保持 fail
 #   - TRIGGER 在观察期未声明记 warn（存量流程迁移完成后改为 fail）
 
 [CmdletBinding()]
@@ -652,6 +653,8 @@ function Invoke-AdmitChecks {
         $Flow, [string]$FlowName, $Config, $Kb,
         [string]$RobinPath, [string]$AcceptancePath, [string]$RequirementsPath,
         $Policy, [string]$ApprovePath, [hashtable]$Paths,
+        [string]$FlowDisplayName,
+        [ValidateSet('warn', 'fail')][string]$NoBaselineMode = 'fail',
         [bool]$TriggerLive = $false
     )
     $checks = @()
@@ -863,7 +866,8 @@ function Invoke-AdmitChecks {
     $fp = Test-FlowFingerprint -FlowName $FlowName -RobinPath $RobinPath -ConfigPath $Paths.ConfigFile `
         -AcceptancePath $AcceptancePath -BaselinePath $basePath `
         -ScriptsRoot $Paths.ScriptsRoot -EnvironmentId $Paths.EnvironmentId `
-        -ApprovePath $ApprovePath -Mode $script:FingerprintMode
+        -ApprovePath $ApprovePath -FlowFilePath $Paths.FlowFile `
+        -FlowDisplayName $FlowDisplayName -NoBaselineMode $NoBaselineMode -Mode $script:FingerprintMode
     $checks += New-AdmitCheck 'FINGERPRINT' $fp.status $fp.code $fp.message $fp.evidence
 
     # 12.5 SCRIPT_FINGERPRINT（v3 观察期：只 warn 不阻断）
@@ -981,9 +985,12 @@ if (-not $NoMain) {
             EnvironmentId = (Get-PadEnvironmentId)
         }
         $result.flow = $FlowName
+        # 报告模式允许「未发布 = 没基线」只告警；-Unattended 是发布/部署/定时路径，必须 fail
+        $noBaselineMode = $(if ($Unattended) { 'fail' } else { 'warn' })
         $result.checks = @(Invoke-AdmitChecks -Flow $flow -FlowName $FlowName -Config $config -Kb $kb `
             -RobinPath $RobinFile -AcceptancePath $AcceptanceFile -RequirementsPath $RequirementsFile `
             -Policy $policy -ApprovePath $ApproveFile -Paths $paths `
+            -FlowDisplayName ([string]$flow.pad_flow_name) -NoBaselineMode $noBaselineMode `
             -TriggerLive:([bool]$TriggerLive))
 
         $fail = @($result.checks | Where-Object { $_.status -eq 'fail' })

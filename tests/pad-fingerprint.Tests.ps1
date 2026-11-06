@@ -149,13 +149,31 @@ Describe 'PadFingerprint 比对' {
         $r.code | Should Be 'FINGERPRINT_UNKNOWN'
     }
 
-    It '没有基线 → FINGERPRINT_NO_BASELINE' {
+    It '没有基线：默认（生产门禁）仍判 fail' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $robin -BaselinePath (Join-Path $work 'baseline.json')
         $r.code | Should Be 'FINGERPRINT_NO_BASELINE'
         $r.status | Should Be 'fail'
+    }
+
+    It '没有基线：报告模式可降级为 warn，并给出完整的播种命令' {
+        $work = New-Work
+        $robin = Join-Path $work 'x.robin'
+        [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
+        $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $robin -BaselinePath (Join-Path $work 'baseline.json') `
+            -NoBaselineMode 'warn' -FlowDisplayName 'Smoke Example' `
+            -FlowFilePath 'examples\smoke-flow.json' -ConfigPath 'cfg.json' -AcceptancePath 'acc.json'
+        $r.code | Should Be 'FINGERPRINT_NO_BASELINE'
+        $r.status | Should Be 'warn'
+        $r.message | Should Match '\.\\tools\\pad-sync\\pad-fingerprint\.ps1'
+        $r.message | Should Match "-FlowName 'Smoke Example'"
+        $r.message | Should Match '-FlowFile'
+        $r.message | Should Match '-ConfigFile'
+        $r.message | Should Match '-AcceptanceFile'
+        $r.message | Should Match '-Set -Confirm'
+        (@($r.evidence) -join ' ') | Should Match 'fix='
     }
 
     It '基线损坏 → FINGERPRINT_BASELINE_CORRUPT' {

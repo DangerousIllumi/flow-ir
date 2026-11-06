@@ -383,7 +383,12 @@ function Test-FlowFingerprint {
         [string]$ApprovePath,
         # 部署产物路径（占位符替换后的 .robin）；不传时按「源文件名.deployed.robin」自动派生
         [string]$DeployedRobinPath,
-        [ValidateSet('warn', 'fail')][string]$Mode = 'fail'
+        # 仅用于「缺基线」提示：把可执行的修复命令拼完整
+        [string]$FlowFilePath,
+        [string]$FlowDisplayName,
+        [ValidateSet('warn', 'fail')][string]$Mode = 'fail',
+        # 缺基线时的处置级别：报告模式可降为 warn；生产门禁（-Unattended）必须保持 fail
+        [ValidateSet('warn', 'fail')][string]$NoBaselineMode = 'fail'
     )
     if (-not $Machine) { $Machine = $env:COMPUTERNAME }
     $parts = Get-FingerprintParts $RobinPath $ConfigPath $AcceptancePath
@@ -420,13 +425,29 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 2) 没有基线：存量流还没播种，按 warn（后续单独切 fail）
+    # 2) 没有基线：未发布流程的正常状态，报告模式可降为 warn；
+    #    生产门禁必须 fail，不能把「还没播种」当成「已通过」
     $read = Read-FingerprintBaseline $BaselinePath
     if (-not $read.ok) {
+        $status = $nonPass
+        $msg = "$($read.message)：$BaselinePath"
+        $ev = @("baseline=$BaselinePath", "now=$fpLine")
+        if ($read.code -eq 'FINGERPRINT_NO_BASELINE') {
+            $status = $(if ($NoBaselineMode -eq 'fail') { 'fail' } else { 'warn' })
+            # 报文里直接给可执行命令：首次发布并真实运行一次后即可播种基线
+            $hintName = [string]$(if ($FlowDisplayName) { $FlowDisplayName } else { $FlowName })
+            $hint = @('.\tools\pad-sync\pad-fingerprint.ps1', "-FlowName '$hintName'")
+            if ($FlowFilePath) { $hint += "-FlowFile '$FlowFilePath'" }
+            if ($ConfigPath) { $hint += "-ConfigFile '$ConfigPath'" }
+            if ($AcceptancePath) { $hint += "-AcceptanceFile '$AcceptancePath'" }
+            $hint += @('-Set', '-Confirm')
+            $msg += "；未发布流程的正常状态，首次发布并真实运行一次后执行：$($hint -join ' ')"
+            $ev += "fix=$($hint -join ' ')"
+        }
         return [ordered]@{
-            status = $nonPass; code = $read.code
-            message = "$($read.message)：$BaselinePath"
-            evidence = @("baseline=$BaselinePath", "now=$fpLine")
+            status = $status; code = $read.code
+            message = $msg
+            evidence = $ev
         }
     }
     $base = $read.data
