@@ -239,7 +239,7 @@ Describe 'pad-schedule 纯函数测试' {
         $a.record.exitCode | Should Be 5
         $a.record.calendarStale | Should Be $true
         $a.record.calendarRange | Should Be '2026-01-01 ~ 2026-10-31'
-        $a.record.note | Should Match '请更新日历文件'
+        $a.record.note | Should Match '下一步：更新日历文件后人工重跑。'
     }
 
     It '解析 PAD_SYNC_RESULT：取最后一行，缺失时返回空' {
@@ -280,10 +280,10 @@ Describe 'pad-schedule 纯函数测试' {
         $lines.Count | Should Be 2
         $lock = $lines[0] | ConvertFrom-Json
         $lock.kind | Should Be 'run-lock-timeout'
-        $lock.note | Should Match '排队超时未执行'
+        $lock.note | Should Match '排队超时，本次未执行。'
         $fail = $lines[1] | ConvertFrom-Json
         $fail.kind | Should Be 'run-failed'
-        ($fail.note -eq $null) | Should Be $true
+        $fail.note | Should Match '下一步：查看日志与 PAD 控制台后人工重跑。'
     }
 
     It '告警日志追加写入，不覆盖上一条' {
