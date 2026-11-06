@@ -1,14 +1,35 @@
 # flow-ir
 
-把业务流程描述转成可直接粘贴进 Power Automate Desktop（PAD）的 Robin 脚本。
+引擎无关的流程中间表示（IR）与多引擎适配器工具链。
 
-自然语言 → `flow.json`（唯一设计源）→ `.robin`（可粘进 PAD 画布）→ 设计校验 → 脚本生成 →
-静态校验 → 准入审查 → 注入发布 → 调度与监控。
+`flow.json` 是唯一事实源：用引擎无关的结构描述业务流程——节点、分支、守卫（`guard`）、预算（`budget`）、
+幂等性与可逆性、触发条件等。工具链读取这份 IR，做设计校验、编译、静态校验与准入审查，
+再由适配器把 IR 落地到具体引擎。
 
-> **IR** 指 `flow.json` 这个中间表示：需求先落成可评审的结构化定义，再由确定性编译器产出目标脚本。
-> 目前只有 PAD 一个后端；要加别的引擎（另一款 RPA、云端流、Python/VBS），只加后端即可，IR 与门禁不用动。
+> **当前只实现了 PAD（Power Automate Desktop / Robin）一个适配器**：生成 `.robin`、静态校验、准入、
+> 注入发布、调度与监控。其他引擎（另一款 RPA、云端流、Python/VBS）属于可扩展方向，**尚未实现**；
+> 接入时只需新增一套「读 IR、出本引擎产物」的生成与校验，IR 与门禁不用改。
+> 适配器代码目前在 `tools/pad-robin/` 与 `tools/pad-sync/` 下。
+
+链路：IR（`flow.json`）→ 设计校验 → 编译 → 静态校验 → 准入 → 适配器落地（当前：PAD / Robin）→ 调度与监控。
 
 面向两类使用者：想让 AI 帮忙做 RPA 的业务同事，和要接手/扩展这套工具的开发者。
+
+---
+
+## 分层：IR 是事实源，引擎是可替换的后端
+
+| 层 | 承担什么 | 现状 |
+|---|---|---|
+| IR 层 | `flow.json` 与配套契约（requirements / acceptance / cases）：节点、边、`guard`、`budget`、幂等、可逆性、`trigger` | 稳定；所有校验与生成只读它 |
+| IR 校验 | 画布与 `edges` 一致性、需求级结构断言 | 引擎无关，已实现 |
+| PAD 适配器 | `.robin` 生成、`.robin` 静态校验、准入、注入、发布、回滚、调度、遥测、验收 | **唯一已实现的适配器**，位于 `tools/pad-robin/`、`tools/pad-sync/` |
+| 其他引擎适配器 | 另一款 RPA、云端流、Python/VBS | **未实现**；新适配器不得绕开同一套 IR 校验与硬规则 |
+
+PAD 专属的东西属于适配器，而不是 IR 本身：动作表来自 PAD 动作知识库，`.robin` 语法、UI 选择器、
+注入发布等概念只在 PAD 适配器里有意义。需要如实说明的是，当前 `flow.json` 的 `pad_hint`
+本身就是给 PAD 适配器查表用的字段；IR 的节点、边、`guard`、`budget` 等结构是引擎无关的，
+换引擎时这些结构不动，动作层的提示字段由新适配器按自己的动作表解释。
 
 ---
 
@@ -33,12 +54,12 @@
 
 | 能做 | 怎么做到的 |
 |---|---|
-| 把一段口语化需求写成**可评审的结构化定义**（`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
-| 把定义**确定性地编译**成 `.robin` | `flow-to-robin.js` 查动作知识库填空；动作/参数写错直接拒绝产出 |
-| 编译前后**静态校验**：语法、变量是否定义、`edges` 与结构是否漂移 | `check.js` / `check-flows.js` / `lint-robin.js` / `check-flow.js` |
-| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（14 项只读检查） |
-| 副作用**可跳过**：发信、过账、删文件包在 `guard` 里，靠 `DRY_RUN` 控制 | 生成器 + 准入策略双层保证 |
-| 注入设计器、发布、回滚、定时、遥测、产物验收 | `tools/pad-sync/` |
+| 把一段口语化需求写成**可评审的结构化定义**（IR：`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
+| 把 IR **确定性地编译**成目标引擎产物（当前适配器产出 `.robin`） | 适配器查动作表填空；动作/参数写错直接拒绝产出 |
+| 编译前后**静态校验**：IR 结构（`edges` / 变量引用）、产物语法 | `check.js` / `check-flows.js` / `lint-robin.js` / `check-flow.js`（其中 `.robin` 部分属 PAD 适配器） |
+| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（14 项只读检查，属 PAD 适配器） |
+| 副作用**可跳过**：发信、过账、删文件包在 `guard` 里，靠 `DRY_RUN` 控制 | IR 结构 + 生成器 + 准入策略多层保证 |
+| 注入设计器、发布、回滚、定时、遥测、产物验收（PAD 适配器） | `tools/pad-sync/` |
 
 | 做不到 | 说明 |
 |---|---|
@@ -46,9 +67,10 @@
 | 替你录制 UI 元素 | 需要选择器的动作（部分网页/桌面自动化）必须人工在 PAD 里录制，生成器会明确拒绝 |
 | 生成 SAP 的 VBS 脚本 | 事务码导出/过账这类 VBS 是录制产物，不随仓库分发 |
 | 替你按下生产发布 | `pad-deploy` / `pad-release` 会触发真实运行，必须人来确认 |
+| 提供 PAD 之外的现成适配器 | 目前只有 PAD 一个适配器；其他引擎需要新增一套读 IR、出本引擎产物的生成与校验 |
 
-**一句话**：`AI 助手 + 本仓库 + 动作知识库` 三者齐了才是「自然语言 → 可运行 PAD 流」的闭环；
-缺了 AI，就只能从 `flow.json` 这一步开始。
+**一句话**：`AI 助手 + 本仓库 + 动作知识库` 三者齐了才是「自然语言 → 可运行流程」的闭环
+（当前引擎是 PAD）；缺了 AI，就只能从 `flow.json` 这一步开始。
 
 ---
 
@@ -56,10 +78,10 @@
 
 | 依赖 | 必需 | 用途 |
 |---|---|---|
-| Node.js ≥ 18 | 是 | 生成器、静态校验、流程图、评估集 |
+| Node.js ≥ 18 | 是 | 适配器实现、流程图、评估集 |
 | Git | 是 | 克隆动作知识库、启用提交前钩子 |
-| PowerShell 5.1+ | 是 | 准入 / 部署 / 发布 / 定时 |
-| Power Automate Desktop（Windows） | 要跑流时必需 | 执行 `.robin` |
+| PowerShell 5.1+ | 是 | 准入 / 部署 / 发布 / 定时（PAD 适配器） |
+| Power Automate Desktop（Windows） | 要跑流时必需 | 执行 `.robin`（当前唯一的适配器） |
 | Python 3.x + openpyxl | 否 | 工作日历判断、验收里的 Excel 判据 |
 | AI 编程助手（任意） | 否 | 把自然语言写成 `flow.json` |
 
@@ -80,7 +102,7 @@ cd flow-ir
 
 1. 检查 Node.js / Git 版本；
 2. 安装 Node 依赖（流程图自动布局用）并设置 `core.hooksPath=.githooks`；
-3. 克隆 `pad-robin-action-kb`（动作知识库）并校验关键文件，HTTPS 失败自动回退 SSH；
+3. 克隆 `pad-robin-action-kb`（PAD 适配器用的动作表）并校验关键文件，HTTPS 失败自动回退 SSH；
 4. 创建 `business\flows` 目录。
 
 > 公司网络常拦截 HTTPS 直连 GitHub（报 `Recv failure: Connection was reset`）。
@@ -108,7 +130,8 @@ cd flow-ir
 之后只需要：
 
 1. AI 自己读 `AGENTS.md` 与 `docs/prompts/nl-to-flow.md`，不需要你转述里面写了什么；
-2. 它跑完「生成 → 静态校验 → 准入」后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布（`Ctrl+V`）；
+2. 它跑完「生成 → 静态校验 → 准入」后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布（`Ctrl+V`）
+   （这是当前 PAD 适配器的收尾步骤）；
 3. 交付标准见 AGENTS.md 第 6 节：生成器 0 error、`check.js` 0 errors、准入 0 fail，
    并明确告诉你哪些部分需要人工补（UI 元素 / 脚本 / 账号）。
 
@@ -116,26 +139,27 @@ cd flow-ir
 
 ## 标准工作流（六步）
 
-不依赖 AI 时，从一份已有的 `flow.json` 开始：
+不依赖 AI 时，从一份已有的 `flow.json` 开始。下面六步是**当前 PAD 适配器**的实现；
+IR 层本身只有 `flow.json` 与配套契约，换引擎时替换这一层的命令即可：
 
 ```powershell
-# 1) 画评审图（可选），并校验 edges 与 next/branch 是否一致
+# 1) 画评审图（可选），并校验 edges 与 next/branch 是否一致（IR 层，引擎无关）
 node tools\flow-drawio\flow-to-drawio.js business\flows\<name>.json business\flows\<name>.drawio
 node tools\flow-drawio\check-flow.js business\flows\<name>.json
 
-# 2) 生成
+# 2) 生成（当前适配器：IR → .robin）
 node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
 
-# 3) 静态校验（0 errors 才能继续）
+# 3) 产物静态校验（0 errors 才能继续；PAD 适配器）
 node tools\pad-robin\check.js out.robin
 
-# 4) 流程卫生（未读输出 / 未用变量 / IF 嵌套过深；建议但不阻断）
+# 4) 流程卫生（未读输出 / 未用变量 / IF 嵌套过深；建议但不阻断；PAD 适配器）
 node tools\pad-robin\lint-robin.js out.robin
 
-# 5) 准入（只读，0 fail 才能交付）
+# 5) 准入（只读，0 fail 才能交付；PAD 适配器）
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<name>.json -RobinFile out.robin
 
-# 6) 结构评估（需求级断言）
+# 6) 结构评估（需求级断言，只读 IR，引擎无关）
 node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ```
 
@@ -172,19 +196,23 @@ Copy-Item business\config\<name>.example.json business\config\<name>.json
 | 目录 | 作用 |
 |---|---|
 | `tools/check-env.ps1` | 环境检查（Node / Git / PowerShell） |
-| `tools/flow-drawio/` | `flow.json` ↔ `.drawio` 画布；`check-flow.js` 校验边一致性 |
-| `tools/pad-robin/` | 编译（`flow-to-robin.js`）、静态校验（`check.js` / `check-flows.js`）、流程卫生（`lint-robin.js`）、生成结果比对（`compare-robin.js`）、结构评估（`eval-flow.js`） |
-| `tools/pad-sync/` | 只读准入（`pad-admit.ps1`）、部署（`pad-deploy.ps1`）、发布（`pad-release.ps1`）、回滚（`pad-rollback.ps1`）、定时（`pad-schedule.ps1`）、触发注册（`pad-trigger.ps1`）、注入运行（`pad-sync.ps1`）、指纹（`pad-fingerprint.ps1`）、验收（`pad-verify.ps1`），以及告警 / 预检 / 遥测 / 编码等共享模块 |
-| `tools/publish/` | 推送前内容门禁 `check-public-safe.ps1` 与结构化词表 |
+| `tools/flow-drawio/` | IR 层：`flow.json` ↔ `.drawio` 画布；`check-flow.js` 校验边一致性 |
+| `tools/pad-robin/` | PAD 适配器：编译（`flow-to-robin.js`）、产物静态校验（`check.js` / `check-flows.js`）、流程卫生（`lint-robin.js`）、生成结果比对（`compare-robin.js`）；同目录还放着只读 IR 的 `eval-flow.js` |
+| `tools/pad-sync/` | PAD 适配器：只读准入（`pad-admit.ps1`）、部署（`pad-deploy.ps1`）、发布（`pad-release.ps1`）、回滚（`pad-rollback.ps1`）、定时（`pad-schedule.ps1`）、触发注册（`pad-trigger.ps1`）、注入运行（`pad-sync.ps1`）、指纹（`pad-fingerprint.ps1`）、验收（`pad-verify.ps1`），以及告警 / 预检 / 遥测 / 编码等共享模块 |
+| `tools/publish/` | 推送前内容门禁 `check-public-safe.ps1` 与结构化词表（与引擎无关） |
 | `tools/workday/` | 工作日历判断（通用件，可单独复用） |
-| `skills/` | `pad-flow-designer`（需求 → `flow.json` 的设计规则）、`pad-robin-coder`（写脚本时的红线清单） |
+| `skills/` | `pad-flow-designer`（需求 → `flow.json` 的设计规则）、`pad-robin-coder`（写 PAD 脚本时的红线清单） |
 | `tests/` | Pester 单元测试、Python 测试、公开评估集与遥测样例 |
+
+归属说明：`tools/flow-drawio/`、`eval-flow.js`、`tools/publish/`、`tools/workday/` 只处理 IR 或与引擎无关的通用任务；
+`tools/pad-robin/` 的生成与 `.robin` 校验、以及整个 `tools/pad-sync/` 都属于**当前 PAD 适配器**，换引擎时需要另行实现。
 
 ---
 
 ## 三条硬规则
 
-违反其中任何一条，工具会直接拒绝，不会产出半成品：
+违反其中任何一条，工具会直接拒绝，不会产出半成品。这三条由**当前 PAD 适配器**强制执行；
+新增其他引擎的适配器时必须复用同一套约束，而不是另立一套：
 
 1. **动作不许编**：`pad_hint` 必须是动作知识库里真实存在的三段式 `actionId`。
 2. **参数不许造**：`params` 的键必须是该动作 `input_params` 里的真实参数名。
@@ -200,11 +228,12 @@ Copy-Item business\config\<name>.example.json business\config\<name>.json
 | 门禁 | 回答的问题 | 关键实现 |
 |---|---|---|
 | 内容扫描 | **这些文件能不能推**（文件合规，注释里的业务名/真实路径仍可能泄漏，所以按内容逐行扫） | `tools/publish/check-public-safe.ps1`：命中词表即失败；`business/` 路径直接判错（退出码 2）。`pre-commit` 钩子扫暂存区，CI 用 `git ls-files` 兜底 |
-| 准入网关 | **这份流程/这次运行能不能跑**（14 项只读检查，一次返回全部问题） | `tools/pad-sync/pad-admit.ps1`：退出码 `0` 通过 / `1` 有 fail / `2` 仅存在 ask |
+| 准入网关 | **这份流程/这次运行能不能跑**（14 项只读检查，一次返回全部问题） | `tools/pad-sync/pad-admit.ps1`（PAD 适配器）：退出码 `0` 通过 / `1` 有 fail / `2` 仅存在 ask |
 
-**指纹**：发布后把 `.robin`、部署配置、验收判据三份内容的 SHA256 写进基线
+**指纹（PAD 适配器）**：发布后把 `.robin`、部署配置、验收判据三份内容的 SHA256 写进基线
 （v3 另收流程实际引用的脚本），准入时与基线比对；不一致默认 `fail`，直接阻断。
-基线数据只写在 `business/fingerprints/<流程名>.json`，不入库。
+基线数据只写在 `business/fingerprints/<流程名>.json`，不入库。其他引擎适配器需要各自定义等价物，
+但「先播种基线、运行前比对」这条思路应保持一致。
 
 业务层与公开边界详见 [docs/admission-gate.md](docs/admission-gate.md) 第 9 节。
 
@@ -220,8 +249,9 @@ Copy-Item business\config\<name>.example.json business\config\<name>.json
 | `business/config/<name>.json` + `<name>.schema.json` | 部署时占位符填什么，以及配置本身是否合法 |
 | `business/tests/eval/<name>.cases.json` | 需求里必须成立的结构断言（可当回归测试） |
 
-验收判据支持 `fileExists` / `globNewerThan` / `pair` / `json` / `jsonl` / `logState`，
-由 `tools/pad-sync/PadAcceptance.psm1` 执行，不依赖 PAD 自己报没报错。
+验收判据支持 `fileExists` / `globNewerThan` / `pair` / `json` / `jsonl` / `logState`。
+契约格式与引擎无关；消费它们的部署/验收执行器（占位符替换、判据求值）目前在 `tools/pad-sync/`，
+属于 PAD 适配器。换引擎时可以复用契约格式，执行器需按新引擎重写。
 
 ---
 
@@ -234,10 +264,10 @@ Copy-Item business\config\<name>.example.json business\config\<name>.json
 ├── setup.ps1                  一次装好 Node 依赖、钩子与动作知识库
 ├── tools/                     工具层
 │   ├── check-env.ps1          环境检查
-│   ├── flow-drawio/           flow.json ↔ .drawio，edges 一致性校验
-│   ├── pad-robin/             编译器、静态校验、流程卫生、比对、结构评估
-│   ├── pad-sync/              准入、部署、发布、回滚、定时、触发注册、注入运行、遥测、验收
-│   ├── publish/               推送前内容门禁 + 词表
+│   ├── flow-drawio/           IR 层：flow.json ↔ .drawio，edges 一致性校验
+│   ├── pad-robin/             PAD 适配器：编译器、产物校验、流程卫生、比对；另含只读 IR 的 eval-flow.js
+│   ├── pad-sync/              PAD 适配器：准入、部署、发布、回滚、定时、触发注册、注入运行、遥测、验收
+│   ├── publish/               推送前内容门禁 + 词表（与引擎无关）
 │   └── workday/               工作日历判断
 ├── docs/                      文档层（含提示词与准入/脚本规范）
 ├── skills/                    设计规则与脚本红线
@@ -264,9 +294,10 @@ Copy-Item business\config\<name>.example.json business\config\<name>.json
 
 - **唯一设计源**：`flow.json` 是唯一可编辑的源；`.robin` 是产物，改它下次生成就会被覆盖。
   CI 在检出 `business/` 时会做硬断言「重新生成的结果 == 仓库里的脚本」。
+- **引擎可替换**：IR 结构不写死任何引擎的假设；新增引擎 = 新增一套适配器，不改 IR、不改门禁。
 - **确定性优先**：编译阶段不调用模型，只查表；模型只出现在「写 `flow.json`」这一步。
 - **失败要早**：能在编译前挡住的错误（动作名、参数名、悬空引用、无界循环、策略命中），
-  绝不留到 PAD 运行时。
+  绝不留到运行时。
 - **副作用可回退**：先 `DRY_RUN` 跑通分支，再走真实运行；上线有快照与回滚。
 
 ---
@@ -301,14 +332,15 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ---
 
-## 配套的动作知识库
+## 配套的动作知识库（PAD 适配器）
 
-生成器只认知识库里存在的三段式 `actionId` 和真实参数名，查不到就拒绝产出。
+PAD 适配器的生成器只认知识库里存在的三段式 `actionId` 和真实参数名，查不到就拒绝产出。
+IR 层本身不依赖它；换成别的引擎时，需要的是那个引擎自己的动作表。
 
 | 仓库 | 提供什么 | 是否必需 |
 |---|---|---|
-| **本仓库** | 中间表示（`flow.json`）、编译器、静态校验、准入网关、发布/回滚/定时、提示词与 Skill、评估集 | 是 |
-| [pad-robin-action-kb](https://github.com/JoeG592/pad-robin-action-kb) | 1,086 个 PAD 动作的真实 `actionId` / 参数名 / 输出名 / 粘贴样例 | **是**（`setup.ps1` 自动克隆，不入本库） |
+| **本仓库** | IR（`flow.json`）、IR 校验与评估集、PAD 适配器（生成/准入/发布/回滚/定时）、提示词与 Skill | 是 |
+| [pad-robin-action-kb](https://github.com/JoeG592/pad-robin-action-kb) | PAD 适配器的动作表：1,086 个动作的真实 `actionId` / 参数名 / 输出名 / 粘贴样例 | **是**（`setup.ps1` 自动克隆，不入本库） |
 
 ---
 
