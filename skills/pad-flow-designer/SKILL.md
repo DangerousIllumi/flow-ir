@@ -67,8 +67,8 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
   **不接受「用文件修改时间」「按改时间谁新留谁」这类未经验证的答案**，因为常见客户端保存附件会
   继承附件原始时间，覆盖同名文件时连创建时间一起改写，时间戳无法区分新旧。问不出可靠标记就不生成 `flow.json`。
 - 反例必须记住：
-  - **MB51 导出可重跑**：每次生成新的带时间戳导出文件，`idempotent=true`。
-  - **MIGO 过账不可重跑**：重复过账会产生重复物料凭证，必须 `idempotent=false`，
+  - **导出类脚本可重跑**：每次生成新的带时间戳导出文件，`idempotent=true`。
+  - **过账类脚本不可重跑**：重复执行会产生重复凭证，必须 `idempotent=false`，
     `idempotency_note` 写明人工前置检查（如「重跑前必须确认过账账本完整」）；
     且 `reversible=false`，`reversibility_note` 写「过账需冲销凭证」。
 
@@ -154,7 +154,7 @@ node tools/flow-drawio/drawio-to-flow.js business/flows/<name>.drawio business/f
 |---|---|
 | `deny-close-outlook` | 任何 `Outlook.Close*` 动作 |
 | `deny-email-in-dry-run` | `DRY_RUN=1` 时不得出现发信动作 |
-| `deny-migo-in-dry-run` | `DRY_RUN=1` 时不得出现参数含 `%MigoVbsPath%` 的 `RunDOSCommand` |
+| `deny-posting-in-dry-run` | `DRY_RUN=1` 时不得出现参数含 `%PostingVbsPath%` 的 `RunDOSCommand` |
 | `deny-prod-auto-repair` | 生产环境禁止自动改写 `.robin` |
 | `deny-write-outside-allowed-roots` | 只允许写 `PAD_ROOT` / 仓库工作区 / `TEMP` |
 

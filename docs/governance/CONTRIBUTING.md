@@ -4,7 +4,7 @@
 
 - Windows 10/11，PowerShell 5.1（不要用 PowerShell 7 跑 Pester，测试按 3.4 语法写）
 - Node.js ≥ 18
-- Python 3.13（核对脚本与 pytest）
+- Python 3.13（测试与工具脚本）
 - Power Automate Desktop（只有真机联调才需要）
 
 首次准备：

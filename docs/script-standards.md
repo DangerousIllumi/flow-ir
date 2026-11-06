@@ -16,7 +16,7 @@
 副作用节点必须回答两个正交的问题，分别落到 `flow.json` 的两个字段：
 - `idempotent`：同一输入重跑是否收敛（重跑安全），为 `false` 时写 `idempotency_note`；
 - `reversible`：已经产生的后果能否撤回，为 `false` 时写 `reversibility_note`（必须说清回退办法）。
-保存附件、导出文件、核对文件、标记已读属于可逆；发信、MIGO 过账属于不可逆。
+保存附件、导出文件、核对文件、标记已读属于可逆；发信、过账属于不可逆。
 
 ## 一、外部脚本输出规范（RunDOSCommand hook 解析依据）
 
@@ -28,7 +28,7 @@ agent 要从这些文本里解析出有意义的错误，脚本必须遵循以�
 | 项目 | 约定 |
 |---|---|
 | 退出码 | 由各脚本自定义，必须在 PAD 的报错弹窗里逐条列出含义（见下方实例） |
-| stdout 首行 | MIGO_FAILED <原因> / MIGO_OK <简述> / MB51_FAILED <原因> / MB51_OK <行数> — hook 读首行 |
+| stdout 首行 | POST_FAILED <原因> / POST_OK <简述> / EXPORT_FAILED <原因> / EXPORT_OK <行数> — hook 读首行 |
 | 日志文件 | 在脚本里用 `Const RESULT_DIR = "..."` 声明目录，日志文件名写死为 `xxx_result.txt` — hook 从源码提取目录与文件名，取最新的 result 类文件 |
 | 日志编码 | `OpenTextFile(..., 8, True)` 写成 UTF-16LE，hook 按 BOM 自动识别；不要混用 GBK |
 | 非 Unicode SAP | 中文字符用 ChrW(&HXXXX)，避免 GBK 编码吞字 |
@@ -37,8 +37,8 @@ agent 要从这些文本里解析出有意义的错误，脚本必须遵循以�
 
 | 脚本 | 退出码 | 日志 |
 |---|---|---|
-| `MIGO201_501.vbs` | 0=成功 / 1=界面元素没找到 / 2=SAP 报错 / 3=CSV 读不到 / 5=用户取消 | `%RESULT_DIR%\migo_result.txt` |
-| `MB51导出.vbs` | 0=成功 / 1=界面步骤失败 / 2=保存失败 / 3=60 秒内没等到导出文件 / 4=导出文件被 Excel 占用 | `%RESULT_DIR%\saveas_result.txt`、`saveas_stop.txt`、`export_excel.log` |
+| `sap-posting.vbs` | 0=成功 / 1=界面元素没找到 / 2=SAP 报错 / 3=CSV 读不到 / 5=用户取消 | `%RESULT_DIR%\posting_result.txt` |
+| `sap-export.vbs` | 0=成功 / 1=界面步骤失败 / 2=保存失败 / 3=60 秒内没等到导出文件 / 4=导出文件被 Excel 占用 | `%RESULT_DIR%\saveas_result.txt`、`saveas_stop.txt`、`export_excel.log` |
 
 ### Python 约定
 
@@ -290,7 +290,7 @@ Write-Output "PAD_SYNC_RESULT=$json"
 
 ### 10.5 双目录同步
 
-工作区有两份副本（开发目录 / 迁移目标目录），任何脚本改动后必须同步并校验：
+工作区可能有多份副本（开发目录 / 迁移目标目录），脚本改动后必须同步并校验：
 
 ```powershell
 (Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash
@@ -411,7 +411,7 @@ LLM 版执行器内部流程：读 ctx → 拼提示词（含 `.robin` 全文 + 
 | `CONFIG_INVALID_VALUE` | JSON 非法，或 `RunTimeoutSec` 非正整数 |
 
 `pad-schedule.ps1`：传 `-ConfigPath` 时按上述规则加载；不传且缺关键参数时直接报 `CONFIG_MISSING` 退出，
-不再回退到内置路径（现有计划任务显式传参，属兼容路径，仍然可跑；新任务推荐用配置文件）。
+不再回退到内置路径（历史调用仍显式传参，属兼容路径；新任务推荐用配置文件）。
 
 ## 十三、运行时间目录（run-scoped workspace）
 
@@ -445,7 +445,7 @@ LLM 版执行器内部流程：读 ctx → 拼提示词（含 `.robin` 全文 + 
 
 ### 清理
 
-- 只用**目录名**（`YYYYMMDD-HHmmss`）排序，保留最近 N 个（本项目取 2）；
+- 只用**目录名**（`YYYYMMDD-HHmmss`）排序，保留最近 N 个（默认 2）；
 - 只在**本次运行成功之后**清理，失败路径不清理（保留现场供排查）；
 - **空目录不计入保留名额**：只建目录、没落盘目标文件的（取信失败、中途异常、空跑）属于失败痕迹，
   直接删除，否则连续几次失败就能把最近的成功记录全部顶出去；

@@ -116,7 +116,7 @@
   `required` 必须显式写 `true`/`false`。必需文件 0 候选即阻断；候选 ≥2 一律判歧义，不「取最新」。
 - **idempotent：每个节点必填**，语义是「重跑安全性」：`true` 表示重跑结果一致，`false` 表示重跑会改变状态或丢失输入，
   此时必须写 `idempotency_note`（一到两句给人看的中文，写清重跑会发生什么 / 要注意什么）。
-  例：MB51 导出可重跑（true），MIGO 过账不可重跑（false）。
+  例：导出类脚本可重跑（true），过账类脚本不可重跑（false）。
   **本工具链不做自动重试**，运行失败一律「告警 + 人工重跑」；该字段不用于放行任何自动化行为。
   这两项必须逐节点问到用户答案；没答案就不生成 flow.json，`eval-flow.js` 缺失即判失败。
 **控制流节点**（pad_hint 写 `IF` / `LOOP` / `SWITCH`，生成器识别节点形状生成内建语句）：
@@ -164,7 +164,7 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 **acceptance 声明**：本流程"运行成功的客观证据"，路径用变量引用，由 `build-acceptance.ps1` 展开。
 
     "acceptance": { "checks": [
-      { "name": "过账日期文件", "type": "fileExists", "path": "{{variables.ResultsDir}}\\budat.txt",
+      { "name": "过账日期文件", "type": "fileExists", "path": "{{variables.ResultsDir}}\\posting-date.txt",
         "minBytes": 10, "match": "^\\d{2}\\.\\d{2}\\.\\d{4}" }
     ] }
 
@@ -208,7 +208,7 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 |---|---|---|
 | `deny-close-outlook` | 任何 `Outlook.Close*` 动作 | 会关掉用户已打开的 Outlook 主进程 |
 | `deny-email-in-dry-run` | `DRY_RUN=1` 时不得出现 `Outlook.SendEmailThroughOutlook.SendEmail` | 测试模式不允许发信 |
-| `deny-migo-in-dry-run` | `DRY_RUN=1` 时不得出现参数含 `%MigoVbsPath%` 的 `RunDOSCommand` | 测试模式不允许过账 |
+| `deny-posting-in-dry-run` | `DRY_RUN=1` 时不得出现参数含 `%PostingVbsPath%` 的 `RunDOSCommand` | 测试模式不允许过账 |
 | `deny-prod-auto-repair` | 生产环境禁止自动改写 `.robin` | 只允许观察或人工修复 |
 | `deny-write-outside-allowed-roots` | 只允许写 `PAD_ROOT` / 仓库工作区 / `TEMP` | 越界写入一律拒绝 |
 
@@ -218,12 +218,12 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 **必填声明（缺一项准入就失败）**
 
 - `budget`：至少给 `maxLoop`（循环最多几次）。未声明按超限处理，直接拒绝。
-- `intent`：每个 `Scripting.RunDOSCommand*` / `RunVBScript*` 节点必须写语义标签（如 `sap-migo`、`mb51-export`、`reconcile`）。
+- `intent`：每个 `Scripting.RunDOSCommand*` / `RunVBScript*` 节点必须写语义标签（如 `sap-posting`、`data-export`、`reconcile`）。
   策略按 intent 匹配副作用，改名参数绕不过去。
 
 ```json
 "budget": { "maxLoop": 7 },
-{ "id": "43", "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand", "intent": "sap-migo", ... }
+{ "id": "43", "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand", "intent": "sap-posting", ... }
 ```
 
 - 必须同时产出三件套：`flow.json`（含 `acceptance` / `budget` 声明）、`business/flows/<name>.requirements.json`（环境依赖）、`tests/eval/<name>.cases.json`（结构断言）
@@ -276,11 +276,11 @@ v1 计划自建 `flow-editor.html`。调研后的结论：**自己写一个带�
 ### 用户交互示例
 
 **用户输入**：
-> 每月3号从邮箱读取带对账单附件的邮件，提取发票号和金额，跟SAP核对，不一致的做成Excel发邮件给经理
+> 每月3号从邮箱读取带附件的邮件，提取金额，跟系统导出核对，不一致的做成 Excel 发邮件给收件人
 
 **Agent A 回复**：
 > 已生成流程定义（flow.json，11 个节点，含 Launch/Close 句柄生命周期）+ 流程图（flow.drawio）：
-> 1 启动 Outlook → 2 检索邮件 `Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments` → 3 AI提取 `LLM.InvokeLLM` → 4 SAP导出 `Scripting.RunVBScript.RunVBScript` → 5 打开结果表 → 6 读取 `Excel.ReadFromExcel.ReadAllCells` → 7 条件分支「有差异吗」 → 8 差异标红 `Excel.SetColor.SetColorRangePredefined` → 9 保存关闭 → 10 发邮件 `Outlook.SendEmailThroughOutlook.SendEmail` → 11 关闭 Outlook
+> 1 启动 Outlook → 2 检索邮件 `Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments` → 3 AI提取 `LLM.InvokeLLM` → 4 数据导出 `Scripting.RunVBScript.RunVBScript` → 5 打开结果表 → 6 读取 `Excel.ReadFromExcel.ReadAllCells` → 7 条件分支「有差异吗」 → 8 差异标红 `Excel.SetColor.SetColorRangePredefined` → 9 保存关闭 → 10 发邮件 `Outlook.SendEmailThroughOutlook.SendEmail` → 11 关闭 Outlook
 > 请在 draw.io 打开 flow.drawio 评审与调整（可直接拖拽、改标签）。调整完保存，回来告诉我"调整完成"。
 
 > **为什么要显式的 Launch/Close 节点**：脚本正文里每个变量都必须先被产生（见 `check-flows.js` 的

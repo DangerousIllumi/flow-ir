@@ -14,7 +14,7 @@
       "id": "43",
       "type": "script.run",
       "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand",
-      "label": "MIGO 过账",
+      "label": "过账提交",
       "params": {},
       "outputs": [],
       "next": [],
@@ -22,7 +22,7 @@
       "run_mode": "auto",
       "idempotent": false,
       "reversible": false,
-      "reversibility_note": "过账需冲销凭证"
+      "reversibility_note": "提交后需冲销才能撤回"
     }
   ]
 }

@@ -1,14 +1,14 @@
 {
   "name": "monthly-reconciliation",
-  "description": "月度对账：从邮箱读取对账单附件，提取发票号和金额，跟SAP导出核对，差异标红后发邮件给经理",
+  "description": "示例对账：从邮箱读取附件，提取金额，跟导出数据核对，差异标红后发邮件给收件人",
   "trigger": {
     "type": "schedule",
     "config": { "dayOfMonth": 3 }
   },
   "budget": { "maxLoop": 1, "note": "示例流程无轮询；仅演示结构" },
   "variables": [
-    { "name": "ManagerEmail", "type": "string", "default": "manager@company.com", "description": "经理邮箱", "required": true },
-    { "name": "SenderFilter", "type": "string", "default": "finance@company.com", "description": "对账单发件人", "required": true },
+    { "name": "ManagerEmail", "type": "string", "default": "user@example.com", "description": "收件人邮箱", "required": true },
+    { "name": "SenderFilter", "type": "string", "default": "sender@example.com", "description": "发件人过滤", "required": true },
     { "name": "Month", "type": "string", "default": "2026-09", "description": "对账月份", "required": true },
     { "name": "ExcelPath", "type": "string", "default": "<EXPORT_DIR>\\export.xlsx", "description": "SAP导出Excel路径", "required": true }
   ],
@@ -33,7 +33,7 @@
         "MailFolder": "收件箱",
         "FromContains": "{{variables.SenderFilter}}",
         "SubjectContains": "对账单",
-        "SaveAttachmentsInto": "C:\\PAD\\Attachments"
+        "SaveAttachmentsInto": "<PAD_ROOT>\\Attachments"
       },
       "output_skip": ["Messages"],
       "next": ["3"],

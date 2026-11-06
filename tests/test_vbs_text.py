@@ -88,11 +88,11 @@ def test_replace_keeps_original_encoding(tmp_path):
     # 内容必须带中文：纯 ASCII 的 ANSI 字节同时也是合法 UTF-8，按编码字节无法区分
     p = tmp_path / "e.vbs"
     old_line = 'Const ROOT = "C:\\PAD\\Scripts"  \' 根目录'
-    new_line = 'Const ROOT = "D:\\RPA\\PAD\\Scripts"  \' 根目录'
+    new_line = 'Const ROOT = "C:\\Temp\\PAD\\Scripts"  \' 根目录'
     raw = old_line.encode(vbs_text.ansi_codec())
     p.write_bytes(raw)
 
-    done, info = vbs_text.replace_text(p, 'C:\\PAD\\Scripts', 'D:\\RPA\\PAD\\Scripts')
+    done, info = vbs_text.replace_text(p, 'C:\\PAD\\Scripts', 'C:\\Temp\\PAD\\Scripts')
     assert done == 1
     assert info["kind"] == "ansi"
     assert p.read_bytes() == new_line.encode(vbs_text.ansi_codec())

@@ -14,7 +14,7 @@
       "id": "29",
       "type": "mail.send",
       "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
-      "label": "发送催办邮件",
+      "label": "发送提醒邮件",
       "params": {},
       "outputs": [],
       "next": [],
