@@ -463,7 +463,7 @@ function Get-RunLogStatus {
 #   同一时段 PAD.RobotV2 没有出现确认框。
 #
 # 因此判定必须同时满足：来源进程 + 标题白名单 + 按钮 AutomationId（+ 控件类型）。
-# 绝不按按钮文字（确定/OK/是）判定——业务弹窗（完成提示、催办确认）也带这些按钮。
+# 绝不按按钮文字（确定/OK/是）判定——业务弹窗（完成提示、人工确认）也带这些按钮。
 function Test-ExternalTriggerDialog {
     param(
         [string]$ProcessName,
@@ -680,7 +680,7 @@ function Invoke-PadRun {
         }
 
         # 2) 机器人窗口：只观察，绝不点击。
-        #    业务弹窗（完成提示 / 催办确认）必须留给人；收窄后这里不再有 BM_CLICK。
+        #    业务弹窗（完成提示 / 人工确认）必须留给人；收窄后这里不再有 BM_CLICK。
         $robotAlive = $false
         $currentHumanHandles = @{}
         foreach ($rp in (Get-Process -Name 'PAD.RobotV2' -ErrorAction SilentlyContinue)) {

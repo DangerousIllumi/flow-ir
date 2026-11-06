@@ -50,19 +50,19 @@ Describe 'pad-admit 策略评估' {
     }
 
     It 'paramsMatch 只匹配参数内容，不靠节点 id/label' {
-        $flow = New-FlowWith 'Scripting.RunDOSCommand.RunDOSCommand' ([pscustomobject]@{ DOSCommandOrApplication = 'cscript.exe //nologo "%MigoVbsPath%"' })
+        $flow = New-FlowWith 'Scripting.RunDOSCommand.RunDOSCommand' ([pscustomobject]@{ DOSCommandOrApplication = 'cscript.exe //nologo "%PostingVbsPath%"' })
         $pol = [pscustomobject]@{
             defaultEffect = 'allow'
             rules = @([pscustomobject]@{
-                id = 'migo'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
-                when = [pscustomobject]@{ paramsMatch = [pscustomobject]@{ DOSCommandOrApplication = '*%MigoVbsPath%*' } }
-                effect = 'deny'; reason = 'DRY_RUN 下禁止 MIGO'
+                id = 'posting'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
+                when = [pscustomobject]@{ paramsMatch = [pscustomobject]@{ DOSCommandOrApplication = '*%PostingVbsPath%*' } }
+                effect = 'deny'; reason = 'DRY_RUN 下禁止过账'
             })
         }
         $r = @(Invoke-AdmitPolicy $flow $pol @{ env = 'prod'; dryRun = $true; registered = @{} })
         $r[0].code | Should Be 'POLICY_DENY'
 
-        # 同一条规则，参数里没有 MIGO 时不应命中
+        # 同一条规则，参数里没有 %PostingVbsPath% 时不应命中
         $flow2 = New-FlowWith 'Scripting.RunDOSCommand.RunDOSCommand' ([pscustomobject]@{ DOSCommandOrApplication = 'cscript.exe //nologo "%VbsPath%"' })
         $r2 = @(Invoke-AdmitPolicy $flow2 $pol @{ env = 'prod'; dryRun = $true; registered = @{} })
         $r2[0].status | Should Be 'pass'
@@ -72,15 +72,15 @@ Describe 'pad-admit 策略评估' {
         $pol = [pscustomobject]@{
             defaultEffect = 'allow'
             rules = @([pscustomobject]@{
-                id = 'migo'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
-                when = [pscustomobject]@{ dryRun = $true; intent = 'sap-migo' }
-                effect = 'deny'; reason = 'DRY_RUN 下禁止 MIGO'
+                id = 'posting'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
+                when = [pscustomobject]@{ dryRun = $true; intent = 'sap-posting' }
+                effect = 'deny'; reason = 'DRY_RUN 下禁止过账'
             })
         }
         $ctx = @{ env = 'prod'; dryRun = $true; registered = @{} }
         # 参数名随便改，只要 intent 还在就命中
         $flow = [pscustomobject]@{ nodes = @([pscustomobject]@{
-            id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-migo'
+            id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-posting'
             params = [pscustomobject]@{ DOSCommandOrApplication = 'whatever.exe' }
         }) }
         (@(Invoke-AdmitPolicy $flow $pol $ctx))[0].code | Should Be 'POLICY_DENY'
@@ -97,24 +97,24 @@ Describe 'pad-admit 策略评估' {
         $pol = [pscustomobject]@{
             defaultEffect = 'allow'
             rules = @([pscustomobject]@{
-                id = 'migo'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
-                when = [pscustomobject]@{ dryRun = $true; intent = 'sap-migo' }
-                effect = 'deny'; reason = 'DRY_RUN 下禁止 MIGO'
+                id = 'posting'; enabled = $true; resource = 'action'; match = 'Scripting.RunDOSCommand*'
+                when = [pscustomobject]@{ dryRun = $true; intent = 'sap-posting' }
+                effect = 'deny'; reason = 'DRY_RUN 下禁止过账'
             })
         }
         $ctx = @{ env = 'prod'; dryRun = $true; registered = @{} }
-        $migo = [pscustomobject]@{
-            id = 'm'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-migo'
+        $posting = [pscustomobject]@{
+            id = 'm'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-posting'
             params = [pscustomobject]@{ DOSCommandOrApplication = 'cscript' }
         }
         # 守卫内：测试模式本来就不会执行，准入放行
         $guarded = [pscustomobject]@{ nodes = @(
             [pscustomobject]@{ id = 'g'; pad_hint = 'GUARD'; when = "DryRun <> $'''1'''"; body = @('m'); elseBody = @() },
-            $migo
+            $posting
         ) }
         (@(Invoke-AdmitPolicy $guarded $pol $ctx))[0].status | Should Be 'pass'
         # 守卫外：同样条件就应被拒
-        $bare = [pscustomobject]@{ nodes = @($migo) }
+        $bare = [pscustomobject]@{ nodes = @($posting) }
         (@(Invoke-AdmitPolicy $bare $pol $ctx))[0].code | Should Be 'POLICY_DENY'
     }
 

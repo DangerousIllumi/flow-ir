@@ -408,7 +408,7 @@ try {
             throw $script:Result.error.message
         }
 
-        # 非交互运行停在人工确认弹窗（完成提示 / 催办确认等）：
+        # 非交互运行停在人工确认弹窗（完成提示 / 人工确认等）：
         # 不自动点击、不杀进程，弹窗留给人工；本次以 needs-human-confirm 收尾，
         # 让调度层立刻告警，而不是无声挂到 180 分钟超时。ok 保持 $null（未知 ≠ 失败）
         if ($runHint.evidence -eq 'human-confirm') {

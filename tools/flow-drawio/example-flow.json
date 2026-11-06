@@ -27,12 +27,12 @@
       "id": "2",
       "type": "mail.search",
       "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments",
-      "label": "检索对账单邮件并保存附件",
+      "label": "检索示例报表邮件并保存附件",
       "params": {
         "MarkAsRead": true,
         "MailFolder": "收件箱",
         "FromContains": "{{variables.SenderFilter}}",
-        "SubjectContains": "对账单",
+        "SubjectContains": "报表",
         "SaveAttachmentsInto": "<PAD_ROOT>\\Attachments"
       },
       "output_skip": ["Messages"],
