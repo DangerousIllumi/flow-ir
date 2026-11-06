@@ -4,6 +4,10 @@
 > 你要把它变成可粘贴进 Power Automate Desktop 的 Robin 脚本。
 > 这份文件是你的操作手册：**先读完再动手**。
 
+> **只想了解这个项目？** 读 [`llms.txt`](llms.txt)：引擎无关的 IR 与多引擎适配器定位、
+> 分层归属、红线与文档索引。
+> **要动手改流程或脚本？** 继续往下读——本文件才是操作手册，不要只看摘要就开工。
+
 ## 0. 先做一次环境准备
 
 ```powershell
@@ -28,7 +32,7 @@
 | `skills/pad-flow-designer/` | 需求 → `flow.json` 的设计规则 |
 | `skills/pad-robin-coder/` | 生成脚本时的红线清单 |
 | `docs/nl-to-flow-guide.md` | 一句话 → flow.json → 四项校验的完整示例 |
-| `tests/eval/` | 9 个合成样例 + 结构断言，可当模板抄 |
+| `tests/eval/` | 15 个合成样例（9 个流程 + 6 个 trigger）+ 结构断言，可当模板抄 |
 
 ## 1.5 目录约定（工具与业务彻底分离）
 

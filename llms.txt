@@ -1,0 +1,54 @@
+# flow-ir
+
+> 引擎无关的流程中间表示（IR）与多引擎适配器工具链：`flow.json` 是事实源，
+> **当前只实现了 PAD（Power Automate Desktop / Robin）一个适配器**，其他引擎（另一款 RPA、
+> 云端流、Python/VBS）属于尚未实现的扩展方向。适配器代码在 `tools/pad-robin/` 与 `tools/pad-sync/`。
+
+## 分层
+
+| 层 | 内容 | 位置 |
+|---|---|---|
+| IR 与引擎无关的校验 | 画布与 `edges` 一致性、需求级结构断言、公开层内容扫描、通用工具件 | `tools/flow-drawio/`、`tools/pad-robin/eval-flow.js`、`tools/publish/`、`tools/workday/`、`tools/xlsx/` |
+| PAD 适配器 | 生成 `.robin`、产物静态校验、准入、注入、发布、回滚、调度、遥测、验收 | `tools/pad-robin/flow-to-robin.js`、`tools/pad-sync/` |
+
+`.robin` 是 PAD 适配器的产物，不是 IR 本身；IR 的节点、边、`guard`、`budget`、幂等、可逆性、
+`trigger` 等结构不绑定任何引擎。
+
+## 最短上手
+
+```powershell
+.\tools\check-env.ps1    # 先确认 Node / Git / PowerShell
+.\setup.ps1              # Node 依赖 + 提交前门禁 + 克隆 PAD 动作知识库
+```
+
+然后照 `docs/nl-to-flow-guide.md` 走一遍：需求 → `flow.json` → 生成 → 静态校验 → 准入。
+
+## 红线
+
+1. 动作与参数不许编：`pad_hint` 必须是动作知识库里的三段式 `actionId`，`params` 键必须是该动作的真实参数名。
+2. 副作用必须可跳过：发信、过账、删文件放进 `guard`，`flow.json` 必须声明 `budget`。
+3. `business/` 永不入库、永不公开：整目录被忽略，提交前门禁与公开层扫描双重拦截。
+4. 不替人做三件事：不录 UI 元素、不编造 SAP 录制产物、不替人发布到生产。
+
+## 读什么
+
+| 目标 | 从这里开始 |
+|---|---|
+| 了解项目全貌 | [README.md](README.md) |
+| 动手前（生成 / 校验 / 发布） | [AGENTS.md](AGENTS.md) |
+| 写流程（需求 → `flow.json`） | [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) |
+| 写脚本红线 | [skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md) |
+| 门禁、准入、指纹 | [docs/admission-gate.md](docs/admission-gate.md) |
+| 切换引擎的边界 | [README.md](README.md) 的「分层：IR 是事实源，引擎是可替换的后端」 |
+
+## 索引
+
+- [AGENTS.md](AGENTS.md)：AI 助手的操作手册（环境准备、仓库地图、六步工作流、报错处理）
+- [README.md](README.md)：项目定位、能力边界、工具目录、逐条报错对照
+- [docs/nl-to-flow-guide.md](docs/nl-to-flow-guide.md)：一句话 → `flow.json` → 四项校验的完整示例
+- [docs/admission-gate.md](docs/admission-gate.md)：准入 14 项、策略、指纹与公开边界
+- [docs/agent-prompts.md](docs/agent-prompts.md)：`flow.json` 字段约定
+- [docs/script-standards.md](docs/script-standards.md)：脚本规范
+- [docs/trigger-adapter-design.md](docs/trigger-adapter-design.md)：触发声明与注册器设计
+- [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md)、[skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md)：设计与脚本红线
+- [tests/eval](tests/eval)：中性合成样例与结构断言，可当模板抄
