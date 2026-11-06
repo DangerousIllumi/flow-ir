@@ -26,6 +26,7 @@
    ```json
    {
      "name": "copy-text",
+     "trigger": { "kind": "manual" },
      "budget": { "maxLoop": 1 },
      "variables": [
        { "name": "InputFile",  "type": "string", "default": "C:\\Temp\\input.txt" },
@@ -35,17 +36,25 @@
      "nodes": [
        { "id": "1", "pad_hint": "File.ReadTextFromFile.ReadText",
          "params": { "File": "{{variables.InputFile}}", "Encoding": "UTF8" },
-         "output_map": { "Content": "FileContent" }, "next": ["2"] },
+         "output_map": { "Content": "FileContent" }, "next": ["2"],
+         "run_mode": "auto", "idempotent": true },
        { "id": "2", "pad_hint": "File.WriteText",
          "params": { "File": "{{variables.OutputFile}}", "TextToWrite": "{{1.FileContent}}",
-                     "IfFileExists": "Overwrite", "AppendNewLine": false, "Encoding": "UTF8" } }
+                     "IfFileExists": "Overwrite", "AppendNewLine": false, "Encoding": "UTF8" },
+         "run_mode": "auto", "idempotent": true }
      ]
    }
    ```
 
    要点：`budget` 必填；参数值走 `{{variables.X}}` / `{{1.FileContent}}`；字符串字面量写成 `$'''…'''`。
-   另外**每个节点**（含控制节点）都必须写 `run_mode`（auto/confirm/observe）与 `idempotent`
-   （语义是「重跑安全性」：false 时加一到两句中文 `idempotency_note`，写清重跑会发生什么）；
+   `trigger` **只认 `kind`**（`manual` / `schedule` / `file`），`manual` 只允许 `{ "kind": "manual" }`；
+   旧形状 `{ "type": "...", "config": {...} }` 会被判 `TRIGGER_LEGACY_SHAPE`，不做静默映射，
+   完整字段见 [trigger-adapter-design.md](trigger-adapter-design.md)。
+   **设计规则要求每个节点**（含控制节点）写 `run_mode`（auto/confirm/observe）与 `idempotent`
+   （语义是「重跑安全性」：false 时加一到两句中文 `idempotency_note`，写清重跑会发生什么）。
+   注意这两项是**设计与结构断言的门槛**，不是生成器的全局硬校验：缺字段的 flow 仍能生成 `.robin`，
+   把关靠 `skills/pad-flow-designer` 的必答流程，以及 cases 里的 `nodeDeclaration` / `declarationsComplete` 断言
+   （`tests/eval/fixtures` 的样例每个节点都写了，可直接参照）。
    没问清这两项就不要生成 flow.json。本工具链不做自动重试，运行失败一律「告警 + 人工重跑」，该字段不用于放行自动化。
    读取外部文件的步骤还要声明**节点级 `inputs`**（`dir` 走 `{{config.<KEY>}}`、`pattern` 通配符、
    `required` 显式布尔）；该字段只用于准入与结构校验，**不进入 `.robin` 生成产物**。
@@ -53,7 +62,14 @@
 4. 产出配套声明（缺了准入会拦）：
    - `business/flows/copy-text.requirements.json`：环境依赖（目录、Python 等）
    - `acceptance`：写进 flow.json 或 `business/flows/copy-text.acceptance.json`
-   - `business/tests/eval/<需求id>.cases.json`：把"需求里必须成立的事实"写成断言
+   - `business/tests/eval/copy-text.cases.json`：把"需求里必须成立的事实"写成断言。
+     **不要直接跑仓库自带的 `tests/eval/*.cases.json`**——那评的是仓库里的中性样例，不是你自己写的流程。
+     正确做法是复制一份、把 `flow` 指到自己的文件：
+
+     ```powershell
+     Copy-Item tests\eval\file-copy-text.cases.json business\tests\eval\copy-text.cases.json
+     # 打开该文件，把 "flow" 改成 "business/flows/copy-text.json"，并按你的实际需求增删断言
+     ```
 
 > **样例与业务用例的边界**：`tests/eval/fixtures`（16 个中性合成样例：10 个流程 + 6 个 trigger）
 > 与 `tests/eval/*.cases.json`（11 个结构断言）随仓库分发，供演示与 CI 使用；
@@ -66,7 +82,7 @@
 node tools\pad-robin\flow-to-robin.js business\flows\copy-text.json out.robin
 node tools\pad-robin\check.js out.robin
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\copy-text.json -RobinFile out.robin
-node tools\pad-robin\eval-flow.js tests\eval\file-copy-text.cases.json
+node tools\pad-robin\eval-flow.js business\tests\eval\copy-text.cases.json
 ```
 
 预期输出：
@@ -74,12 +90,16 @@ node tools\pad-robin\eval-flow.js tests\eval\file-copy-text.cases.json
 ```text
 已生成: out.robin（2 个节点）          <- 生成器把"已生成"写 stderr，属正常
 OK   out.robin: 2 action lines, 0 errors
-[admit] 通过 9 / 警告 4 / 待批 0 / 失败 0
+[admit] 通过 10 / 警告 5 / 待批 0 / 失败 1
 PASS  read-then-write  需求：先读源文件，再写目标文件
-[eval-flow] 通过 2 / 2
+PASS  content-passed-through  需求：写的内容来自上一步读取结果，不能是空串
+[eval-flow] 通过 2 / 2（1 个流程样例）
 ```
 
-4 条警告是"没给 config / 没给批准记录"这类**信息性**提示；只要有 `[FAIL]` 就不能继续。
+准入的 5 条警告是"没给 config / 没写验收判据 / 没声明输入文件"这类**信息性**提示。
+唯一的 `fail` 是 `FINGERPRINT_NO_BASELINE`：新流程还没有指纹基线，属预期；首次发布后用
+`pad-fingerprint -Set` 播种，重跑时 `FINGERPRINT` / `SCRIPT_FINGERPRINT` 会转为 pass。
+除这个基线项外，只要出现别的 `[FAIL]` 就不能继续。
 
 最后：PAD 新建流程 → 粘贴 `out.robin` → 补 UI 元素（本示例没有）→ 运行。
 

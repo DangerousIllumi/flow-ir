@@ -57,7 +57,7 @@ PAD 专属的东西属于适配器，而不是 IR 本身：动作表来自 PAD �
 | 把一段口语化需求写成**可评审的结构化定义**（IR：`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
 | 把 IR **确定性地编译**成目标引擎产物（当前适配器产出 `.robin`） | 适配器查动作表填空；动作/参数写错直接拒绝产出 |
 | 编译前后**静态校验**：IR 结构（`edges` / 变量引用）、产物语法 | `check.js` / `check-flows.js` / `lint-robin.js` / `check-flow.js`（其中 `.robin` 部分属 PAD 适配器） |
-| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（14 项只读检查，属 PAD 适配器） |
+| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（16 项只读检查，属 PAD 适配器） |
 | 副作用**可跳过**：发信、过账、删文件包在 `guard` 里，靠 `DRY_RUN` 控制 | IR 结构 + 生成器 + 准入策略多层保证 |
 | 注入设计器、发布、回滚、定时、遥测、产物验收（PAD 适配器） | `tools/pad-sync/` |
 
@@ -105,7 +105,8 @@ cd flow-ir
 3. 克隆 `pad-robin-action-kb`（PAD 适配器用的动作表）并校验关键文件，HTTPS 失败自动回退 SSH；
 4. 创建 `business\flows` 目录。
 
-> 公司网络常拦截 HTTPS 直连 GitHub（报 `Recv failure: Connection was reset`）。
+> 部分受限网络或经由代理 / 防火墙访问时会拦截 HTTPS 直连 GitHub
+> （典型报错 `Recv failure: Connection was reset`）。
 > 这时改用 SSH：`git clone git@github.com:DangerousIllumi/flow-ir.git flow-ir`。
 > 只是用的话 clone 即可；想改这套工具本身才需要 fork。
 > 若 PowerShell 提示「在此系统上禁止运行脚本」，改用
@@ -167,14 +168,16 @@ node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 - 可直接抄的中性样例在 [tests/eval/fixtures](tests/eval/fixtures)：16 个合成样例（10 个流程 + 6 个 trigger），
   对应的 `*.cases.json` 共 11 个，位于 [tests/eval](tests/eval)，可整目录一起跑：`node tools\pad-robin\eval-flow.js tests\eval`；
 - 业务用例按 AGENTS.md 的约定放在 `business\tests\eval\`（不入库）。
+- `trigger` 只写 `kind`（`manual` / `schedule` / `file`）；旧形状 `{ "type": "...", "config": {...} }`
+  会被判 `TRIGGER_LEGACY_SHAPE`，字段表见 [docs/trigger-adapter-design.md](docs/trigger-adapter-design.md)。
 
 ### 上线链路（需要 PAD 真机）
 
 ```powershell
-# 部署配置：<流程名>.json + 同目录 <流程名>.schema.json（描述必填字段与格式）
-# 本地工作区里通常还有一份 <流程名>.example.json 模板（不含真实凭据），复制后填自己的账号与路径
-Copy-Item business\config\<name>.example.json business\config\<name>.json
+# 运行时配置（准入 / 预检 / 注入运行都用）：照着仓库里的中性模板填本机真实路径
+Copy-Item docs\config.example.json business\config\runtime.json
 
+# 每个流程的部署配置：<流程名>.json，字段由同目录的 <流程名>.schema.json 定义（两者都不入库）
 .\tools\pad-sync\pad-deploy.ps1 -FlowName <PAD 流程名> -SourceRobin business\flows\<name>.robin -ConfigFile business\config\<name>.json -AllowProd -SkipConfirm -PublishOnly
 ```
 
@@ -228,7 +231,7 @@ Copy-Item business\config\<name>.example.json business\config\<name>.json
 | 门禁 | 回答的问题 | 关键实现 |
 |---|---|---|
 | 内容扫描 | **这些文件能不能推**（文件合规，注释里的业务名/真实路径仍可能泄漏，所以按内容逐行扫） | `tools/publish/check-public-safe.ps1`：命中词表即失败；`business/` 路径直接判错（退出码 2）。`pre-commit` 钩子扫暂存区，CI 用 `git ls-files` 兜底 |
-| 准入网关 | **这份流程/这次运行能不能跑**（14 项只读检查，一次返回全部问题） | `tools/pad-sync/pad-admit.ps1`（PAD 适配器）：退出码 `0` 通过 / `1` 有 fail / `2` 仅存在 ask |
+| 准入网关 | **这份流程/这次运行能不能跑**（16 项只读检查，一次返回全部问题） | `tools/pad-sync/pad-admit.ps1`（PAD 适配器）：退出码 `0` 通过 / `1` 有 fail / `2` 仅存在 ask |
 
 **指纹（PAD 适配器）**：发布后把 `.robin`、部署配置、验收判据三份内容的 SHA256 写进基线
 （v3 另收流程实际引用的脚本），准入时与基线比对；不一致默认 `fail`，直接阻断。

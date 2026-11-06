@@ -32,7 +32,7 @@
 | `skills/pad-flow-designer/` | 需求 → `flow.json` 的设计规则 |
 | `skills/pad-robin-coder/` | 生成脚本时的红线清单 |
 | `docs/nl-to-flow-guide.md` | 一句话 → flow.json → 四项校验的完整示例 |
-| `tests/eval/` | 15 个合成样例（9 个流程 + 6 个 trigger）+ 结构断言，可当模板抄 |
+| `tests/eval/` | 16 个合成样例（10 个流程 + 6 个 trigger）+ 结构断言，可当模板抄 |
 
 ## 1.5 目录约定（工具与业务彻底分离）
 
@@ -50,6 +50,10 @@
 2. **参数不许造**：`params` 的键必须是该动作 `input_params` 里的真实参数名。
 3. **副作用必须可跳过**：发信、过账、删文件放进 `guard` 节点（条件 `DryRun <> $'''1'''`），
    并且 `flow.json` 必须有 `budget`；`Scripting.RunDOSCommand*` / `RunVBScript*` 节点必须有 `intent`。
+
+触发声明也只认一种形状：`"trigger": { "kind": "manual" | "schedule" | "file" }`。
+`manual` 只允许 `{ "kind": "manual" }`；旧形状 `{ "type": "...", "config": {...} }` 会被判
+`TRIGGER_LEGACY_SHAPE`（不做静默映射），完整字段见 `docs/trigger-adapter-design.md`。
 
 补充编码原则：所有 py / vbs / PAD / ps1 代码遵循 `docs/script-standards.md` 的**奥卡姆剃刀**——
 只做当前需求，能复用不新建，能删不加；但副作用守卫、幂等、审计、错误处理不在此列。
@@ -104,4 +108,4 @@ node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 3. `pad-admit` 0 fail（warn 可以，但要向用户说明）
 4. 产物路径、粘贴步骤、需要人工补的部分（UI 元素 / VBS / 账号）都明确告诉用户
 
-示例见 `docs/nl-to-flow-guide.md`；9 个可抄的样例在 `tests/eval/fixtures/`。
+示例见 `docs/nl-to-flow-guide.md`；16 个可抄的样例在 `tests/eval/fixtures/`（10 个流程 + 6 个 trigger）。

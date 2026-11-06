@@ -1,7 +1,13 @@
 {
   "name": "excel-read-write",
   "description": "打开 Excel、读取全部数据、有数据就写一行标记再保存（合成样例）",
-  "trigger": { "type": "schedule", "config": { "time": "07:00" } },
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-sample-excel-read-write",
+    "time": "07:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday"
+  },
   "budget": { "maxLoop": 1 },
   "variables": [
     { "name": "ExcelPath", "type": "string", "default": "C:\\Temp\\report.xlsx" }
@@ -26,7 +32,9 @@
         "LoadAddInsAndMacros": false,
         "UseMachineLocale": false
       },
-      "next": ["2"]
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "2",
@@ -38,7 +46,9 @@
         "GetCellContentsMode": "TypedValues"
       },
       "output_map": { "RangeValue": "Rows" },
-      "next": ["3"]
+      "next": ["3"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "3",
@@ -47,21 +57,27 @@
       "pad_hint": "IF",
       "params": { "Condition": "Rows.Count > 0" },
       "branch": { "trueBody": ["4"], "falseBody": [] },
-      "next": ["5"]
+      "next": ["5"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "4",
       "label": "写一行标记",
       "type": "action",
       "pad_hint": "Excel.WriteToExcel.WriteCell",
-      "params": { "Column": "A", "Row": 2, "Value": "$'''checked'''" }
+      "params": { "Column": "A", "Row": 2, "Value": "$'''checked'''" },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "5",
       "label": "保存并关闭",
       "type": "action",
       "pad_hint": "Excel.CloseExcel.CloseAndSave",
-      "params": {}
+      "params": {},
+      "run_mode": "auto",
+      "idempotent": true
     }
   ]
 }

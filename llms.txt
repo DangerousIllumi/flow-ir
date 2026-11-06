@@ -29,6 +29,7 @@
 2. 副作用必须可跳过：发信、过账、删文件放进 `guard`，`flow.json` 必须声明 `budget`。
 3. `business/` 永不入库、永不公开：整目录被忽略，提交前门禁与公开层扫描双重拦截。
 4. 不替人做三件事：不录 UI 元素、不编造 SAP 录制产物、不替人发布到生产。
+5. 触发声明只写 `kind`（`manual` / `schedule` / `file`）；旧 `type`/`config` 形状判 `TRIGGER_LEGACY_SHAPE`。
 
 ## 读什么
 
@@ -46,7 +47,7 @@
 - [AGENTS.md](AGENTS.md)：AI 助手的操作手册（环境准备、仓库地图、六步工作流、报错处理）
 - [README.md](README.md)：项目定位、能力边界、工具目录、逐条报错对照
 - [docs/nl-to-flow-guide.md](docs/nl-to-flow-guide.md)：一句话 → `flow.json` → 四项校验的完整示例
-- [docs/admission-gate.md](docs/admission-gate.md)：准入 14 项、策略、指纹与公开边界
+- [docs/admission-gate.md](docs/admission-gate.md)：准入 16 项、策略、指纹与公开边界
 - [docs/agent-prompts.md](docs/agent-prompts.md)：`flow.json` 字段约定
 - [docs/script-standards.md](docs/script-standards.md)：脚本规范
 - [docs/trigger-adapter-design.md](docs/trigger-adapter-design.md)：触发声明与注册器设计

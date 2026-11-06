@@ -1,7 +1,13 @@
 {
   "name": "guard-notify",
   "description": "发通知邮件，但 DRY_RUN=1 时跳过（合成样例）",
-  "trigger": { "type": "schedule", "config": { "time": "10:00" } },
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-sample-guard-notify",
+    "time": "10:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday"
+  },
   "budget": { "maxLoop": 1 },
   "variables": [
     { "name": "DryRun", "type": "string", "deployKey": "DRY_RUN" },
@@ -20,7 +26,9 @@
       "type": "action",
       "pad_hint": "Outlook.Launch",
       "params": {},
-      "next": ["2"]
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "2",
@@ -29,7 +37,9 @@
       "pad_hint": "GUARD",
       "when": "DryRun <> $'''1'''",
       "body": ["3"],
-      "elseBody": ["4"]
+      "elseBody": ["4"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "3",
@@ -43,7 +53,12 @@
         "IsBodyHtml": false,
         "IsDraft": false,
         "Account": "{{variables.MailAccount}}"
-      }
+      },
+      "run_mode": "auto",
+      "idempotent": false,
+      "reversible": false,
+      "reversibility_note": "邮件发出后无法撤回，只能补发更正",
+      "idempotency_note": "同一轮重跑会重复发送同一封通知邮件；跳过发信请设 DRY_RUN=1"
     },
     {
       "id": "4",
@@ -58,7 +73,9 @@
         "DefaultButton": "Button1",
         "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "DryRunNoticeButton" }
+      "output_map": { "ButtonPressed": "DryRunNoticeButton" },
+      "run_mode": "auto",
+      "idempotent": true
     }
   ]
 }

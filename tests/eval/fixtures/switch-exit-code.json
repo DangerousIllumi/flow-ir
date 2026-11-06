@@ -1,7 +1,13 @@
 {
   "name": "run-script-three-way",
   "description": "跑一个脚本，按退出码三路分支（合成样例）",
-  "trigger": { "type": "schedule", "config": { "time": "09:00" } },
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-sample-switch-exit-code",
+    "time": "09:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday"
+  },
   "budget": { "maxLoop": 1 },
   "variables": [
     { "name": "ScriptPath", "type": "string", "default": "C:\\Temp\\job.cmd" },
@@ -25,7 +31,12 @@
         "WorkingDirectory": "{{variables.WorkDir}}"
       },
       "output_map": { "ExitCode": "ExitCode" },
-      "next": ["2"]
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": false,
+      "reversible": false,
+      "reversibility_note": "脚本副作用由被调脚本决定，无法自动回退",
+      "idempotency_note": "重跑会再执行一次同一命令，副作用取决于脚本本身"
     },
     {
       "id": "2",
@@ -39,7 +50,9 @@
           { "case": "= 2", "body": ["4"] }
         ],
         "default": ["5"]
-      }
+      },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "3",
@@ -50,7 +63,9 @@
         "Message": "完成", "Title": "结果", "Icon": "Information",
         "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "OkButton" }
+      "output_map": { "ButtonPressed": "OkButton" },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "4",
@@ -61,7 +76,9 @@
         "Message": "有差异", "Title": "结果", "Icon": "Warning",
         "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "DiffButton" }
+      "output_map": { "ButtonPressed": "DiffButton" },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "5",
@@ -72,7 +89,9 @@
         "Message": "异常", "Title": "结果", "Icon": "ErrorIcon",
         "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "FailButton" }
+      "output_map": { "ButtonPressed": "FailButton" },
+      "run_mode": "auto",
+      "idempotent": true
     }
   ]
 }

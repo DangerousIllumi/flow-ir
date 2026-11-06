@@ -1,7 +1,13 @@
 {
   "name": "loop-with-break",
   "description": "有界循环，满足条件就提前跳出（合成样例）",
-  "trigger": { "type": "schedule", "config": { "time": "08:00" } },
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-sample-loop-with-break",
+    "time": "08:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday"
+  },
   "budget": { "maxLoop": 5 },
   "variables": [
     { "name": "Threshold", "type": "number", "default": 3 }
@@ -18,7 +24,9 @@
       "type": "loop",
       "pad_hint": "LOOP",
       "loop": { "kind": "fromto", "index": "Idx", "from": 1, "to": 5, "step": 1, "body": ["2"] },
-      "next": ["4"]
+      "next": ["4"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "2",
@@ -26,13 +34,17 @@
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "Idx >= Threshold" },
-      "branch": { "trueBody": ["3"], "falseBody": [] }
+      "branch": { "trueBody": ["3"], "falseBody": [] },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "3",
       "label": "跳出循环",
       "type": "break",
-      "pad_hint": "EXIT LOOP"
+      "pad_hint": "EXIT LOOP",
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "4",
@@ -47,7 +59,9 @@
         "DefaultButton": "Button1",
         "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "DoneButton" }
+      "output_map": { "ButtonPressed": "DoneButton" },
+      "run_mode": "auto",
+      "idempotent": true
     }
   ]
 }

@@ -52,5 +52,5 @@ Get-ChildItem tests\*.Tests.ps1 | ForEach-Object { Invoke-Pester -Script $_.Full
 - [ ] 所有测试命令通过
 - [ ] 改了 `flow.json` 的话，`.robin` 已重新生成且 `compare-robin` 一致
 - [ ] 改了 `.ps1` 的话，文件仍带 BOM，且 `pad-admit.ps1` 端到端退出码为 0
-- [ ] 文档里的数字（轮询次数、时间、开关）与代码一致（`tests/test_docs.py` 会兜底）
+- [ ] 文档里的数字（轮询次数、时间、开关、样例计数）与代码/实际文件一致（以 `eval-flow.js tests/eval` 与准入输出为准）
 - [ ] 没有真实邮箱、工号、内网地址、业务数据

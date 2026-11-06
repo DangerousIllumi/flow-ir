@@ -1,7 +1,13 @@
 {
   "name": "multi-condition-branch",
   "description": "两个条件同时成立才处理（合成样例）",
-  "trigger": { "type": "schedule", "config": { "time": "08:30" } },
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-sample-multi-condition",
+    "time": "08:30",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday"
+  },
   "budget": { "maxLoop": 1 },
   "variables": [
     { "name": "SourceDir", "type": "string", "default": "C:\\Temp\\inbox" },
@@ -25,7 +31,9 @@
         "FailOnAccessDenied": false
       },
       "output_map": { "Files": "Files" },
-      "next": ["2"]
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "2",
@@ -33,7 +41,9 @@
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "Enabled = $'''True''' AND Files.Count > 0" },
-      "branch": { "trueBody": ["3"], "falseBody": ["4"] }
+      "branch": { "trueBody": ["3"], "falseBody": ["4"] },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "3",
@@ -44,7 +54,9 @@
         "Message": "开始处理", "Title": "处理中", "Icon": "Information",
         "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "StartButton" }
+      "output_map": { "ButtonPressed": "StartButton" },
+      "run_mode": "auto",
+      "idempotent": true
     },
     {
       "id": "4",
@@ -55,7 +67,9 @@
         "Message": "条件不满足，跳过", "Title": "跳过", "Icon": "Warning",
         "Buttons": "OK", "DefaultButton": "Button1", "IsTopMost": true
       },
-      "output_map": { "ButtonPressed": "SkipButton" }
+      "output_map": { "ButtonPressed": "SkipButton" },
+      "run_mode": "auto",
+      "idempotent": true
     }
   ]
 }

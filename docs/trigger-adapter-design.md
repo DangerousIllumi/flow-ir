@@ -1,8 +1,10 @@
-> 状态：设计基线 v1；trigger 断言、pad-admit 第 14 项、schedule/manual/file 注册器与 file 守望已落地，其余见第 7 节。
+> 状态：设计基线 v1；trigger 断言、pad-admit 第 15 项、schedule/manual/file 注册器与 file 守望已落地，其余见第 7 节。
 
 # 触发声明（`trigger`）与注册器设计稿（v1）
 
-> 设计基线：`flow.json` 顶层已有 `trigger` 键（见 `docs/agent-prompts.md` 与 `tools/flow-drawio/example-flow.json`），但它是**惰性字段**：生成器、`check.js`、`eval-flow.js` 都不读取、不校验，`drawio-to-flow.js` 只是原样搬运。本设计**复用这个键，不另造第二套配置体系**，把它从“注释”升级为“可校验、可注册的声明”。
+> 设计基线：`flow.json` 顶层已有 `trigger` 键（见 `docs/agent-prompts.md` 与 `tools/flow-drawio/example-flow.json`）。
+> 在设计落地前它是**惰性字段**：生成器、`check.js` 不读取、不校验，`drawio-to-flow.js` 只是原样搬运；
+> 现在 `eval-flow.js` 的 trigger 断言与 `pad-admit` 第 15 项会校验它。本设计**复用这个键，不另造第二套配置体系**，把它从“注释”升级为“可校验、可注册的声明”。
 
 ## 1. 为什么需要：三个具体问题
 
@@ -214,7 +216,7 @@ CLI 外壳：
 
 `check.js` **不改**：它只看 `.robin`，看不到 `flow.json` 顶层字段，这已是既有共识。
 
-### 4.2 `pad-admit` 第 14 项 `TRIGGER`
+### 4.2 `pad-admit` 第 15 项 `TRIGGER`
 
 静态校验 + 可选的本机只读校验（`-TriggerLive` 开关，默认关闭，保证离线生成阶段结果可复现）。
 
@@ -270,11 +272,11 @@ CLI 外壳：
 | 步骤 | 内容 | 验收命令与判据 |
 |---|---|---|
 | 1 声明层 | `trigger` 规范 + `eval-flow.js` 两个新 op + 正/反用例 | `node tools\pad-robin\eval-flow.js tests\eval` 退出 0；反例用 `expect=invalid` + `code` 断言命中 `TRIGGER_*`（整套仍绿）；把反例改成默认“期望合法”时退出 1 并打印结果码 |
-| 2 准入层 | `pad-admit` 第 14 项 `TRIGGER`，默认 warn | `.\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<流程名>.json -Json` 输出含 `"id":"TRIGGER"`；无 `trigger` 的存量流为 warn 且退出码不变；`kind=mail` 的样例退出 1 |
+| 2 准入层 | `pad-admit` 第 15 项 `TRIGGER`，默认 warn | `.\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<流程名>.json -Json` 输出含 `"id":"TRIGGER"`；无 `trigger` 的存量流为 warn 且退出码不变；`kind=mail` 的样例退出 1 |
 | 3 计划任务注册器 | `TriggerRegistry.psm1` + `pad-trigger.ps1`（schedule） | `-Register -DryRun` 只打印动作不写系统；真注册到 `flow-ir-<计划任务名>-selftest` 后 `-Test` 返回 `ok=true`；`schtasks /Query /TN <计划任务名> /XML` 中时间/星期与声明一致；再注册一次返回 `unchanged`；`-Unregister` 后 `-Test` 返回未注册 |
 | 4 文件落地注册器 | `file` 分支 + `-Watch` + 状态账本 | 指向临时 `<附件目录>` 注册；投放一个稳定大小的探针文件 → 出现新 runId；再投放同名同大小文件 → 不重复触发；`-Test` 全程只读（目录 mtime 不变） |
 
-每步结束都跑一次 `node tools\pad-robin\check.js <out.robin>` 与 `pad-admit`，确认没有把既有 13 项弄红。
+每步结束都跑一次 `node tools\pad-robin\check.js <out.robin>` 与 `pad-admit`，确认没有把既有检查项弄红。
 
 ---
 
