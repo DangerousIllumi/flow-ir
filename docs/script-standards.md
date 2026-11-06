@@ -359,7 +359,7 @@ Write-Output "PAD_SYNC_RESULT=$json"
 
 `tools/pad-sync/repair-executor.ps1`：
 
-- **规则 1**：`FileNotFound*` → 从 `.robin` 提取缺失的绝对路径，在 `C:\PAD` 下找同名文件，**唯一命中才替换**，否则放弃
+- **规则 1**：`FileNotFound*` → 从 `.robin` 提取缺失的绝对路径，在 `-PadRoot` 指定的 PAD 根目录下找同名文件，**唯一命中才替换**，否则放弃
 - **规则 2**：`SAP.*` → 不自动改（屏幕号随事务码变化，必须人工复核）
 - 其他 → 写 `<output>.hint.md` 后 exit 1
 

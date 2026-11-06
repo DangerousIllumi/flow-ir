@@ -1,85 +1,54 @@
-# flow-ir（私有库）
+# flow-ir
 
-**用一句话生成 Power Automate Desktop 工作流。**
+把业务流程描述转成可直接粘贴进 Power Automate Desktop（PAD）的 Robin 脚本。
 
-自然语言 → `flow.json`（唯一设计源）→ `.robin`（可直接粘进 PAD 画布）→ 校验 · 准入 · 发布 · 验收。
+自然语言 → `flow.json`（唯一设计源）→ `.robin`（可粘进 PAD 画布）→ 设计校验 → 脚本生成 →
+静态校验 → 准入审查 → 注入发布 → 调度与监控。
 
-> 名字里的 **IR** 指 `flow.json` 这个中间表示：需求先落成 IR，再由确定性编译器产出各引擎的脚本。
-> 目前只有 PAD 一个后端；要加别的引擎（另一款 RPA、云端流、Python/VBS），加后端即可，IR 与门禁不用动。
+> **IR** 指 `flow.json` 这个中间表示：需求先落成可评审的结构化定义，再由确定性编译器产出目标脚本。
+> 目前只有 PAD 一个后端；要加别的引擎（另一款 RPA、云端流、Python/VBS），只加后端即可，IR 与门禁不用动。
 
-> 面向两类人：想让 AI 帮忙做 RPA 的业务同事，和要接手/扩展这套工具的开发者。
-
-> 本仓库是 **私有开发副本**：工具链与公开库 [flow-ir](https://github.com/DangerousIllumi/flow-ir) 一致，
-> 额外带一套生产流程示例与内部文档。工具链改动最终以公开库为准。
-
-本仓库采用「工具层 / 业务层」强制分离：
-
-| 层 | 内容 | 是否入库 |
-|---|---|---|
-| 工具层 | `tools/`、`docs/`、`tests/`、`skills/`、`docs/prompts/` | 入库、可公开 |
-| 业务层 | `business/flows/*`、`business/config/*`、`business/docs/*`、`business/policy.json`、`business/manifest.jsonl`、`business/logs/`、`business/snapshots/`、`business/worklog/` | **绝不入库**：`.gitignore` 忽略 + 推送门禁硬拦截 |
-
-本仓库额外包含（公开库不含，全部在 `business/` 下）：
-
-| 内容 | 说明 |
-|---|---|
-| `business/flows/<业务名>.*` | 生产流程：`flow.json` / `.robin` / `.drawio` / 验收判据 |
-| `business/config/<业务名>*.json` | 该流程的部署配置（真实 config 不入库） |
-| `business/policy.json` | 生产准入策略（deny / ask / allow） |
-| `business/docs/runbook.md` | 该流程的运行手册 |
-| `business/docs/project-status.md` | 内部现状与改动记录 |
-| `business/tests/` | 该流程的需求级结构断言与业务回归用例 |
-| `business/tools/` | 业务专属脚本（如报表核对）与合成数据生成器 |
-| `business/manifest.jsonl` / `business/snapshots/` | 运行与发布审计、回滚快照（均被 .gitignore 忽略） |
+面向两类使用者：想让 AI 帮忙做 RPA 的业务同事，和要接手/扩展这套工具的开发者。
 
 ---
 
-## 它能做到什么，做不到什么
+## 工具层与业务层
 
-先说边界，避免误解。
+本仓库强制分离「工具层」与「业务层」：
+
+| 层 | 内容 | 是否入库 |
+|---|---|---|
+| 工具层 | `tools/`、`docs/`、`tests/`、`skills/`、`AGENTS.md`、`setup.ps1`、`.github/`、`.githooks/` | 入库、可公开 |
+| 业务层 | `business/` 下的流程定义、部署配置、准入策略、内部文档、业务脚本、日志、快照、指纹 | **不入库** |
+
+`business/` 被 `.gitignore` **整目录忽略**：`git status` 不会显示其中的文件，提交前的
+`pre-commit` 钩子与公开库内容扫描门禁还会硬拦截该目录下的路径（命中即退出码 2）。
+
+本地工作区可以在 `business/` 下放业务流程与内部文档，该目录不入库，**clone 后为空**。
+换句话说：仓库分发的是工具链本身，业务流程只存在于使用者自己的机器上，不会随仓库泄漏。
+
+---
+
+## 能做什么，做不到什么
 
 | 能做 | 怎么做到的 |
 |---|---|
-| 把「每月 3 号从邮箱取对账单，和系统核对，不一致的发邮件给经理」写成一版**可评审的结构化定义**（`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
-| 把定义**确定性地编译**成 `.robin` 脚本 | `flow-to-robin.js` 查动作知识库填空，动作/参数写错直接拒绝产出 |
-| 编译前**静态校验**：语法、变量是否定义、`edges` 与结构是否漂移 | `check.js` / `check-flows.js` / `lint-robin.js` |
-| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（14 项，只读） |
-| 副作用**可跳过**：发信、过账、删文件的 `guard` + `DRY_RUN` | 生成器 + 策略双层保证 |
+| 把一段口语化需求写成**可评审的结构化定义**（`flow.json` + 流程图） | AI 助手按 [AGENTS.md](AGENTS.md) 与 [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) 产出 |
+| 把定义**确定性地编译**成 `.robin` | `flow-to-robin.js` 查动作知识库填空；动作/参数写错直接拒绝产出 |
+| 编译前后**静态校验**：语法、变量是否定义、`edges` 与结构是否漂移 | `check.js` / `check-flows.js` / `lint-robin.js` / `check-flow.js` |
+| **准入**：动作是否注册、是否需要 UI 选择器、预算、触发声明、策略 deny/ask/allow | `pad-admit.ps1`（14 项只读检查） |
+| 副作用**可跳过**：发信、过账、删文件包在 `guard` 里，靠 `DRY_RUN` 控制 | 生成器 + 准入策略双层保证 |
 | 注入设计器、发布、回滚、定时、遥测、产物验收 | `tools/pad-sync/` |
 
 | 做不到 | 说明 |
 |---|---|
-| 自己听懂自然语言 | 仓库里没有 NL 解析器；「需求 → `flow.json`」这一步由**你配的 AI 助手**完成，本仓库提供的是提示词、契约和尺子 |
+| 自己听懂自然语言 | 仓库里没有 NL 解析器；「需求 → `flow.json`」由**你配的 AI 助手**完成，本仓库提供提示词、契约和尺子 |
 | 替你录制 UI 元素 | 需要选择器的动作（部分网页/桌面自动化）必须人工在 PAD 里录制，生成器会明确拒绝 |
 | 生成 SAP 的 VBS 脚本 | 事务码导出/过账这类 VBS 是录制产物，不随仓库分发 |
 | 替你按下生产发布 | `pad-deploy` / `pad-release` 会触发真实运行，必须人来确认 |
 
-**一句话结论**：`AI 助手 + 本仓库 + 动作知识库` 三者齐了，才是「自然语言 → 可运行 PAD 流」的闭环；缺了 AI，就只能从 `flow.json` 这一步开始。
-
----
-
-## 两个公开库的分工
-
-| 仓库 | 提供什么 | 是否必需 |
-|---|---|---|
-| **本仓库** | 中间表示（`flow.json`）、编译器、静态校验、准入网关、发布/回滚/定时、提示词与 Skill、评估集 | 是 |
-| [pad-robin-action-kb](https://github.com/JoeG592/pad-robin-action-kb) | 1,086 个 PAD 动作的真实 `actionId` / 参数名 / 输出名 / 粘贴样例 | **是**（`setup.ps1` 自动克隆，不入本库） |
-
-知识库是「动作不许编」的唯一依据：生成器只认里面存在的三段式 `actionId` 和真实参数名，查不到就拒绝产出。
-
-## 编译后端（引擎）
-
-`flow.json` 是前端，后端负责把它变成某个平台能跑的脚本。目前只有一个。
-
-| 后端 | 状态 | 产物 |
-|---|---|---|
-| Power Automate Desktop | **已实现** | `.robin`，粘贴进画布即可 |
-| 其它 RPA（如 UiPath / Automation Anywhere） | 未实现 | — |
-| Power Automate 云端流 | 未实现 | — |
-| Python / VBS 脚本 | 未实现（现阶段由 AI 直接写，不进 IR） | — |
-
-新增后端的接口约定：**只读 `flow.json`**，输出目标脚本；必须复用同一套静态校验与准入规则，
-不允许在后端里偷偷绕开「动作/参数不许编」「副作用可跳过」这两条。
+**一句话**：`AI 助手 + 本仓库 + 动作知识库` 三者齐了才是「自然语言 → 可运行 PAD 流」的闭环；
+缺了 AI，就只能从 `flow.json` 这一步开始。
 
 ---
 
@@ -88,90 +57,107 @@
 | 依赖 | 必需 | 用途 |
 |---|---|---|
 | Node.js ≥ 18 | 是 | 生成器、静态校验、流程图、评估集 |
-| Git | 是 | 克隆动作知识库 |
+| Git | 是 | 克隆动作知识库、启用提交前钩子 |
 | PowerShell 5.1+ | 是 | 准入 / 部署 / 发布 / 定时 |
 | Power Automate Desktop（Windows） | 要跑流时必需 | 执行 `.robin` |
 | Python 3.x + openpyxl | 否 | 工作日历判断、验收里的 Excel 判据 |
 | AI 编程助手（任意） | 否 | 把自然语言写成 `flow.json` |
 
-> 许可提示：运行桌面流本身需要 PAD 的相应许可（Premium 或 Windows 11 默认环境的个人版）。
-> 编辑器里的「流程图模式」「流检查器」不是单独的付费功能。
+> 运行桌面流本身需要 PAD 的相应许可。编辑器里的「流程图模式」「流检查器」不是单独的付费功能。
 
 ---
 
-## 3 步上手（有 AI 助手）
+## 快速开始
 
 ```powershell
 git clone https://github.com/DangerousIllumi/flow-ir.git flow-ir
 cd flow-ir
-.\setup.ps1            # 安装 Node 依赖 + 克隆动作知识库
+.\tools\check-env.ps1    # 先确认 Node >= 18、Git、PowerShell 可用
+.\setup.ps1              # 安装 Node 依赖、启用提交前门禁、克隆动作知识库
 ```
+
+`setup.ps1` 做四件事：
+
+1. 检查 Node.js / Git 版本；
+2. 安装 Node 依赖（流程图自动布局用）并设置 `core.hooksPath=.githooks`；
+3. 克隆 `pad-robin-action-kb`（动作知识库）并校验关键文件，HTTPS 失败自动回退 SSH；
+4. 创建 `business\flows` 目录。
 
 > 公司网络常拦截 HTTPS 直连 GitHub（报 `Recv failure: Connection was reset`）。
 > 这时改用 SSH：`git clone git@github.com:DangerousIllumi/flow-ir.git flow-ir`。
-> `setup.ps1` 克隆知识库时也会自动从 HTTPS 回退到 SSH，都失败会给出手动步骤。
->
 > 只是用的话 clone 即可；想改这套工具本身才需要 fork。
 > 若 PowerShell 提示「在此系统上禁止运行脚本」，改用
 > `powershell -ExecutionPolicy Bypass -File .\setup.ps1`。
->
-> **新 clone 必须手动重建真实词表**：`tools/publish/public-safe.denylist.local.json` 不在库内
-> （被 `.gitignore` 忽略）。缺这个文件时，`check-public-safe.ps1` 只加载
-> `public-safe.denylist.json` 的占位词表，拦不住真实业务名、流程名和路径。
-> 重建方式：照 `public-safe.denylist.json` 的分类结构（`businessName` / `flowName` / `realPath`）
-> 新建同结构 JSON，填入自己的真实词，保存在同一路径即可；不要提交该文件。
 
-**关键一步：在已打开这个目录的 AI 编程助手里，第一句话这样发**（只贴链接、不打开目录，AI 看不到 `AGENTS.md`）：
+> **新 clone 必须手动重建真实词表**：`tools\publish\public-safe.denylist.local.json` 不在库内
+> （被 `.gitignore` 忽略）。缺这个文件时，`check-public-safe.ps1` 只加载
+> `public-safe.denylist.json` 的占位规则，拦不住真实业务名、流程名和内部路径。
+> 重建方式：照 `public-safe.denylist.json` 的分类结构（`businessName` / `flowName` / `realPath` /
+> `accountOrServer` / `privateIdentifier`）新建同结构 JSON，填入自己的真实词，保存在同一路径即可；
+> **不要提交该文件**。
+
+**有 AI 助手时的最短路径**：在已打开本目录的 AI 编程助手里，第一句话这样发
+（只贴链接、不打开目录，AI 看不到 `AGENTS.md`）：
 
 ```text
-读 AGENTS.md，按 docs/prompts/nl-to-flow.md 执行：先跑 .\setup.ps1，再把下面的需求写成 business/flows/<name>.json，走完 生成 → 静态校验 → 准入。
+读 AGENTS.md，按 docs/prompts/nl-to-flow.md 执行：先跑 .\setup.ps1，再把下面的需求写成 business/flows/<name>.json，走完 设计 → 生成 → 静态校验 → 准入。
 
-需求：<在这里写，例如：每天把 D:\inbox 下的 CSV 复制到 D:\archive，同名覆盖，结束后弹窗提示数量>
+需求：<在这里写，例如：每天把源目录下的 CSV 复制到归档目录，同名覆盖，结束后弹窗提示数量>
 ```
 
-发完只需要等它跑：
+之后只需要：
 
-1. AI 会自己读 `AGENTS.md` 与 `docs/prompts/nl-to-flow.md`，不需要你转述里面写了什么。
-2. 它跑完 **生成 → 静态校验 → 准入** 后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布，`Ctrl+V`。
+1. AI 自己读 `AGENTS.md` 与 `docs/prompts/nl-to-flow.md`，不需要你转述里面写了什么；
+2. 它跑完「生成 → 静态校验 → 准入」后，把 `out.robin` 全选复制，粘进 PAD 新建流程的画布（`Ctrl+V`）；
 3. 交付标准见 AGENTS.md 第 6 节：生成器 0 error、`check.js` 0 errors、准入 0 fail，
    并明确告诉你哪些部分需要人工补（UI 元素 / 脚本 / 账号）。
 
 ---
 
-## 不用 AI 也能用（从 `flow.json` 开始）
+## 标准工作流（六步）
+
+不依赖 AI 时，从一份已有的 `flow.json` 开始：
 
 ```powershell
-# 1) 画评审图（可选）
+# 1) 画评审图（可选），并校验 edges 与 next/branch 是否一致
 node tools\flow-drawio\flow-to-drawio.js business\flows\<name>.json business\flows\<name>.drawio
+node tools\flow-drawio\check-flow.js business\flows\<name>.json
 
-# 2) 编译
+# 2) 生成
 node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
 
 # 3) 静态校验（0 errors 才能继续）
 node tools\pad-robin\check.js out.robin
 
-# 4) 流程卫生（未读输出 / 未用变量 / IF 嵌套过深）
+# 4) 流程卫生（未读输出 / 未用变量 / IF 嵌套过深；建议但不阻断）
 node tools\pad-robin\lint-robin.js out.robin
 
 # 5) 准入（只读，0 fail 才能交付）
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<name>.json -RobinFile out.robin
 
-# 6) 结构评估（可选：需求级断言）
-node tools\pad-robin\eval-flow.js tests\eval\<name>.cases.json
+# 6) 结构评估（需求级断言）
+node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ```
 
-`flow.json` 的写法见 [docs/agent-prompts.md](docs/agent-prompts.md)，
-可抄的 9 个合成样例在 [tests/eval/fixtures](tests/eval/fixtures)。
+- `flow.json` 的写法见 [docs/agent-prompts.md](docs/agent-prompts.md)；
+- 可直接抄的中性样例在 [tests/eval/fixtures](tests/eval/fixtures)：15 个合成样例（9 个流程 + 6 个 trigger），
+  对应的 `*.cases.json` 共 10 个，位于 [tests/eval](tests/eval)，可整目录一起跑：`node tools\pad-robin\eval-flow.js tests\eval`；
+- 业务用例按 AGENTS.md 的约定放在 `business\tests\eval\`（不入库）。
 
 ### 上线链路（需要 PAD 真机）
 
 ```powershell
-Copy-Item business\config\sample.example.json business\config\<name>.json   # 填自己的账号与路径（示例不含真实凭据）
+# 部署配置：<流程名>.json + 同目录 <流程名>.schema.json（描述必填字段与格式）
+# 本地工作区里通常还有一份 <流程名>.example.json 模板（不含真实凭据），复制后填自己的账号与路径
+Copy-Item business\config\<name>.example.json business\config\<name>.json
+
 .\tools\pad-sync\pad-deploy.ps1 -FlowName <PAD 流程名> -SourceRobin business\flows\<name>.robin -ConfigFile business\config\<name>.json -AllowProd -SkipConfirm -PublishOnly
 ```
 
-`pad-deploy` 会替换 `{{KEY}}` 占位符、注入设计器、发布并校验哈希；`pad-release` 在此基础上加
-「测试摘要 → 人工确认（三哈希指纹）→ 快照」，`pad-rollback` 可从快照回退。
+- `pad-deploy` 会替换 `{{KEY}}` 占位符、注入设计器、发布并校验哈希；
+  只校验配置不注入时可加 `-ValidateOnly`；
+- `pad-release` 在此基础上加「测试摘要 → 人工确认（三哈希指纹）→ 快照」；
+- `pad-rollback` 可从快照回退；`pad-schedule` / `pad-trigger` 负责定时与触发器注册。
 
 跑完想单独核对产物（不碰 PAD、只读）：
 
@@ -181,23 +167,58 @@ Copy-Item business\config\sample.example.json business\config\<name>.json   # �
 
 ---
 
+## 工具目录
+
+| 目录 | 作用 |
+|---|---|
+| `tools/check-env.ps1` | 环境检查（Node / Git / PowerShell） |
+| `tools/flow-drawio/` | `flow.json` ↔ `.drawio` 画布；`check-flow.js` 校验边一致性 |
+| `tools/pad-robin/` | 编译（`flow-to-robin.js`）、静态校验（`check.js` / `check-flows.js`）、流程卫生（`lint-robin.js`）、生成结果比对（`compare-robin.js`）、结构评估（`eval-flow.js`） |
+| `tools/pad-sync/` | 只读准入（`pad-admit.ps1`）、部署（`pad-deploy.ps1`）、发布（`pad-release.ps1`）、回滚（`pad-rollback.ps1`）、定时（`pad-schedule.ps1`）、触发注册（`pad-trigger.ps1`）、注入运行（`pad-sync.ps1`）、指纹（`pad-fingerprint.ps1`）、验收（`pad-verify.ps1`），以及告警 / 预检 / 遥测 / 编码等共享模块 |
+| `tools/publish/` | 推送前内容门禁 `check-public-safe.ps1` 与结构化词表 |
+| `tools/workday/` | 工作日历判断（通用件，可单独复用） |
+| `skills/` | `pad-flow-designer`（需求 → `flow.json` 的设计规则）、`pad-robin-coder`（写脚本时的红线清单） |
+| `tests/` | Pester 单元测试、Python 测试、公开评估集与遥测样例 |
+
+---
+
 ## 三条硬规则
 
 违反其中任何一条，工具会直接拒绝，不会产出半成品：
 
-1. **动作不许编**：`pad_hint` 必须是知识库里真实存在的三段式 `actionId`。
+1. **动作不许编**：`pad_hint` 必须是动作知识库里真实存在的三段式 `actionId`。
 2. **参数不许造**：`params` 的键必须是该动作 `input_params` 里的真实参数名。
 3. **副作用必须可跳过**：发信、过账、删文件放进 `guard`（条件 `DryRun <> $'''1'''`），
-   `flow.json` 必须声明 `budget`；`RunDOSCommand*` / `RunVBScript*` 节点必须带 `intent`。
+   `flow.json` 必须声明 `budget`；`Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` 节点必须带 `intent`。
+
+---
+
+## 门禁与指纹
+
+两道门禁，各自回答一个问题：
+
+| 门禁 | 回答的问题 | 关键实现 |
+|---|---|---|
+| 内容扫描 | **这些文件能不能推**（文件合规，注释里的业务名/真实路径仍可能泄漏，所以按内容逐行扫） | `tools/publish/check-public-safe.ps1`：命中词表即失败；`business/` 路径直接判错（退出码 2）。`pre-commit` 钩子扫暂存区，CI 用 `git ls-files` 兜底 |
+| 准入网关 | **这份流程/这次运行能不能跑**（14 项只读检查，一次返回全部问题） | `tools/pad-sync/pad-admit.ps1`：退出码 `0` 通过 / `1` 有 fail / `2` 仅存在 ask |
+
+**指纹**：发布后把 `.robin`、部署配置、验收判据三份内容的 SHA256 写进基线
+（v3 另收流程实际引用的脚本），准入时与基线比对；不一致默认 `fail`，直接阻断。
+基线数据只写在 `business/fingerprints/<流程名>.json`，不入库。
+
+业务层与公开边界详见 [docs/admission-gate.md](docs/admission-gate.md) 第 9 节。
+
+---
 
 ## 契约文件
 
 | 文件 | 回答的问题 |
 |---|---|
-| `business/flows/<name>.json` | 流程长什么样（节点、边、参数、变量） |
+| `business/flows/<name>.json` | 流程长什么样（节点、边、参数、变量、预算、触发声明） |
 | `business/flows/<name>.requirements.json` | 跑之前环境该有什么（目录、文件、可执行文件） |
-| `business/flows/<name>.acceptance.json` | 跑完了怎么算成功（产物存在/更新/内容匹配） |
-| `tests/eval/<name>.cases.json` | 需求里必须成立的结构断言（可当回归测试） |
+| `business/flows/<name>.acceptance.json` | 跑完了怎么算成功（产物存在 / 更新 / 内容匹配） |
+| `business/config/<name>.json` + `<name>.schema.json` | 部署时占位符填什么，以及配置本身是否合法 |
+| `business/tests/eval/<name>.cases.json` | 需求里必须成立的结构断言（可当回归测试） |
 
 验收判据支持 `fileExists` / `globNewerThan` / `pair` / `json` / `jsonl` / `logState`，
 由 `tools/pad-sync/PadAcceptance.psm1` 执行，不依赖 PAD 自己报没报错。
@@ -210,38 +231,39 @@ Copy-Item business\config\sample.example.json business\config\<name>.json   # �
 .
 ├── AGENTS.md                  AI 助手的入口手册（先读这个）
 ├── README.md                  本文件
-├── setup.ps1                  一次装好 Node 依赖与动作知识库
-├── tools/                     工具层（可公开）
+├── setup.ps1                  一次装好 Node 依赖、钩子与动作知识库
+├── tools/                     工具层
 │   ├── check-env.ps1          环境检查
 │   ├── flow-drawio/           flow.json ↔ .drawio，edges 一致性校验
 │   ├── pad-robin/             编译器、静态校验、流程卫生、比对、结构评估
-│   ├── pad-sync/              准入、部署、发布、回滚、定时、注入运行、遥测、验收、修复
+│   ├── pad-sync/              准入、部署、发布、回滚、定时、触发注册、注入运行、遥测、验收
 │   ├── publish/               推送前内容门禁 + 词表
-│   └── workday/               工作日历判断（通用件）
-├── docs/                      文档层（可公开）
-│   ├── prompts/nl-to-flow.md  可整段粘给 AI 的提示词
-│   └── governance/            NOTICE / SECURITY / CONTRIBUTING
-├── skills/
-│   ├── pad-flow-designer/     需求 → flow.json 的设计规则
-│   └── pad-robin-coder/       写脚本时的红线清单
-├── tests/                     Pester 套件 + 设计质量评估集 + 遥测样例
-├── business/                  业务层（绝不入库）
-│   ├── flows/                 真实 flow.json / .robin / 判据
-│   ├── config/                真实部署配置
-│   ├── docs/                  运行手册与内部现状
-│   ├── policy.json            生产准入策略
-│   ├── tools/                 业务专属脚本与合成数据生成器（如报表核对）
-│   ├── tests/                 业务回归用例与结构断言
-│   ├── logs/ snapshots/ worklog/ manifest.jsonl
-└── .github/workflows/ci.yml   Windows 上跑 pytest / Pester / Node / 生成一致性
+│   └── workday/               工作日历判断
+├── docs/                      文档层（含提示词与准入/脚本规范）
+├── skills/                    设计规则与脚本红线
+├── tests/                     Pester / Python 测试 + 公开评估集
+├── .githooks/                 pre-commit 内容门禁
+├── .github/workflows/ci.yml   Windows 上跑 pytest / Pester / Node / 评估集 / 准入样例
+├── pad-robin-action-kb/       动作知识库（不入库，setup.ps1 克隆）
+├── node_modules/              Node 依赖（不入库）
+└── business/                  业务层：本地工作区，不入库，clone 后为空
+    ├── flows/                 流程定义与配套判据
+    ├── config/                部署配置与 schema
+    ├── policy.json            准入策略（deny / ask / allow）
+    ├── docs/                  运行手册与内部记录
+    ├── scripts/               流程引用的 VBS / PowerShell 录制产物
+    ├── tools/                 业务专属脚本与合成数据生成器
+    ├── tests/                 业务回归用例与结构断言
+    ├── fingerprints/          发布基线（含机器名与真实路径，绝不入库）
+    ├── logs/ snapshots/ worklog/ manifest.jsonl
 ```
 
 ---
 
 ## 设计原则
 
-- **唯一设计源**：`flow.json` 是唯一可编辑的源；`.robin` 是产物，改它下次就会被覆盖。
-  CI 里有硬断言「重新生成的结果 == 仓库里的脚本」。
+- **唯一设计源**：`flow.json` 是唯一可编辑的源；`.robin` 是产物，改它下次生成就会被覆盖。
+  CI 在检出 `business/` 时会做硬断言「重新生成的结果 == 仓库里的脚本」。
 - **确定性优先**：编译阶段不调用模型，只查表；模型只出现在「写 `flow.json`」这一步。
 - **失败要早**：能在编译前挡住的错误（动作名、参数名、悬空引用、无界循环、策略命中），
   绝不留到 PAD 运行时。
@@ -249,13 +271,21 @@ Copy-Item business\config\sample.example.json business\config\<name>.json   # �
 
 ---
 
-## 常见问题
+## 遇到报错怎么办
 
-**粘进画布后一片空白、也没报错？**
-多半是语法被 PAD 静默丢弃。跑 `node tools\pad-robin\check.js out.robin`，它会指出第几行、哪个标识符。
+| 现象 | 说明 | 你该做什么 |
+|---|---|---|
+| `未知动作` / `未知参数` | `flow.json` 写错，不是生成器坏了 | 改 `flow.json`，别改生成器、别手改 `.robin` |
+| `变量 X 未定义` | 用了没被 SET 或没被动作产出的变量 | 补变量声明，或修正 `{{节点id.输出}}` 引用 |
+| `edges 与 next/branch 不一致` | 画图用的边和生成用的结构漂了 | 按报错补齐 `edges` |
+| 准入 `POLICY_DENY` | 命中 `business/policy.json` 的禁止规则 | 删掉该动作或改条件，不要绕过 |
+| 准入 `MISSING_INTENT` / `BUDGET_UNKNOWN` | 缺必填声明 | 补 `intent` / `budget` |
+| 结构评估 `缺声明节点` / `run_mode=` | 没回答「运行方式 / 幂等性」 | 补 `run_mode` / `idempotent` / `idempotency_note`，不要默认填充 |
+| `模块未找到 PAD_Robin_ActionKB.json` | 没跑 `setup.ps1` | 先跑快速开始里的环境准备 |
+| 粘进画布后一片空白、也没报错 | 多半是语法被 PAD 静默丢弃 | 跑 `node tools\pad-robin\check.js out.robin`，它会指出第几行、哪个标识符 |
 
-**`git clone` 知识库失败？**
-到 <https://github.com/JoeG592/pad-robin-action-kb> 下载 ZIP，解压到 `pad-robin-action-kb\` 即可。
+**`git clone` 知识库失败？** 到 <https://github.com/JoeG592/pad-robin-action-kb> 下载 ZIP，
+解压到 `pad-robin-action-kb\` 即可。
 
 **PowerShell 提示「在此系统上禁止运行脚本」？**
 
@@ -263,11 +293,22 @@ Copy-Item business\config\sample.example.json business\config\<name>.json   # �
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
-**改 `.robin` 后线上就漂了？**
-正常：`.robin` 是产物。要改就改 `flow.json` 再重新生成；设计器里的「应用修复」同理，不要点。
+**改 `.robin` 后线上就漂了？** 正常：`.robin` 是产物。要改就改 `flow.json` 再重新生成；
+设计器里的「应用修复」同理，不要点。
 
-**能跑在 Linux/CI 上吗？**
-编译、校验、评估集、画布生成都可以；注入 PAD、运行、发布必须 Windows + 已装 PAD。
+**能跑在 Linux/CI 上吗？** 编译、校验、评估集、画布生成都可以；
+注入 PAD、运行、发布必须 Windows + 已装 PAD。
+
+---
+
+## 配套的动作知识库
+
+生成器只认知识库里存在的三段式 `actionId` 和真实参数名，查不到就拒绝产出。
+
+| 仓库 | 提供什么 | 是否必需 |
+|---|---|---|
+| **本仓库** | 中间表示（`flow.json`）、编译器、静态校验、准入网关、发布/回滚/定时、提示词与 Skill、评估集 | 是 |
+| [pad-robin-action-kb](https://github.com/JoeG592/pad-robin-action-kb) | 1,086 个 PAD 动作的真实 `actionId` / 参数名 / 输出名 / 粘贴样例 | **是**（`setup.ps1` 自动克隆，不入本库） |
 
 ---
 
@@ -275,4 +316,3 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 MIT，见 [LICENSE](LICENSE)。第三方组件、以及不随本仓库分发的内容（动作知识库等）见 [NOTICE](docs/governance/NOTICE)。
 安全问题请按 [SECURITY.md](docs/governance/SECURITY.md) 反馈；贡献流程见 [CONTRIBUTING.md](docs/governance/CONTRIBUTING.md)。
-业务文件放在 `business/`，入库与公开的边界见 [docs/admission-gate.md](docs/admission-gate.md)。

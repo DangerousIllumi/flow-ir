@@ -197,7 +197,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command `
 | `tools/publish/public-safe.denylist.json` | 入库的结构化规则：UNC 路径、PAD 根目录、内网域名后缀、邮箱/手机号；**只放占位与正则，不含真实业务字样** |
 | `tools/publish/public-safe.denylist.local.json` | 本地覆盖：真实业务名、真实流程名、真实路径、账号；已被 `.gitignore` 忽略，脚本自动合并 |
 
-- **敏感信息声明**：词表本身即敏感信息。`public-safe.denylist.local.json` 的真实版本只存在于私有库，**永远不得推送到公开库**。
+- **敏感信息声明**：词表本身即敏感信息。`public-safe.denylist.local.json` 的真实版本仅存在于本机、不入库，**永远不得推送到公开库**。
 - 规则字段：`id`、`pattern`、`regex`（false 为字面量、true 为正则）、`caseSensitive`（默认 false）、`enabled`（默认 true）、`reason`；分类由 `categories` 的键给出（`businessName` / `realPath` / `flowName` / `accountOrServer` / `privateIdentifier`）。
 - 路径、主机名、账号这类写不全的模式用正则；具体业务词用字面量（脚本会自动转义，避免正则元字符误伤）。
 
