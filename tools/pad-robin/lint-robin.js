@@ -73,7 +73,7 @@ function lintRobin(text, opts = {}) {
       warnings.push({
         rule: RULE_UNUSED_OUTPUT,
         line: o.line,
-        message: `输出变量 ${o.name} 被捕获但从未使用（不需要就读，可留空）`,
+        message: `output variable ${o.name} is captured but never used (leave it empty if you don't need it)`,
       });
     }
   }
@@ -90,7 +90,7 @@ function lintRobin(text, opts = {}) {
       warnings.push({
         rule: RULE_UNUSED_VAR,
         line: d.line,
-        message: `变量 ${d.name} 声明后从未被引用`,
+        message: `variable ${d.name} is declared but never referenced`,
       });
     }
   }
@@ -111,7 +111,7 @@ function lintRobin(text, opts = {}) {
         warnings.push({
           rule: RULE_NESTED_IF,
           line,
-          message: `IF 嵌套 ${ifDepth} 层（上限 ${maxIfDepth}），建议改为提前退出或合并条件`,
+          message: `IF nested ${ifDepth} levels (limit ${maxIfDepth}); consider an early exit or merged conditions`,
         });
       }
       return;
@@ -143,18 +143,18 @@ if (require.main === module) {
   const fs = require("fs");
   const file = process.argv[2];
   if (!file) {
-    console.error("用法: node lint-robin.js <file.robin> [--max-if-depth N]");
+    console.error("Usage: node lint-robin.js <file.robin> [--max-if-depth N]");
     process.exit(1);
   }
   const idx = process.argv.indexOf("--max-if-depth");
   const opts = idx > 0 ? { maxIfDepth: parseInt(process.argv[idx + 1], 10) } : {};
   const text = fs.readFileSync(file, "utf8");
   const { warnings, stats } = lintRobin(text, opts);
-  for (const w of warnings) console.log(`[lint] 第 ${w.line} 行 ${w.rule}: ${w.message}`);
+  for (const w of warnings) console.log(`[lint] line ${w.line} ${w.rule}: ${w.message}`);
   const byRule = {};
   for (const w of warnings) byRule[w.rule] = (byRule[w.rule] || 0) + 1;
-  const summary = Object.entries(byRule).map(([k, v]) => `${k}=${v}`).join(" ") || "无警告";
-  console.log(`[lint] ${file}: ${summary}（输出变量 ${stats.outputs} / 声明变量 ${stats.declared}）`);
+  const summary = Object.entries(byRule).map(([k, v]) => `${k}=${v}`).join(" ") || "no warnings";
+  console.log(`[lint] ${file}: ${summary} (output variables ${stats.outputs} / declared variables ${stats.declared})`);
   process.exit(0);
 }
 

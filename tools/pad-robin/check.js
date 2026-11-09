@@ -14,7 +14,7 @@ const { execFileSync } = require("child_process");
 
 const target = process.argv[2];
 if (!target) {
-  console.error("用法: node check.js <out.robin | 目录>");
+  console.error("Usage: node check.js <out.robin | directory>");
   process.exit(1);
 }
 
@@ -25,7 +25,7 @@ const kbCandidates = [
 ];
 const kbPath = kbCandidates.find((p) => fs.existsSync(p));
 if (!kbPath) {
-  console.error("[错误] 找不到 PAD_Robin_ActionKB.json");
+  console.error("[error] PAD_Robin_ActionKB.json not found");
   process.exit(1);
 }
 
@@ -33,7 +33,7 @@ if (!kbPath) {
 // 校验器已从 KB 仓库的 marketing/video/tools 迁到本目录（脱离上游 git 结构）
 const checkFlows = path.join(__dirname, "check-flows.js");
 if (!fs.existsSync(checkFlows)) {
-  console.error(`[错误] 找不到 check-flows.js（预期: ${checkFlows}）`);
+  console.error(`[error] check-flows.js not found (expected: ${checkFlows})`);
   process.exit(1);
 }
 
@@ -49,7 +49,7 @@ if (stat.isDirectory()) {
 }
 
 if (files.length === 0) {
-  console.error("[错误] 没有找到 .robin / .txt 文件");
+  console.error("[error] no .robin / .txt files found");
   process.exit(1);
 }
 
@@ -73,11 +73,11 @@ for (const f of files) {
     const byRule = {};
     for (const w of warnings) byRule[w.rule] = (byRule[w.rule] || 0) + 1;
     const summary = Object.entries(byRule).map(([k, v]) => `${k}=${v}`).join(" ");
-    console.log(`[lint] ${path.basename(f)}: 共 ${warnings.length} 条警告（${summary}），不影响校验结果`);
+    console.log(`[lint] ${path.basename(f)}: ${warnings.length} warning(s) (${summary}); does not affect the check result`);
   }
 }
 if (lintTotal > 0) {
-  console.log(`[lint] 合计 ${lintTotal} 条流程卫生警告；修复请回到 flow.json（不要在画布点“应用修复”）`);
+  console.log(`[lint] ${lintTotal} flow-hygiene warning(s) total; fix them in flow.json (do not click "Apply fix" on the canvas)`);
 }
 
 process.exit(bad ? 1 : 0);

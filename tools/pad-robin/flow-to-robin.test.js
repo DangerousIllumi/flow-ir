@@ -151,6 +151,6 @@ test("未知动作仍被安全闸门拒绝，且不产出文件", () => {
     nodes: [{ id: "1", type: "action", pad_hint: "No.Such.Action", params: {} }],
   });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /未知动作/);
+  assert.match(r.stderr, /unknown action/);
   assert.strictEqual(r.text, "");
 });

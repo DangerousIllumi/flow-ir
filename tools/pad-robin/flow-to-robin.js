@@ -32,7 +32,7 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!flowPath) {
-  console.error("用法: node flow-to-robin.js <flow.json> [out.robin] [--kb <kb.json>] [--no-check]");
+  console.error("Usage: node flow-to-robin.js <flow.json> [out.robin] [--kb <kb.json>] [--no-check]");
   process.exit(1);
 }
 
@@ -45,7 +45,7 @@ if (!kbPath) {
   kbPath = candidates.find((p) => fs.existsSync(p));
 }
 if (!kbPath || !fs.existsSync(kbPath)) {
-  console.error("[错误] 找不到 PAD_Robin_ActionKB.json，请用 --kb 指定路径");
+  console.error("[error] PAD_Robin_ActionKB.json not found; pass --kb <path>");
   process.exit(1);
 }
 const kb = JSON.parse(fs.readFileSync(kbPath, "utf8"));
@@ -61,22 +61,22 @@ try {
   if (Array.isArray(flow.edges) && flow.edges.length) {
     const drift = checkFlowConsistency(flow);
     if (!drift.ok) {
-      console.error("[错误] edges 与 next/branch 不一致，拒绝生成：");
+      console.error("[error] edges disagree with next/branch, refusing to generate:");
       if (drift.missing.length) {
-        console.error("  缺少边：" + drift.missing.map((e) => `${e.from}->${e.to}`).join(", "));
+        console.error("  missing edges: " + drift.missing.map((e) => `${e.from}->${e.to}`).join(", "));
       }
       if (drift.duplicates.length) {
-        console.error("  重复边：" + drift.duplicates.map((e) => `${e.from}->${e.to}`).join(", "));
+        console.error("  duplicate edges: " + drift.duplicates.map((e) => `${e.from}->${e.to}`).join(", "));
       }
       if (drift.dangling.length) {
-        console.error("  悬空边：" + drift.dangling.map((e) => `${e.from}->${e.to}`).join(", "));
+        console.error("  dangling edges: " + drift.dangling.map((e) => `${e.from}->${e.to}`).join(", "));
       }
       process.exit(1);
     }
   }
 } catch (e) {
   if (e && e.code === "MODULE_NOT_FOUND") {
-    console.error("[警告] 找不到 check-flow.js，跳过 edges 一致性校验");
+    console.error("[warning] check-flow.js not found; skipping the edges consistency check");
   } else {
     throw e;
   }
@@ -164,7 +164,7 @@ function resolveRef(ref, currentNodeId) {
   if (m) {
     const [, srcId, field] = m;
     const srcNode = flow.nodes.find((n) => n.id === srcId);
-    if (!srcNode) throw new Error(`节点 ${currentNodeId} 引用了不存在的节点 ${srcId}`);
+    if (!srcNode) throw new Error(`node ${currentNodeId} references a non-existent node ${srcId}`);
     // 1. 节点 output_map 显式指定的变量名
     if (srcNode.output_map && srcNode.output_map[field]) return srcNode.output_map[field];
     // 1b. output_map 的键可能是 KB 输出名（如 Content→FileContents），按 KB 名反查
@@ -239,7 +239,7 @@ const errors = [];
 const warnings = [];
 
 function gate(node, msg) {
-  errors.push(`节点 ${node.id}「${node.label || node.type}」: ${msg}`);
+  errors.push(`node ${node.id} "${node.label || node.type}": ${msg}`);
 }
 
 // ── 生成变量初始化 ─────────────────────────────────────────────
@@ -262,7 +262,7 @@ if (flow.variables && flow.variables.length) {
     } else {
       // 无默认值：生成注释提醒
       lines.push(`# TODO: 变量 ${v.name}（${v.type}）无默认值，请在 PAD 中设为输入变量或补值`);
-      warnings.push(`变量 ${v.name} 无默认值`);
+      warnings.push(`variable ${v.name} has no default value`);
     }
   }
   if (flow.variables.length) lines.push("");
@@ -314,13 +314,13 @@ for (const node of flow.nodes) {
   // 查 KB
   const action = actionMap.get(padHint);
   if (!action) {
-    gate(node, `未知动作 pad_hint="${padHint}"（KB 中查不到，拒绝产出）`);
+    gate(node, `unknown action pad_hint="${padHint}" (not found in the KB; refusing to generate)`);
     continue;
   }
 
   // UI 选择器闸门
   if (action.needs_ui_selector) {
-    gate(node, `动作 ${padHint} 需要 UI 选择器（needs_ui_selector=true），无法自动生成，请先在 PAD 中录制元素`);
+    gate(node, `action ${padHint} needs a UI selector (needs_ui_selector=true); it cannot be generated automatically, record the element in PAD first`);
     continue;
   }
 
@@ -328,7 +328,7 @@ for (const node of flow.nodes) {
   const validParamNames = new Set(action.input_params.map((p) => p.name));
   for (const key of Object.keys(node.params || {})) {
     if (!validParamNames.has(key)) {
-      gate(node, `未知参数 "${key}"（动作 ${padHint} 的合法参数：${[...validParamNames].join(", ")}）`);
+      gate(node, `unknown parameter "${key}" (valid parameters for ${padHint}: ${[...validParamNames].join(", ")})`);
     }
   }
 
@@ -352,7 +352,7 @@ for (const node of flow.nodes) {
       } else if (p.default) {
         val = p.default;
       } else {
-        gate(node, `参数 ${p.name}（类型 ${p.type}）需要句柄变量，但流程中没有 Launch 动作产出该句柄`);
+        gate(node, `parameter ${p.name} (type ${p.type}) needs a handle variable, but no Launch action in the flow produces that handle`);
         val = base; // 占位
       }
     } else if (p.default !== undefined) {
@@ -373,7 +373,7 @@ for (const node of flow.nodes) {
   for (const op of action.output_params) {
     if (skipOutputs.has(op.name)) {
       if (isHandleType(op.type)) {
-        gate(node, `output_skip 不能跳过句柄输出 ${op.name}（后续动作依赖该句柄）`);
+        gate(node, `output_skip cannot skip handle output ${op.name} (later actions depend on this handle)`);
       }
       continue;
     }
@@ -500,11 +500,11 @@ function generateNodeInline(node) {
   }
   const action = actionMap.get(node.pad_hint);
   if (!action) {
-    gate(node, `未知动作 pad_hint="${node.pad_hint}"`);
+    gate(node, `unknown action pad_hint="${node.pad_hint}"`);
     return;
   }
   if (action.needs_ui_selector) {
-    gate(node, `动作 ${node.pad_hint} 需要 UI 选择器`);
+    gate(node, `action ${node.pad_hint} needs a UI selector`);
     return;
   }
   const parts = [node.pad_hint];
@@ -530,7 +530,7 @@ function generateNodeInline(node) {
   for (const op of action.output_params) {
     if (skipOutputs.has(op.name)) {
       if (isHandleType(op.type)) {
-        gate(node, `output_skip 不能跳过句柄输出 ${op.name}（后续动作依赖该句柄）`);
+        gate(node, `output_skip cannot skip handle output ${op.name} (later actions depend on this handle)`);
       }
       continue;
     }
@@ -568,7 +568,7 @@ for (const node of flow.nodes) {
       const m = ref.match(/\{\{(\d+)\.(\w+)\}\}/);
       const srcNode = flow.nodes.find((n) => n.id === m[1]);
       if (!srcNode) {
-        gate(node, `参数 ${key} 引用了不存在的节点 ${m[1]}`);
+        gate(node, `parameter ${key} references a non-existent node ${m[1]}`);
       }
     }
   }
@@ -578,21 +578,21 @@ for (const node of flow.nodes) {
 const output = lines.join("\n") + "\n";
 
 if (errors.length) {
-  console.error("=== 生成器安全闸门拦截 ===");
-  for (const e of errors) console.error("  ✗ " + e);
-  console.error(`\n共 ${errors.length} 个错误，拒绝产出。请修正 flow.json 后重跑。`);
+  console.error("=== Generator safety gate rejected the flow ===");
+  for (const e of errors) console.error("  x " + e);
+  console.error(`\n${errors.length} error(s); nothing was generated. Fix flow.json and run again.`);
   process.exit(1);
 }
 
 if (warnings.length) {
-  console.error("=== 警告 ===");
+  console.error("=== Warnings ===");
   for (const w of warnings) console.error("  ! " + w);
 }
 
 // 写文件
 if (outPath) {
   fs.writeFileSync(outPath, output, "utf8");
-  console.error(`已生成: ${outPath}（${flow.nodes.length} 个节点）`);
+  console.error(`Generated: ${outPath} (${flow.nodes.length} nodes)`);
 } else {
   process.stdout.write(output);
 }
@@ -606,12 +606,12 @@ if (!noCheck && outPath) {
   if (fs.existsSync(checkFlows)) {
     try {
       execFileSync(process.execPath, [checkFlows, kbPath, outPath], { stdio: "inherit" });
-      console.error("静态自检: 通过");
+      console.error("Static check: passed");
     } catch (e) {
-      console.error("静态自检: 发现问题（见上方 check-flows 输出）");
+      console.error("Static check: issues found (see the check-flows output above)");
       process.exit(1);
     }
   } else {
-    console.error(`[跳过自检] 找不到 check-flows.js（预期路径: ${checkFlows}）`);
+    console.error(`[skipped] check-flows.js not found (expected path: ${checkFlows})`);
   }
 }

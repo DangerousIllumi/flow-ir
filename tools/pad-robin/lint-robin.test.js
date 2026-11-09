@@ -63,7 +63,7 @@ test("IF 嵌套 4 层超过阈值，报 1 条", () => {
   const text = ["IF A = 1 THEN", "IF B = 1 THEN", "IF C = 1 THEN", "IF D = 1 THEN", "END", "END", "END", "END"].join("\n");
   const w = rulesOf(text, "nested-if");
   assert.strictEqual(w.length, 1);
-  assert.match(w[0].message, /4 层/);
+  assert.match(w[0].message, /nested 4 levels/);
 });
 
 test("LOOP 里的 IF 不算 IF 嵌套", () => {

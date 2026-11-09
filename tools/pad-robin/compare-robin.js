@@ -71,7 +71,7 @@ if (require.main === module) {
   const asJson = args.includes("--json");
   const files = args.filter((a) => !a.startsWith("--"));
   if (files.length < 2) {
-    console.error("用法: node compare-robin.js <生成.robin> <生产.robin> [--json]");
+    console.error("Usage: node compare-robin.js <generated.robin> <production.robin> [--json]");
     process.exit(2);
   }
   let gen;
@@ -80,23 +80,23 @@ if (require.main === module) {
     gen = fs.readFileSync(files[0], "utf8");
     prod = fs.readFileSync(files[1], "utf8");
   } catch (e) {
-    console.error(`[错误] 读取失败：${e.message}`);
+    console.error(`[error] read failed: ${e.message}`);
     process.exit(2);
   }
   const res = compareRobin(gen, prod);
   if (asJson) {
     console.log(JSON.stringify({ ...res, byKind: summarize(res.diffs) }, null, 2));
   } else if (res.ok) {
-    console.log(`[compare-robin] 一致（生成 ${res.genLines} 行 / 生产 ${res.prodLines} 行，已忽略注释与空行）`);
+    console.log(`[compare-robin] match (generated ${res.genLines} lines / production ${res.prodLines} lines; comments and blank lines ignored)`);
   } else {
-    console.log(`[compare-robin] 不一致：生成 ${res.genLines} 行 / 生产 ${res.prodLines} 行`);
-    console.log(`差异分类：${JSON.stringify(summarize(res.diffs))}`);
+    console.log(`[compare-robin] mismatch: generated ${res.genLines} lines / production ${res.prodLines} lines`);
+    console.log(`Diff kinds: ${JSON.stringify(summarize(res.diffs))}`);
     for (const d of res.diffs) {
-      console.log(`  第 ${d.index} 行 [${d.kind}]`);
-      console.log(`    生成: ${d.generated}`);
-      console.log(`    生产: ${d.production}`);
+      console.log(`  line ${d.index} [${d.kind}]`);
+      console.log(`    generated: ${d.generated}`);
+      console.log(`    production: ${d.production}`);
     }
-    console.log("修复方向：改 flow.json 后重新生成，不要直接改 .robin");
+    console.log("Fix: change flow.json and regenerate; do not edit .robin directly");
   }
   process.exit(res.ok ? 0 : 1);
 }

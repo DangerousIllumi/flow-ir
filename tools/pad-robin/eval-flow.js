@@ -43,10 +43,10 @@ function isPositiveInt(v) {
 const POSTING_INTENT_RE = /(migo|posting)/i;
 function irreversibleReason(n) {
   const hint = String((n && n.pad_hint) || "");
-  if (/^Outlook\.SendEmail/i.test(hint)) return "发信动作无法撤回，只能补发更正";
-  if (/^(File|Folder)\.Delete$/i.test(hint)) return "删除文件/目录无法撤销";
+  if (/^Outlook\.SendEmail/i.test(hint)) return "sending mail cannot be undone; only a corrective resend is possible";
+  if (/^(File|Folder)\.Delete$/i.test(hint)) return "deleting files/directories cannot be undone";
   if (/^Scripting\.RunDOSCommand/i.test(hint) && POSTING_INTENT_RE.test(String((n && n.intent) || ""))) {
-    return "过账脚本重复执行会产生重复凭证，只能冲销";
+    return "re-running a posting script creates duplicate documents; only a reversing entry can correct it";
   }
   return null;
 }
@@ -55,15 +55,15 @@ function irreversibleReason(n) {
 function reversibleProblems(n) {
   const problems = [];
   if (typeof n.reversible !== "boolean") {
-    problems.push(`reversible=${JSON.stringify(n.reversible)}（应为 true/false）`);
+    problems.push(`reversible=${JSON.stringify(n.reversible)} (expected true/false)`);
     return problems;
   }
   if (n.reversible === false && !String(n.reversibility_note || "").trim()) {
-    problems.push("reversible=false 时必须写 reversibility_note（说清回退办法）");
+    problems.push("reversible=false requires reversibility_note (explain how to roll back)");
   }
   const reason = irreversibleReason(n);
   if (reason && n.reversible === true) {
-    problems.push(`动作 ${n.pad_hint} 属于不可逆动作（${reason}），reversible 必须为 false`);
+    problems.push(`action ${n.pad_hint} is irreversible (${reason}); reversible must be false`);
   }
   return problems;
 }
@@ -80,23 +80,23 @@ function validateTrigger(flow, trg, opts = {}) {
   const warn = (code, detail) => warnings.push({ code, detail });
 
   if (trg === undefined || trg === null) {
-    return { errors: [{ code: "TRIGGER_MISSING", detail: "缺少 trigger 声明" }], warnings };
+    return { errors: [{ code: "TRIGGER_MISSING", detail: "missing trigger declaration" }], warnings };
   }
   if (!isPlainObject(trg)) {
-    return { errors: [{ code: "TRIGGER_INVALID", detail: "trigger 必须是对象" }], warnings };
+    return { errors: [{ code: "TRIGGER_INVALID", detail: "trigger must be an object" }], warnings };
   }
   // 旧形状：只有 type/config 没有 kind，不做静默映射
   if (!hasOwn(trg, "kind") && hasOwn(trg, "type")) {
-    return { errors: [{ code: "TRIGGER_LEGACY_SHAPE", detail: "只有 type/config 旧形状，缺 kind" }], warnings };
+    return { errors: [{ code: "TRIGGER_LEGACY_SHAPE", detail: "legacy type/config shape without kind" }], warnings };
   }
   if (typeof trg.kind !== "string" || !trg.kind) {
-    return { errors: [{ code: "TRIGGER_INVALID", detail: `kind=${JSON.stringify(trg.kind)}（必须是字符串）` }], warnings };
+    return { errors: [{ code: "TRIGGER_INVALID", detail: `kind=${JSON.stringify(trg.kind)} (must be a string)` }], warnings };
   }
   if (TRIGGER_RESERVED_KINDS.includes(trg.kind)) {
-    return { errors: [{ code: "TRIGGER_KIND_UNSUPPORTED", detail: `kind=${trg.kind} 是保留值，v1 没有对应注册器` }], warnings };
+    return { errors: [{ code: "TRIGGER_KIND_UNSUPPORTED", detail: `kind=${trg.kind} is a reserved value; v1 has no registrar for it` }], warnings };
   }
   if (!TRIGGER_KINDS.includes(trg.kind)) {
-    return { errors: [{ code: "TRIGGER_UNKNOWN_KIND", detail: `kind=${trg.kind} 不在 ${TRIGGER_KINDS.join("/")}` }], warnings };
+    return { errors: [{ code: "TRIGGER_UNKNOWN_KIND", detail: `kind=${trg.kind} is not one of ${TRIGGER_KINDS.join("/")}` }], warnings };
   }
   const kind = trg.kind;
 
@@ -104,13 +104,13 @@ function validateTrigger(flow, trg, opts = {}) {
   if (hasOwn(trg, "task_name")) {
     const tn = trg.task_name;
     if (typeof tn !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(tn)) {
-      err("TRIGGER_INVALID", `task_name=${JSON.stringify(tn)} 不匹配 ^[A-Za-z0-9._-]{1,64}$`);
+      err("TRIGGER_INVALID", `task_name=${JSON.stringify(tn)} does not match ^[A-Za-z0-9._-]{1,64}$`);
     }
   }
 
   if (kind === "manual") {
     for (const key of ["time", "days", "gate", "timeout_sec", "file", "assisted"]) {
-      if (hasOwn(trg, key)) err("TRIGGER_INVALID", `manual 不允许声明 ${key}（声明了也没人执行）`);
+      if (hasOwn(trg, key)) err("TRIGGER_INVALID", `manual must not declare ${key} (nothing would execute it)`);
     }
     return { errors, warnings };
   }
@@ -118,61 +118,61 @@ function validateTrigger(flow, trg, opts = {}) {
   // schedule / file 共用：时刻、星期、日历门、超时
   const time = hasOwn(trg, "time") ? trg.time : undefined;
   if (typeof time !== "string" || !TRIGGER_TIME_RE.test(time)) {
-    err("TRIGGER_INVALID", `time=${JSON.stringify(time)}（应为 HH:mm，如 09:00）`);
+    err("TRIGGER_INVALID", `time=${JSON.stringify(time)} (expected HH:mm, e.g. 09:00)`);
   }
   if (hasOwn(trg, "days")) {
     if (!Array.isArray(trg.days) || trg.days.length === 0) {
-      err("TRIGGER_INVALID", `days=${JSON.stringify(trg.days)}（应是非空数组）`);
+      err("TRIGGER_INVALID", `days=${JSON.stringify(trg.days)} (expected a non-empty array)`);
     } else if (trg.days.some((d) => !TRIGGER_DAYS.includes(d))) {
-      err("TRIGGER_INVALID", `days 含非法值：${JSON.stringify(trg.days.filter((d) => !TRIGGER_DAYS.includes(d)))}`);
+      err("TRIGGER_INVALID", `days contains invalid values: ${JSON.stringify(trg.days.filter((d) => !TRIGGER_DAYS.includes(d)))}`);
     }
   }
   if (hasOwn(trg, "gate")) {
     if (!TRIGGER_GATES.includes(trg.gate)) {
-      err("TRIGGER_INVALID", `gate=${JSON.stringify(trg.gate)} 不在 ${TRIGGER_GATES.join("/")}`);
+      err("TRIGGER_INVALID", `gate=${JSON.stringify(trg.gate)} is not one of ${TRIGGER_GATES.join("/")}`);
     }
   } else if (kind === "schedule") {
-    warn("TRIGGER_NO_GATE", "schedule 未声明 gate，节假日会照跑（如不需要请显式写 gate=none）");
+    warn("TRIGGER_NO_GATE", "schedule declares no gate, so it will still run on holidays (write gate=none explicitly if that is intended)");
   }
   if (hasOwn(trg, "timeout_sec") && !isPositiveInt(trg.timeout_sec)) {
-    err("TRIGGER_INVALID", `timeout_sec=${JSON.stringify(trg.timeout_sec)}（应为正整数秒）`);
+    err("TRIGGER_INVALID", `timeout_sec=${JSON.stringify(trg.timeout_sec)} (expected a positive integer number of seconds)`);
   }
 
   // assisted：到点自动启动、中途有人确认；只对 schedule/file 有意义，manual 已在上面拒绝
   let assisted = false;
   if (hasOwn(trg, "assisted")) {
     if (typeof trg.assisted !== "boolean") {
-      err("TRIGGER_INVALID", `assisted=${JSON.stringify(trg.assisted)}（应为 true/false）`);
+      err("TRIGGER_INVALID", `assisted=${JSON.stringify(trg.assisted)} (expected true/false)`);
     } else {
       assisted = trg.assisted;
     }
     if (assisted && !hasOwn(trg, "timeout_sec")) {
-      err("TRIGGER_ASSISTED_NO_TIMEOUT", "assisted=true 必须显式声明 timeout_sec（没人点确认时靠超时告警兜底）");
+      err("TRIGGER_ASSISTED_NO_TIMEOUT", "assisted=true requires an explicit timeout_sec (the timeout alert is the fallback when nobody confirms)");
     }
   }
 
   if (kind === "file") {
     if (!hasOwn(trg, "file") || !isPlainObject(trg.file)) {
-      err("TRIGGER_INVALID", "file 触发必须带 file 对象");
+      err("TRIGGER_INVALID", "file trigger requires a file object");
     } else {
       const f = trg.file;
       const dir = hasOwn(f, "dir") ? f.dir : undefined;
       if (typeof dir !== "string" || !dir) {
-        err("TRIGGER_INVALID", "file.dir 必填");
+        err("TRIGGER_INVALID", "file.dir is required");
       } else if (!/^\{\{config\.\w+\}\}$/.test(dir)) {
         // 只接受配置引用，禁止把绝对路径写进 flow.json
-        err("TRIGGER_PATH_LITERAL", `file.dir=${dir} 必须是 {{config.<KEY>}} 引用，不能是字面路径`);
+        err("TRIGGER_PATH_LITERAL", `file.dir=${dir} must be a {{config.<KEY>}} reference, not a literal path`);
       }
       if (typeof f.pattern !== "string" || !f.pattern.trim()) {
-        err("TRIGGER_INVALID", "file.pattern 必填且不能为空");
+        err("TRIGGER_INVALID", "file.pattern is required and must not be empty");
       }
       for (const key of ["poll_sec", "settle_sec", "max_wait_sec"]) {
         if (hasOwn(f, key) && !isPositiveInt(f[key])) {
-          err("TRIGGER_INVALID", `file.${key}=${JSON.stringify(f[key])}（应为正整数秒）`);
+          err("TRIGGER_INVALID", `file.${key}=${JSON.stringify(f[key])} (expected a positive integer number of seconds)`);
         }
       }
       if (hasOwn(f, "once_per_file") && typeof f.once_per_file !== "boolean") {
-        err("TRIGGER_INVALID", `file.once_per_file=${JSON.stringify(f.once_per_file)}（应为 true/false）`);
+        err("TRIGGER_INVALID", `file.once_per_file=${JSON.stringify(f.once_per_file)} (expected true/false)`);
       }
     }
   }
@@ -182,7 +182,7 @@ function validateTrigger(flow, trg, opts = {}) {
     const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
     const confirmNodes = nodes.filter((n) => n && n.run_mode === "confirm");
     if (confirmNodes.length > 0 && assisted !== true) {
-      err("TRIGGER_UNATTENDED_CONFIRM", `无人值守触发但节点需要人工确认：${confirmNodes.map((n) => n.id).join(",")}`);
+      err("TRIGGER_UNATTENDED_CONFIRM", `unattended trigger but nodes require manual confirmation: ${confirmNodes.map((n) => n.id).join(",")}`);
     }
     // 可逆性收窄：与幂等性是两个正交的轴，不再用 idempotent=false 代表后果风险。
     //   idempotent = 同一输入重跑是否收敛（重跑安全）
@@ -190,7 +190,7 @@ function validateTrigger(flow, trg, opts = {}) {
     const irreversible = nodes.filter((n) => n && n.reversible === false);
     if (irreversible.length > 0) {
       warn("TRIGGER_UNATTENDED_IRREVERSIBLE",
-        `无人值守触发但存在后果不可回退的节点：${irreversible
+        `unattended trigger but nodes have irreversible consequences: ${irreversible
           .map((n) => `${n.id}${n.reversibility_note ? `（${n.reversibility_note}）` : ""}`)
           .join("、")}`);
     }
@@ -199,7 +199,7 @@ function validateTrigger(flow, trg, opts = {}) {
       (n) => n && n.idempotent === false && !hasOwn(n, "reversible"));
     if (missingRev.length > 0) {
       warn("TRIGGER_MISSING_REVERSIBILITY",
-        `节点 idempotent=false 但未声明 reversible：${missingRev.map((n) => n.id).join(",")}`);
+        `nodes with idempotent=false declare no reversible: ${missingRev.map((n) => n.id).join(",")}`);
     }
   }
 
@@ -229,33 +229,33 @@ function validateInputs(flow, opts = {}) {
     if (!hasOwn(n, "inputs")) continue;
     declared++;
     if (!Array.isArray(n.inputs) || n.inputs.length === 0) {
-      err("INPUT_INVALID", `节点 ${n.id} inputs 必须是非空数组`);
+      err("INPUT_INVALID", `node ${n.id}: inputs must be a non-empty array`);
       continue;
     }
     n.inputs.forEach((it, i) => {
-      const at = `节点 ${n.id} inputs[${i}]`;
+      const at = `node ${n.id} inputs[${i}]`;
       if (!isPlainObject(it)) {
-        err("INPUT_INVALID", `${at} 必须是对象`);
+        err("INPUT_INVALID", `${at} must be an object`);
         return;
       }
       const dir = it.dir;
       if (typeof dir !== "string" || !dir) {
-        err("INPUT_INVALID", `${at}.dir 必填`);
+        err("INPUT_INVALID", `${at}.dir is required`);
       } else if (!INPUT_DIR_RE.test(dir)) {
-        err("INPUT_PATH_LITERAL", `${at}.dir=${dir} 必须是 {{config.<KEY>}} 引用，不能是字面路径`);
+        err("INPUT_PATH_LITERAL", `${at}.dir=${dir} must be a {{config.<KEY>}} reference, not a literal path`);
       }
       if (typeof it.pattern !== "string" || !it.pattern.trim()) {
-        err("INPUT_INVALID", `${at}.pattern 必填且不能为空`);
+        err("INPUT_INVALID", `${at}.pattern is required and must not be empty`);
       }
       // required 必须显式声明，不默认填充（与 run_mode / idempotent 的必答口径一致）
       if (typeof it.required !== "boolean") {
-        err("INPUT_INVALID", `${at}.required=${JSON.stringify(it.required)}（应为 true/false）`);
+        err("INPUT_INVALID", `${at}.required=${JSON.stringify(it.required)} (expected true/false)`);
       }
     });
   }
 
   if (declared === 0) {
-    warn("INPUT_UNDECLARED", "没有节点声明 inputs：运行前不会核对输入文件；依赖输入文件的流程请补声明");
+    warn("INPUT_UNDECLARED", "no node declares inputs, so input files will not be verified before a run; declare them if the flow depends on input files");
   }
   return { errors, warnings };
 }
@@ -264,12 +264,12 @@ function validateInputs(flow, opts = {}) {
 const OPS = {
   // 节点总数：用于锁住结构不再漂移
   nodeCount(flow, a) {
-    return { ok: flow.nodes.length === a.equals, detail: `${flow.nodes.length} 个节点（期望 ${a.equals}）` };
+    return { ok: flow.nodes.length === a.equals, detail: `${flow.nodes.length} nodes (expected ${a.equals})` };
   },
   // 通用字段断言：不带 id 查 flow 顶层，带 id 查节点；exists 判有无，equals 判值
   field(flow, a) {
     const target = a.id ? flow.nodes.find((x) => x.id === a.id) : flow;
-    if (!target) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    if (!target) return { ok: false, detail: `node ${a.id} not found` };
     const v = target[a.name];
     let ok;
     if (Object.prototype.hasOwnProperty.call(a, "exists")) {
@@ -284,7 +284,7 @@ const OPS = {
   // 循环：fromto 校验上下界，foreach 校验遍历变量
   loop(flow, a) {
     const n = flow.nodes.find((x) => (a.id ? x.id === a.id : x.pad_hint === "LOOP"));
-    if (!n) return { ok: false, detail: "找不到循环节点" };
+    if (!n) return { ok: false, detail: "loop node not found" };
     const lp = n.loop || {};
     if (a.kind === "foreach") {
       return { ok: lp.kind === "foreach" && (!a.item || lp.item === a.item), detail: `FOREACH ${lp.item}` };
@@ -294,9 +294,9 @@ const OPS = {
   },
   condition(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
-    if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    if (!n) return { ok: false, detail: `node ${a.id} not found` };
     const c = (n.params && n.params.Condition) || "";
-    return { ok: c.includes(a.contains), detail: `条件=${c}` };
+    return { ok: c.includes(a.contains), detail: `condition=${c}` };
   },
   edge(flow, a) {
     const ok = (flow.edges || []).some((e) => e.from === a.from && e.to === a.to);
@@ -310,18 +310,18 @@ const OPS = {
   absentMatch(flow, a) {
     const re = new RegExp(a.pattern);
     const hit = flow.nodes.filter((n) => re.test(n.pad_hint || ""));
-    return { ok: hit.length === 0, detail: hit.length ? `命中 ${hit.map((n) => n.id).join(",")}` : "未出现" };
+    return { ok: hit.length === 0, detail: hit.length ? `matched ${hit.map((n) => n.id).join(",")}` : "not present" };
   },
   param(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
-    if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    if (!n) return { ok: false, detail: `node ${a.id} not found` };
     const v = (n.params || {})[a.name];
     return { ok: JSON.stringify(v) === JSON.stringify(a.equals), detail: `${a.name}=${JSON.stringify(v)}` };
   },
   // 输出绑定（output_map）中某个字段绑到了哪个变量
   outputMapEquals(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
-    if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    if (!n) return { ok: false, detail: `node ${a.id} not found` };
     const v = (n.output_map || {})[a.name];
     return { ok: v === a.equals, detail: `${a.name}=${v}` };
   },
@@ -331,18 +331,18 @@ const OPS = {
     const missing = names.filter((x) => !x);
     const uniq = new Set(names);
     const ok = missing.length === 0 && uniq.size === names.length;
-    return { ok, detail: `${names.length} 个节点，${uniq.size} 个不同变量` };
+    return { ok, detail: `${names.length} nodes, ${uniq.size} distinct variables` };
   },
   guardContains(flow, a) {
     const g = flow.nodes.find((x) => x.id === a.id && x.pad_hint === "GUARD");
-    if (!g) return { ok: false, detail: `守卫 ${a.id} 不存在` };
+    if (!g) return { ok: false, detail: `guard ${a.id} not found` };
     const body = new Set(g.body || []);
     const missing = a.nodes.filter((x) => !body.has(x));
-    return { ok: missing.length === 0, detail: missing.length ? `缺少 ${missing.join(",")}` : `body=[${g.body.join(",")}]` };
+    return { ok: missing.length === 0, detail: missing.length ? `missing ${missing.join(",")}` : `body=[${g.body.join(",")}]` };
   },
   switchCases(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
-    if (!n || !n.switch) return { ok: false, detail: `节点 ${a.id} 不是 SWITCH` };
+    if (!n || !n.switch) return { ok: false, detail: `node ${a.id} is not a SWITCH` };
     const got = (n.switch.cases || []).map((c) => `${c.case} ${(c.body || []).join(",")}`);
     const want = a.cases.map((c) => `${c.case} ${(c.body || []).join(",")}`);
     const ok = JSON.stringify(got) === JSON.stringify(want) && (n.switch.default || []).length > 0;
@@ -352,22 +352,22 @@ const OPS = {
   // 设计规则要求「用户没回答就不生成 flow.json」，所以缺字段一律判失败，不做默认填充
   nodeDeclaration(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
-    if (!n) return { ok: false, detail: `节点 ${a.id} 不存在` };
+    if (!n) return { ok: false, detail: `node ${a.id} not found` };
     const problems = [];
     if (!RUN_MODES.includes(n.run_mode)) {
-      problems.push(`run_mode=${JSON.stringify(n.run_mode)}（应为 ${RUN_MODES.join("/")}）`);
+      problems.push(`run_mode=${JSON.stringify(n.run_mode)} (expected ${RUN_MODES.join("/")})`);
     }
     if (typeof n.idempotent !== "boolean") {
-      problems.push(`idempotent=${JSON.stringify(n.idempotent)}（应为 true/false）`);
+      problems.push(`idempotent=${JSON.stringify(n.idempotent)} (expected true/false)`);
     } else if (n.idempotent === false && !String(n.idempotency_note || "").trim()) {
-      problems.push("idempotent=false 时必须写 idempotency_note（幂等键或先查后写方案）");
+      problems.push("idempotent=false requires idempotency_note (an idempotency key or a check-before-write scheme)");
     }
     problems.push(...reversibleProblems(n));
-    if (a.runMode && n.run_mode !== a.runMode) problems.push(`run_mode 期望 ${a.runMode}，实际 ${n.run_mode}`);
+    if (a.runMode && n.run_mode !== a.runMode) problems.push(`run_mode expected ${a.runMode}, got ${n.run_mode}`);
     if (typeof a.idempotent === "boolean" && n.idempotent !== a.idempotent) {
-      problems.push(`idempotent 期望 ${a.idempotent}，实际 ${n.idempotent}`);
+      problems.push(`idempotent expected ${a.idempotent}, got ${n.idempotent}`);
     }
-    return { ok: problems.length === 0, detail: problems.length ? problems.join("；") : `run_mode=${n.run_mode} idempotent=${n.idempotent}` };
+    return { ok: problems.length === 0, detail: problems.length ? problems.join("; ") : `run_mode=${n.run_mode} idempotent=${n.idempotent}` };
   },
   // 全流程必答项完整性：每个节点都必须显式声明三项（run_mode / idempotent / reversible），缺一个即失败
   // reversible 为 false 时还必须有 reversibility_note；已知不可逆动作写 true 属于事实错误，也判失败
@@ -376,19 +376,19 @@ const OPS = {
     for (const n of flow.nodes) {
       const problems = [];
       if (!RUN_MODES.includes(n.run_mode)) {
-        problems.push(`run_mode=${JSON.stringify(n.run_mode)}（应为 ${RUN_MODES.join("/")}）`);
+        problems.push(`run_mode=${JSON.stringify(n.run_mode)} (expected ${RUN_MODES.join("/")})`);
       }
       if (typeof n.idempotent !== "boolean") {
-        problems.push(`idempotent=${JSON.stringify(n.idempotent)}（应为 true/false）`);
+        problems.push(`idempotent=${JSON.stringify(n.idempotent)} (expected true/false)`);
       } else if (n.idempotent === false && !String(n.idempotency_note || "").trim()) {
-        problems.push("idempotent=false 时必须写 idempotency_note（幂等键或先查后写方案）");
+        problems.push("idempotent=false requires idempotency_note (an idempotency key or a check-before-write scheme)");
       }
       problems.push(...reversibleProblems(n));
-      if (problems.length) missing.push(`节点 ${n.id}：${problems.join("；")}`);
+      if (problems.length) missing.push(`node ${n.id}: ${problems.join("; ")}`);
     }
     return {
       ok: missing.length === 0,
-      detail: missing.length ? `缺声明节点 ${missing.length} 个：${missing.slice(0, 12).join(" | ")}${missing.length > 12 ? "…" : ""}` : `${flow.nodes.length} 个节点均已声明`,
+      detail: missing.length ? `${missing.length} node(s) missing declarations: ${missing.slice(0, 12).join(" | ")}${missing.length > 12 ? "..." : ""}` : `all ${flow.nodes.length} nodes are declared`,
     };
   },
   // 触发声明断言：a.def 给了就验该对象（只验声明形状），否则验流程自身的 trigger。
@@ -400,11 +400,11 @@ const OPS = {
     const codes = [...errors, ...warnings].map((x) => x.code);
     if (a.expect === "invalid") {
       const hit = codes.includes(a.code);
-      return { ok: hit, detail: `期望 ${a.code}，实际 ${codes.length ? codes.join(",") : "无错误"}` };
+      return { ok: hit, detail: `expected ${a.code}, got ${codes.length ? codes.join(",") : "no errors"}` };
     }
     return {
       ok: errors.length === 0,
-      detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("；") : `trigger=${trg.kind} 合法`,
+      detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("; ") : `trigger=${trg.kind} is valid`,
     };
   },
   // 触发已声明：只看流程自身的 trigger，不接受 def 覆盖
@@ -414,7 +414,7 @@ const OPS = {
     const kindOk = isPlainObject(trg) && TRIGGER_KINDS.includes(trg.kind);
     return {
       ok: kindOk && errors.length === 0,
-      detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("；") : `trigger=${trg.kind} 已声明`,
+      detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("; ") : `trigger=${trg.kind} is declared`,
     };
   },
   // 输入文件声明断言：
@@ -429,7 +429,7 @@ const OPS = {
     } else if (a.node) {
       const nodes = Array.isArray(flow && flow.nodes) ? flow.nodes : [];
       if (!nodes.some((n) => n && n.id === a.node)) {
-        return { ok: false, detail: `节点 ${a.node} 不存在` };
+        return { ok: false, detail: `node ${a.node} not found` };
       }
       opts = { node: a.node };
     }
@@ -438,21 +438,21 @@ const OPS = {
     if (a.expect === "invalid") {
       return {
         ok: codes.includes(a.code),
-        detail: `期望 ${a.code}，实际 ${codes.length ? codes.join(",") : "无问题"}`,
+        detail: `expected ${a.code}, got ${codes.length ? codes.join(",") : "no problems"}`,
       };
     }
     if (a.expect === "warning") {
       return {
         ok: warnings.some((x) => x.code === a.code),
-        detail: `期望提示 ${a.code}，实际 ${warnings.length ? warnings.map((x) => x.code).join(",") : "无提示"}`,
+        detail: `expected notice ${a.code}, got ${warnings.length ? warnings.map((x) => x.code).join(",") : "no notices"}`,
       };
     }
     // 未声明的提示不算失败：老 flow.json 不写 inputs 时 op 仍然通过
     return {
       ok: errors.length === 0,
       detail: errors.length
-        ? errors.map((x) => `${x.code}: ${x.detail}`).join("；")
-        : `inputs 声明形状合法${warnings.length ? `（${warnings.map((x) => x.code).join(",")}）` : ""}`,
+        ? errors.map((x) => `${x.code}: ${x.detail}`).join("; ")
+        : `inputs declarations are well-formed${warnings.length ? ` (${warnings.map((x) => x.code).join(",")})` : ""}`,
     };
   },
 };
@@ -462,13 +462,13 @@ function runCase(flow, c) {
   for (const a of c.expect || []) {
     const fn = OPS[a.op];
     if (!fn) {
-      results.push({ ok: false, detail: `未知断言 ${a.op}` });
+      results.push({ ok: false, detail: `unknown assertion ${a.op}` });
       continue;
     }
     try {
       results.push(fn(flow, a));
     } catch (e) {
-      results.push({ ok: false, detail: `断言异常：${e.message}` });
+      results.push({ ok: false, detail: `assertion threw: ${e.message}` });
     }
   }
   return { id: c.id, requirement: c.requirement, ok: results.every((r) => r.ok), results };
@@ -484,7 +484,7 @@ if (require.main === module) {
   const asJson = args.includes("--json");
   const target = args.find((a) => !a.startsWith("--"));
   if (!target) {
-    console.error("用法: node eval-flow.js <cases.json | 目录> [--json]");
+    console.error("Usage: node eval-flow.js <cases.json | directory> [--json]");
     process.exit(2);
   }
 
@@ -499,11 +499,11 @@ if (require.main === module) {
       specs.push(loadCases(target));
     }
   } catch (e) {
-    console.error(`[错误] 读取失败：${e.message}`);
+    console.error(`[error] read failed: ${e.message}`);
     process.exit(2);
   }
   if (specs.length === 0) {
-    console.error(`[错误] ${target} 下没有 *.cases.json`);
+    console.error(`[error] no *.cases.json under ${target}`);
     process.exit(2);
   }
 
@@ -526,7 +526,7 @@ if (require.main === module) {
     const cases = [
       {
         id: "declarations-complete",
-        requirement: "每个节点显式声明 run_mode / idempotent / reversible",
+        requirement: "every node explicitly declares run_mode / idempotent / reversible",
         ok: baseDecl.ok,
         results: [baseDecl],
       },
@@ -536,7 +536,7 @@ if (require.main === module) {
           const own = JSON.parse(fs.readFileSync(c.flow, "utf8"));
           return runCase(own, c);
         } catch (e) {
-          return { id: c.id, requirement: c.requirement, ok: false, results: [{ ok: false, detail: `读取用例流程失败：${e.message}` }] };
+          return { id: c.id, requirement: c.requirement, ok: false, results: [{ ok: false, detail: `failed to read the case flow: ${e.message}` }] };
         }
       }),
     ];
@@ -550,17 +550,17 @@ if (require.main === module) {
   } else {
     for (const f of report) {
       if (f.error) {
-        console.log(`FAIL  ${f.flow}（读取失败：${f.error}）`);
+        console.log(`FAIL  ${f.flow} (read failed: ${f.error})`);
         continue;
       }
       const okCount = f.cases.filter((c) => c.ok).length;
       console.log(`--- ${f.flow}  ${okCount}/${f.cases.length} ---`);
       for (const c of f.cases) {
-        console.log(`${c.ok ? "PASS" : "FAIL"}  ${c.id}  需求：${c.requirement}`);
-        for (const r of c.results.filter((x) => !x.ok)) console.log(`        断言失败：${r.detail}`);
+        console.log(`${c.ok ? "PASS" : "FAIL"}  ${c.id}  requirement: ${c.requirement}`);
+        for (const r of c.results.filter((x) => !x.ok)) console.log(`        assertion failed: ${r.detail}`);
       }
     }
-    console.log(`[eval-flow] 通过 ${passed} / ${total}（${specs.length} 个流程样例）`);
+    console.log(`[eval-flow] passed ${passed} / ${total} (${specs.length} flow samples)`);
   }
   process.exit(passed === total && report.every((f) => !f.error) ? 0 : 1);
 }
