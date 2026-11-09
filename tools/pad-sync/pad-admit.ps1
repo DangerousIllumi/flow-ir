@@ -1,6 +1,6 @@
 ﻿# pad-admit.ps1 — 只读准入网关：部署/运行前判断"这份流程、这次运行是否被允许"
 #
-# 对应 docs/admission-gate.md 的 16 项检查。硬约束：
+# 对应 docs/admission-gate.md 的检查项。硬约束：
 #   1) 只读：不启动 PAD、不连 SAP、不发邮件、不写产物
 #   2) 一次返回全部问题，不因第一条失败提前退出
 #   3) 每条失败带 code + 人话 + 证据（节点 id / 参数 / 文件名）
@@ -8,7 +8,7 @@
 # 用法：
 #   .\pad-admit.ps1 -FlowFile business\flows\sample-report.json -ConfigFile business\config\sample-report.json
 #   .\pad-admit.ps1 -FlowFile ... -Unattended      # 定时任务场景：ask 一律按 deny
-#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # 第 15 项追加只读的计划任务注册校验
+#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # TRIGGER 追加只读的计划任务注册校验
 #   .\pad-admit.ps1 -FlowFile ... -Json            # 只输出 JSON
 #
 # 退出码：0 全部通过 / 1 存在 fail / 2 仅存在 ask
@@ -32,7 +32,7 @@ param(
     [string]$ApproveFile,
     # 定时任务/无人值守：ask 按 deny 处理
     [switch]$Unattended,
-    # 第 15 项 live 校验：默认关闭，离线可复现；开启后只读查询本机计划任务
+    # TRIGGER live 校验：默认关闭，离线可复现；开启后只读查询本机计划任务
     [switch]$TriggerLive,
     [switch]$Json,
     # 仅供 Pester dot-source
@@ -227,7 +227,7 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
     return $results
 }
 
-# ---------- TRIGGER（第 15 项）：触发声明 ----------
+# ---------- TRIGGER：触发声明 ----------
 # 观察期：存量流程还没有 trigger，默认记 warn；迁移完成后单独提交改为 fail。
 # 与指纹同一做法：切换级别是独立改动，不混在本次功能里。
 $script:TriggerMode = 'warn'
@@ -285,7 +285,7 @@ function Find-TriggerTaskCollision {
     return $hits
 }
 
-# 第 15 项主体：静态校验 + 可选 live 校验。
+# TRIGGER 主体：静态校验 + 可选 live 校验。
 # -TriggerLive 默认关闭：只读查询本机计划任务与 specHash，
 # 未注册记 TRIGGER_NOT_REGISTERED（warn），声明与任务不一致记 TRIGGER_DRIFT（fail）。
 function Invoke-TriggerCheck {
@@ -294,6 +294,52 @@ function Invoke-TriggerCheck {
         [string]$ConfigFile, [switch]$TriggerLive
     )
     $issues = @()
+
+    # 可逆性：与幂等性是两个正交的轴。
+    #   idempotent = 同一输入重跑是否收敛（重跑安全）
+    #   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
+    # 放在 trigger 形状检查之前：manual、缺 trigger、legacy 形状的流程同样要让人看到
+    # “后果能不能撤回”，否则报告模式里永远看不到这条。
+    $nodes = @($Flow.nodes)
+    $irreversible = @($nodes | Where-Object {
+        $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $false
+    })
+    if ($irreversible.Count -gt 0) {
+        $issues += @{ status = 'warn'; code = 'TRIGGER_UNATTENDED_IRREVERSIBLE'
+            message = '存在后果不可回退的节点（reversible=false），请确认回退办法'
+            evidence = @($irreversible | ForEach-Object {
+                $note = $null
+                if (Test-PropExists $_ 'reversibility_note') { $note = [string]$_.reversibility_note }
+                if ($note) { "节点 $($_.id) reversible=false：$note" } else { "节点 $($_.id) reversible=false" }
+            }) }
+    }
+    # idempotent=false 却没声明 reversible：提示补声明，不拿默认值糊过去
+    $missingRev = @($nodes | Where-Object {
+        $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false -and
+        -not (Test-PropExists $_ 'reversible')
+    })
+    if ($missingRev.Count -gt 0) {
+        $issues += @{ status = 'warn'; code = 'TRIGGER_MISSING_REVERSIBILITY'
+            message = '节点 idempotent=false 但未声明 reversible，请补声明（后果能否回退）'
+            evidence = @($missingRev | ForEach-Object {
+                "节点 $($_.id) idempotent=false，reversible 未声明"
+            }) }
+    }
+
+    # 已知不可逆动作却声明 reversible=true：这是事实错误，直接 fail（对应“发催办邮件被标可逆”的事故）
+    $mislabeled = @($nodes | Where-Object {
+        $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $true -and (
+            ($_.pad_hint -match '^Outlook\.SendEmail') -or
+            ($_.pad_hint -match '^(File|Folder)\.Delete$') -or
+            (($_.pad_hint -match '^Scripting\.RunDOSCommand') -and
+             (Test-PropExists $_ 'intent') -and ([string]$_.intent -match '(migo|posting)'))
+        )
+    })
+    if ($mislabeled.Count -gt 0) {
+        $issues += @{ status = 'fail'; code = 'REVERSIBLE_MISLABELED'
+            message = '不可逆动作不能声明 reversible=true（发信/删除/过账无法撤回）'
+            evidence = @($mislabeled | ForEach-Object { "节点 $($_.id) $($_.pad_hint) 被标为 reversible=true" }) }
+    }
 
     $trg = $null
     if (Test-PropExists $Flow 'trigger') { $trg = $Flow.trigger }
@@ -443,34 +489,6 @@ function Invoke-TriggerCheck {
                 message = '无人值守触发但节点需要人工确认'
                 evidence = @($confirm | ForEach-Object { "节点 $($_.id) run_mode=confirm" }) }
         }
-        # 可逆性收窄：与幂等性是两个正交的轴。
-        #   idempotent = 同一输入重跑是否收敛（重跑安全）
-        #   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
-        # 无人值守只对「后果不可回退」告警，不再由 idempotent=false 触发。
-        $irreversible = @($nodes | Where-Object {
-            $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $false
-        })
-        if ($irreversible.Count -gt 0) {
-            $issues += @{ status = 'warn'; code = 'TRIGGER_UNATTENDED_IRREVERSIBLE'
-                message = '无人值守触发但存在后果不可回退的节点（reversible=false），请确认回退办法'
-                evidence = @($irreversible | ForEach-Object {
-                    $note = $null
-                    if (Test-PropExists $_ 'reversibility_note') { $note = [string]$_.reversibility_note }
-                    if ($note) { "节点 $($_.id) reversible=false：$note" } else { "节点 $($_.id) reversible=false" }
-                }) }
-        }
-        # idempotent=false 却没声明 reversible：提示补声明，不拿默认值糊过去
-        $missingRev = @($nodes | Where-Object {
-            $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false -and
-            -not (Test-PropExists $_ 'reversible')
-        })
-        if ($missingRev.Count -gt 0) {
-            $issues += @{ status = 'warn'; code = 'TRIGGER_MISSING_REVERSIBILITY'
-                message = '节点 idempotent=false 但未声明 reversible，请补声明（后果能否回退）'
-                evidence = @($missingRev | ForEach-Object {
-                    "节点 $($_.id) idempotent=false，reversible 未声明"
-                }) }
-        }
     }
 
     # live 校验：只对 schedule，且静态检查没有 fail 才查本机任务
@@ -523,7 +541,7 @@ function Invoke-TriggerCheck {
     })
 }
 
-# ---------- INPUT（第 16 项）：节点级输入文件声明 ----------
+# ---------- INPUT：节点级输入文件声明 ----------
 # 口径与 file 触发器一致：目录必须走 {{config.<KEY>}} 引用；候选 ≥2 一律判歧义，绝不“取最新”。
 # 本项只读：只枚举目录、stat 文件，不打开、不移动、不删除任何文件。
 # 能力只用于准入与结构校验，不改变 .robin 生成产物（生成器不认识 inputs）。
@@ -548,7 +566,7 @@ function Resolve-InputDir {
     return @{ dir = [string]$Config.$key; code = $null; message = $null }
 }
 
-# 第 16 项主体：静态形状 + 可选的文件系统核对（只读枚举）
+# INPUT 主体：静态形状 + 可选的文件系统核对（只读枚举）
 function Invoke-InputCheck {
     param($Flow, $Config, [string]$ConfigFile)
     $issues = @()
@@ -647,7 +665,7 @@ function Invoke-InputCheck {
     })
 }
 
-# 主体检查：一次跑完 16 项（含第 13 项 SCRIPT_FINGERPRINT：v3 脚本指纹，观察期只 warn）
+# 主体检查：一次跑完全部检查项（含 SCRIPT_FINGERPRINT：v3 脚本指纹，观察期只 warn）
 function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,

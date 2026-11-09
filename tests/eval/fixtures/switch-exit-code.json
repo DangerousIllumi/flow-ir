@@ -52,7 +52,8 @@
         "default": ["5"]
       },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "3",
@@ -65,7 +66,8 @@
       },
       "output_map": { "ButtonPressed": "OkButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "4",
@@ -78,7 +80,8 @@
       },
       "output_map": { "ButtonPressed": "DiffButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "5",
@@ -91,7 +94,8 @@
       },
       "output_map": { "ButtonPressed": "FailButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     }
   ]
 }

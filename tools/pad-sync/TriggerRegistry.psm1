@@ -11,7 +11,7 @@ Import-Module (Join-Path $moduleHere 'PadAlerts.psm1') -Force
 # -NoMain：只加载函数与变量，不执行注册主流程
 . (Join-Path $moduleHere 'pad-schedule.ps1') -NoMain
 
-# 触发声明的取值域，与 pad-admit 第 14 项保持一致
+# 触发声明的取值域，与 pad-admit 的 TRIGGER 检查保持一致
 $script:TriggerKinds = @('manual', 'schedule', 'file')
 $script:TriggerReservedKinds = @('mail', 'callback')
 $script:TriggerDays = @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')

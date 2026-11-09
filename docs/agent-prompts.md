@@ -213,7 +213,7 @@ DRY_RUN、只读巡检、灰度开关都用它；不要用普通 IF 冒充，否
 |---|---|---|
 | `deny-close-outlook` | 任何 `Outlook.Close*` 动作 | 会关掉用户已打开的 Outlook 主进程 |
 | `deny-email-in-dry-run` | `DRY_RUN=1` 时不得出现 `Outlook.SendEmailThroughOutlook.SendEmail` | 测试模式不允许发信 |
-| `deny-posting-in-dry-run` | `DRY_RUN=1` 时不得出现参数含 `%PostingVbsPath%` 的 `RunDOSCommand` | 测试模式不允许过账 |
+| `deny-migo-in-dry-run` | `DRY_RUN=1` 时不得出现 `intent=sap-migo` 的 `RunDOSCommand` | 测试模式不允许过账 |
 | `deny-prod-auto-repair` | 生产环境禁止自动改写 `.robin` | 只允许观察或人工修复 |
 | `deny-write-outside-allowed-roots` | 只允许写 `PAD_ROOT` / 仓库工作区 / `TEMP` | 越界写入一律拒绝 |
 

@@ -17,7 +17,7 @@ const path = require("path");
 const RUN_MODES = ["auto", "confirm", "observe"];
 
 // 触发声明（trigger）的取值集合。
-// 与 pad-admit 第 14 项共用同一口径：保留值单列，便于给出“支持但未实现”而不是“拼错”的提示。
+// 与 pad-admit 的 TRIGGER 检查共用同一口径：保留值单列，便于给出“支持但未实现”而不是“拼错”的提示。
 const TRIGGER_KINDS = ["manual", "schedule", "file"];
 const TRIGGER_RESERVED_KINDS = ["mail", "callback"];
 const TRIGGER_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -36,6 +36,36 @@ function hasOwn(obj, key) {
 // 正整数校验：JSON 里写成字符串或小数一律不认
 function isPositiveInt(v) {
   return typeof v === "number" && Number.isFinite(v) && v > 0 && Number.isInteger(v);
+}
+
+// 已知不可逆动作：执行后无法撤回，声明 reversible=true 属于事实错误，直接判失败。
+// 发信、删除文件/目录、过账脚本（按 intent 识别，不依赖参数名）。
+const POSTING_INTENT_RE = /(migo|posting)/i;
+function irreversibleReason(n) {
+  const hint = String((n && n.pad_hint) || "");
+  if (/^Outlook\.SendEmail/i.test(hint)) return "发信动作无法撤回，只能补发更正";
+  if (/^(File|Folder)\.Delete$/i.test(hint)) return "删除文件/目录无法撤销";
+  if (/^Scripting\.RunDOSCommand/i.test(hint) && POSTING_INTENT_RE.test(String((n && n.intent) || ""))) {
+    return "过账脚本重复执行会产生重复凭证，只能冲销";
+  }
+  return null;
+}
+
+// 可逆性声明的完整校验：必须是布尔；false 必须带说明；已知不可逆动作不允许写 true。
+function reversibleProblems(n) {
+  const problems = [];
+  if (typeof n.reversible !== "boolean") {
+    problems.push(`reversible=${JSON.stringify(n.reversible)}（应为 true/false）`);
+    return problems;
+  }
+  if (n.reversible === false && !String(n.reversibility_note || "").trim()) {
+    problems.push("reversible=false 时必须写 reversibility_note（说清回退办法）");
+  }
+  const reason = irreversibleReason(n);
+  if (reason && n.reversible === true) {
+    problems.push(`动作 ${n.pad_hint} 属于不可逆动作（${reason}），reversible 必须为 false`);
+  }
+  return problems;
 }
 
 /**
@@ -182,7 +212,7 @@ const INPUT_DIR_RE = /^\{\{config\.\w+\}\}$/;
 
 /**
  * 校验节点级输入文件声明，返回 { errors, warnings }，条目形如 { code, detail }。
- * 只验声明形状，不碰文件系统；“目录可读 / 候选文件计数”属于 pad-admit 第 16 项。
+ * 只验声明形状，不碰文件系统；“目录可读 / 候选文件计数”属于 pad-admit 的 INPUT 检查。
  * 老 flow.json 不写 inputs 时只给一条 INPUT_UNDECLARED 提示，不判失败（向后兼容）。
  */
 function validateInputs(flow, opts = {}) {
@@ -318,7 +348,7 @@ const OPS = {
     const ok = JSON.stringify(got) === JSON.stringify(want) && (n.switch.default || []).length > 0;
     return { ok, detail: got.join(" | ") };
   },
-  // 节点级必答项：运行方式（auto / confirm / observe）与幂等性（布尔）
+  // 节点级必答项：运行方式（auto / confirm / observe）、幂等性与可逆性（布尔）
   // 设计规则要求「用户没回答就不生成 flow.json」，所以缺字段一律判失败，不做默认填充
   nodeDeclaration(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
@@ -332,24 +362,33 @@ const OPS = {
     } else if (n.idempotent === false && !String(n.idempotency_note || "").trim()) {
       problems.push("idempotent=false 时必须写 idempotency_note（幂等键或先查后写方案）");
     }
+    problems.push(...reversibleProblems(n));
     if (a.runMode && n.run_mode !== a.runMode) problems.push(`run_mode 期望 ${a.runMode}，实际 ${n.run_mode}`);
     if (typeof a.idempotent === "boolean" && n.idempotent !== a.idempotent) {
       problems.push(`idempotent 期望 ${a.idempotent}，实际 ${n.idempotent}`);
     }
     return { ok: problems.length === 0, detail: problems.length ? problems.join("；") : `run_mode=${n.run_mode} idempotent=${n.idempotent}` };
   },
-  // 全流程必答项完整性：每个节点都必须显式声明两项，缺一个即失败
+  // 全流程必答项完整性：每个节点都必须显式声明三项（run_mode / idempotent / reversible），缺一个即失败
+  // reversible 为 false 时还必须有 reversibility_note；已知不可逆动作写 true 属于事实错误，也判失败
   declarationsComplete(flow) {
-    const missing = flow.nodes.filter((n) => {
-      const modeOk = RUN_MODES.includes(n.run_mode);
-      const idemOk = typeof n.idempotent === "boolean"
-        && (n.idempotent === true || String(n.idempotency_note || "").trim());
-      return !modeOk || !idemOk;
-    });
-    const ids = missing.map((n) => n.id);
+    const missing = [];
+    for (const n of flow.nodes) {
+      const problems = [];
+      if (!RUN_MODES.includes(n.run_mode)) {
+        problems.push(`run_mode=${JSON.stringify(n.run_mode)}（应为 ${RUN_MODES.join("/")}）`);
+      }
+      if (typeof n.idempotent !== "boolean") {
+        problems.push(`idempotent=${JSON.stringify(n.idempotent)}（应为 true/false）`);
+      } else if (n.idempotent === false && !String(n.idempotency_note || "").trim()) {
+        problems.push("idempotent=false 时必须写 idempotency_note（幂等键或先查后写方案）");
+      }
+      problems.push(...reversibleProblems(n));
+      if (problems.length) missing.push(`节点 ${n.id}：${problems.join("；")}`);
+    }
     return {
       ok: missing.length === 0,
-      detail: missing.length ? `缺声明节点 ${missing.length} 个：${ids.slice(0, 12).join(",")}${ids.length > 12 ? "…" : ""}` : `${flow.nodes.length} 个节点均已声明`,
+      detail: missing.length ? `缺声明节点 ${missing.length} 个：${missing.slice(0, 12).join(" | ")}${missing.length > 12 ? "…" : ""}` : `${flow.nodes.length} 个节点均已声明`,
     };
   },
   // 触发声明断言：a.def 给了就验该对象（只验声明形状），否则验流程自身的 trigger。
@@ -481,15 +520,26 @@ if (require.main === module) {
     }
     // 允许单条用例用 flow 覆盖被测文件：用于「同一份断言集里放正例和反例」，
     // 例如反例需要一个 run_mode=confirm 的节点，而正例需要一个干净流程。
-    const cases = s.cases.map((c) => {
-      if (!c.flow) return runCase(flow, c);
-      try {
-        const own = JSON.parse(fs.readFileSync(c.flow, "utf8"));
-        return runCase(own, c);
-      } catch (e) {
-        return { id: c.id, requirement: c.requirement, ok: false, results: [{ ok: false, detail: `读取用例流程失败：${e.message}` }] };
-      }
-    });
+    // 每个用例文件的被测流程无条件先跑一次必答项完整性，不再依赖 cases 显式写 expect；
+    // 单条用例用 flow 覆盖的反例（故意缺字段）不受此限，仍按它自己的断言判。
+    const baseDecl = OPS.declarationsComplete(flow);
+    const cases = [
+      {
+        id: "declarations-complete",
+        requirement: "每个节点显式声明 run_mode / idempotent / reversible",
+        ok: baseDecl.ok,
+        results: [baseDecl],
+      },
+      ...s.cases.map((c) => {
+        if (!c.flow) return runCase(flow, c);
+        try {
+          const own = JSON.parse(fs.readFileSync(c.flow, "utf8"));
+          return runCase(own, c);
+        } catch (e) {
+          return { id: c.id, requirement: c.requirement, ok: false, results: [{ ok: false, detail: `读取用例流程失败：${e.message}` }] };
+        }
+      }),
+    ];
     total += cases.length;
     passed += cases.filter((c) => c.ok).length;
     report.push({ flow: s.flowPath, cases });

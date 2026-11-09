@@ -26,7 +26,8 @@
       "loop": { "kind": "fromto", "index": "Idx", "from": 1, "to": 5, "step": 1, "body": ["2"] },
       "next": ["4"],
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "2",
@@ -36,7 +37,8 @@
       "params": { "Condition": "Idx >= Threshold" },
       "branch": { "trueBody": ["3"], "falseBody": [] },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "3",
@@ -44,7 +46,8 @@
       "type": "break",
       "pad_hint": "EXIT LOOP",
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "4",
@@ -61,7 +64,8 @@
       },
       "output_map": { "ButtonPressed": "DoneButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     }
   ]
 }

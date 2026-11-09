@@ -13,7 +13,8 @@
       "next": [],
       "branch": null,
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     }
   ]
 }

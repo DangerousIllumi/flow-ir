@@ -3,7 +3,7 @@
 # 为什么单独成模块：
 #   1) 「精确到修订、禁止取最新」的 Workspace 定位与身份解析必须是唯一实现；
 #      pad-release.ps1（发布后写基线）、pad-rollback.ps1（回滚后重写基线）、
-#      pad-fingerprint.ps1（存量流播种）、pad-admit.ps1（准入第 12 项）都从这里取，
+#      pad-fingerprint.ps1（存量流播种）、pad-admit.ps1（准入的 FINGERPRINT 检查）都从这里取，
 #      避免出现第二套哈希/定位实现。
 #   2) 对所有 flow.json 一视同仁：本模块不含任何「只对某条流程生效」的分支。
 #

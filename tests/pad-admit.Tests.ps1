@@ -1,7 +1,7 @@
 ﻿# pad-admit.Tests.ps1 — 准入网关纯函数与端到端测试（Pester 3.4）
 #
 # 覆盖：通配符匹配、策略 deny/ask/allow 三层顺序、无人值守 ask=deny、
-#       真实流程 16 项检查全部可跑（子进程执行，避免 exit 影响测试会话）。
+#       真实流程全部检查项可跑（子进程执行，避免 exit 影响测试会话）。
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-admit.ps1') -NoMain
 
@@ -197,7 +197,7 @@ Describe 'pad-admit 策略评估' {
     }
 }
 
-Describe 'pad-admit TRIGGER 第 15 项（观察期 warn）' {
+Describe 'pad-admit TRIGGER（观察期 warn）' {
     It '无 trigger：warn + TRIGGER_MISSING' {
         $f = [pscustomobject]@{ nodes = @() }
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
@@ -297,7 +297,20 @@ Describe 'pad-admit TRIGGER 第 15 项（观察期 warn）' {
         ($r[0].evidence -join ' ') | Should Match '节点 29'
     }
 
-    It 'manual 声明：reversible=false 也不报可逆性 warn' {
+    It '不可逆动作写成 reversible=true：fail + REVERSIBLE_MISLABELED' {
+        $f = [pscustomobject]@{
+            nodes = @([pscustomobject]@{ id = '44'; pad_hint = 'Outlook.SendEmailThroughOutlook.SendEmail'
+                run_mode = 'auto'; idempotent = $false; reversible = $true })
+            trigger = [pscustomobject]@{ kind = 'manual' }
+        }
+        $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'REVERSIBLE_MISLABELED' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'fail'
+        ($hit[0].evidence -join ' ') | Should Match '节点 44'
+    }
+
+    It 'manual 声明：reversible=false 同样报可逆性 warn（报告模式可见）' {
         $nodes = @(
             [pscustomobject]@{ id = '43'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
                 idempotent = $false; reversible = $false }
@@ -305,11 +318,13 @@ Describe 'pad-admit TRIGGER 第 15 项（观察期 warn）' {
         $f = [pscustomobject]@{ nodes = $nodes; trigger = [pscustomobject]@{ kind = 'manual' } }
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
         $r.Count | Should Be 1
-        $r[0].status | Should Be 'pass'
+        $r[0].status | Should Be 'warn'
+        $r[0].code | Should Be 'TRIGGER_UNATTENDED_IRREVERSIBLE'
+        ($r[0].evidence -join ' ') | Should Match '节点 43'
     }
 }
 
-Describe 'pad-admit INPUT 第 16 项（节点级输入文件声明）' {
+Describe 'pad-admit INPUT（节点级输入文件声明）' {
 
     function New-InputNode($Entries) {
         return [pscustomobject]@{

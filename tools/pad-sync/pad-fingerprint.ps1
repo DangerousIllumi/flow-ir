@@ -1,7 +1,7 @@
 ﻿# pad-fingerprint.ps1 — 流程指纹基线：查看定位结果、播种（-Set）与人工确认
 #
 # 为什么需要：
-#   pad-admit 第 12 项（FINGERPRINT）要拿「当前 .robin / config / acceptance」与一份基线比对。
+#   pad-admit 的 FINGERPRINT 检查要拿「当前 .robin / config / acceptance」与一份基线比对。
 #   基线只由三个写入侧产生：pad-release 成功、pad-rollback 成功、本脚本 -Set（存量流播种）。
 #
 # 硬约束：

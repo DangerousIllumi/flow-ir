@@ -598,8 +598,11 @@ if (outPath) {
 }
 
 // ── 静态自检 ──────────────────────────────────────────────────
+// 唯一规则来源是仓库内的 tools/pad-robin/check-flows.js。
+// 知识库目录下也有一份上游克隆的副本（marketing/video/tools/check-flows.js），
+// 它是外部仓库的历史产物，两边已经分叉；这里一律不再使用，避免“自检通过但 check.js 失败”。
 if (!noCheck && outPath) {
-  const checkFlows = path.join(path.dirname(kbPath), "marketing", "video", "tools", "check-flows.js");
+  const checkFlows = path.join(__dirname, "check-flows.js");
   if (fs.existsSync(checkFlows)) {
     try {
       execFileSync(process.execPath, [checkFlows, kbPath, outPath], { stdio: "inherit" });

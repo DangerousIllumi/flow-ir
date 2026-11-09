@@ -1,17 +1,17 @@
-> 状态：设计基线 v1；trigger 断言、pad-admit 第 15 项、schedule/manual/file 注册器与 file 守望已落地，其余见第 7 节。
+> 状态：设计基线 v1；trigger 断言、pad-admit 的 TRIGGER 检查、schedule/manual/file 注册器与 file 守望已落地，其余见第 7 节。
 
 # 触发声明（`trigger`）与注册器设计稿（v1）
 
 > 设计基线：`flow.json` 顶层已有 `trigger` 键（见 `docs/agent-prompts.md` 与 `tools/flow-drawio/example-flow.json`）。
 > 在设计落地前它是**惰性字段**：生成器、`check.js` 不读取、不校验，`drawio-to-flow.js` 只是原样搬运；
-> 现在 `eval-flow.js` 的 trigger 断言与 `pad-admit` 第 15 项会校验它。本设计**复用这个键，不另造第二套配置体系**，把它从“注释”升级为“可校验、可注册的声明”。
+> 现在 `eval-flow.js` 的 trigger 断言与 `pad-admit` 的 TRIGGER 检查会校验它。本设计**复用这个键，不另造第二套配置体系**，把它从“注释”升级为“可校验、可注册的声明”。
 
 ## 1. 为什么需要：三个具体问题
 
 | 问题 | 现状证据 | 造成的后果 |
 |---|---|---|
 | **不可见** | 启动方式只存在于 `pad-schedule.ps1` 的命令行参数、计划任务列表、人的口头记忆 | 换人接手、换机器重建时，只能靠翻历史命令反推 |
-| **不可校验** | `eval-flow.js` 只检查节点级 `run_mode`/`idempotent`；`pad-admit` 早期没有一项看触发（现已补第 15 项 `TRIGGER`） | “定时每天 09:00 跑”和“节点全 `run_mode=confirm`”可以同时存在而不报错 |
+| **不可校验** | `eval-flow.js` 只检查节点级 `run_mode`/`idempotent`；`pad-admit` 早期没有一项看触发（现已补 `TRIGGER` 检查） | “定时每天 09:00 跑”和“节点全 `run_mode=confirm`”可以同时存在而不报错 |
 | **不可注册** | 注册逻辑散落在 `tools/pad-sync/pad-schedule.ps1`，只有 `-Daily/-Weekly`、`-LastWorkday` 两条路径，任务名靠 `Get-ScheduleTaskName` 临时推导 | 新增流程要人肉拼参数；重复注册靠 `-Force` 盲覆盖；注册完没有统一的“是否生效”验证 |
 
 **边界**：`trigger` 只声明“怎么启动”，不替代 `budget`、不替代 `guard`、不描述流程步骤。注册是**本机操作系统层**的动作（Windows 计划任务 / 文件守望），**不新增任何 PAD 动作、不改 `.robin`**。
@@ -217,7 +217,7 @@ CLI 外壳：
 
 `check.js` **不改**：它只看 `.robin`，看不到 `flow.json` 顶层字段，这已是既有共识。
 
-### 4.2 `pad-admit` 第 15 项 `TRIGGER`
+### 4.2 `pad-admit` 的 `TRIGGER` 检查
 
 静态校验 + 可选的本机只读校验（`-TriggerLive` 开关，默认关闭，保证离线生成阶段结果可复现）。
 
@@ -273,7 +273,7 @@ CLI 外壳：
 | 步骤 | 内容 | 验收命令与判据 |
 |---|---|---|
 | 1 声明层 | `trigger` 规范 + `eval-flow.js` 两个新 op + 正/反用例 | `node tools\pad-robin\eval-flow.js tests\eval` 退出 0；反例用 `expect=invalid` + `code` 断言命中 `TRIGGER_*`（整套仍绿）；把反例改成默认“期望合法”时退出 1 并打印结果码 |
-| 2 准入层 | `pad-admit` 第 15 项 `TRIGGER`，默认 warn | `.\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<流程名>.json -Json` 输出含 `"id":"TRIGGER"`；无 `trigger` 的存量流为 warn 且退出码不变；`kind=mail` 的样例退出 1 |
+| 2 准入层 | `pad-admit` 的 `TRIGGER` 检查，默认 warn | `.\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<流程名>.json -Json` 输出含 `"id":"TRIGGER"`；无 `trigger` 的存量流为 warn 且退出码不变；`kind=mail` 的样例退出 1 |
 | 3 计划任务注册器 | `TriggerRegistry.psm1` + `pad-trigger.ps1`（schedule） | `-Register -DryRun` 只打印动作不写系统；真注册到 `flow-ir-<计划任务名>-selftest` 后 `-Test` 返回 `ok=true`；`schtasks /Query /TN <计划任务名> /XML` 中时间/星期与声明一致；再注册一次返回 `unchanged`；`-Unregister` 后 `-Test` 返回未注册 |
 | 4 文件落地注册器 | `file` 分支 + `-Watch` + 状态账本 | 指向临时 `<附件目录>` 注册；投放一个稳定大小的探针文件 → 出现新 runId；再投放同名同大小文件 → 不重复触发；`-Test` 全程只读（目录 mtime 不变） |
 

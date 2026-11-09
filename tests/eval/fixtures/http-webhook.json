@@ -54,7 +54,8 @@
       "params": { "Condition": "HttpStatus = 200" },
       "branch": { "trueBody": ["3"], "falseBody": ["4"] },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "3",
@@ -67,7 +68,8 @@
       },
       "output_map": { "ButtonPressed": "OkButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "4",
@@ -80,7 +82,8 @@
       },
       "output_map": { "ButtonPressed": "FailButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     }
   ]
 }

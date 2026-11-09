@@ -23,13 +23,7 @@
 ```bash
 node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); console.log(kb.actions.find(a=>a.actionId==='Module.Action.Selector')?'OK':'MISS')"
 ```
-常用动作（均已验证存在）：
-- Outlook：`Outlook.Launch`、`Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments`、`Outlook.SendEmailThroughOutlook.SendEmail`
-  （**不要**用 `Outlook.Close`，见下方准入红线）
-- Excel：`Excel.LaunchExcel.LaunchAndOpen`、`Excel.ReadFromExcel.ReadAllCells`、`Excel.SetColor.SetColorRangePredefined`、`Excel.CloseExcel.CloseAndSave`
-- SAP：`Scripting.RunVBScript.RunVBScript`
-- AI：`LLM.InvokeLLM`
-- 控制流：`IF` / `LOOP` / `SWITCH`（不是动作，用节点形状）
+易错点：`Outlook.Close*` 一律禁用（会连带关掉用户已打开的主窗口）；其余动作以 KB 查表结果为准，不在文档里抄清单。
 
 **句柄必须成对开闭**：Launch 产出 → 后续引用 → Close 收尾。
 唯一例外是 Outlook：**只 Launch 不 Close**，否则会把用户已打开的主窗口一起关掉。
@@ -49,6 +43,7 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
 | 2b | 后果能不能回退（可逆性） | `true` 删掉可重建、可改回（保存附件/导出文件/核对文件/标记已读）/ `false` 发信、过账等不可撤回 | 节点级 `reversible`；为 `false` 时必须再写 `reversibility_note`（说清回退办法，如"过账需冲销凭证"） |
 | 3 | 多文件落盘 + 需清理旧文件时，怎么区分「本次产物」 | `是` 采用运行时间目录 / `否` 说明用什么可靠标记 | 本次落盘目录 + 清理节点的选取条件 |
 | 4 | 这一步开始前需要哪些输入文件 | `无` / 每个文件给出：目录（配置键）、文件名通配符、`true` 必需 / `false` 可选 | 节点级 `inputs[]`（见下方「输入文件声明」） |
+| 5 | 这个流程怎么触发 | `manual` / `schedule`（`time` + `days` + `gate=workday|last-workday`）/ `file`（`dir` 必须是 `{{config.<KEY>}}`） | 顶层 `trigger`，字段与取值见 `docs/trigger-adapter-design.md`；`assisted=true` 必须带 `timeout_sec` |
 
 判定口径：
 - **`idempotent` 与 `reversible` 是两个正交的轴，不能互相代替**：
@@ -72,8 +67,13 @@ node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); cons
     `idempotency_note` 写明人工前置检查（如「重跑前必须确认状态账本完整」）；
     且 `reversible=false`，`reversibility_note` 写「提交后需冲销才能撤回」。
 
-缺字段的后果：`eval-flow.js` 的 `declarationsComplete` / `nodeDeclaration` 会直接判失败（退出码 1），
-不会降级成警告。自检命令：
+- **触发补跑一律关闭**：日程触发的 `StartWhenAvailable` 必须为 `false`。补跑会把周末错过的实例
+  放到工作日清晨执行，而日历门禁只认“今天”，识别不出来。
+- **每个流程必须声明 `budget`**；`Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` 节点必须写 `intent`，
+  否则准入直接 fail（见「准入红线」）。
+- 缺字段的后果：`eval-flow.js` 对每个被测流程都会**无条件**先跑一次 `declarationsComplete`
+  （不再依赖 cases 显式声明）；`nodeDeclaration` 用于单节点断言。缺任何一项都直接判失败（退出码 1），
+  不会降级成警告。自检命令：
 
 ```bash
 node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
@@ -108,11 +108,8 @@ node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
 - 自检断言用 `inputs` op：`node tools/pad-robin/eval-flow.js tests/eval/input-files.cases.json`。
 
 ### 4. 生成 flow.json
-严格遵循结构（见 `docs/agent-prompts.md` 完整 schema）。关键点：
-- `pad_hint`：KB 真实三段式 actionId
-- `params`：键必须是该动作 `input_params` 的真实参数名
-- `outputs`：要绑定的输出变量名数组
-- `{{2.RetrievedEmails}}` 引用上游节点输出
+严格遵循结构（见 `docs/agent-prompts.md` 完整 schema）。节点字段以 schema 为准：
+`outputs` 写要绑定的输出变量名数组，`{{2.RetrievedEmails}}` 引用上游节点输出。
 
 ### 5. 生成流程图
 ```bash
@@ -124,12 +121,6 @@ node tools/flow-drawio/flow-to-drawio.js business/flows/<name>.json business/flo
 node tools/flow-drawio/drawio-to-flow.js business/flows/<name>.drawio business/flows/<name>.json business/flows/<name>.new.json
 ```
 复述变更摘要，补齐手画新节点的 type/pad_hint，确认后说"可以交给 Agent B 了"。
-
-## 约束
-- pad_hint 必须是 KB 真实 actionId，不编造
-- params 键必须是动作真实参数名
-- 句柄类流程必须显式 Launch/Close
-- 只生成 flow.json + 流程图，不生成 Robin 代码
 
 ## 流程卫生（会被 `check.js` / `lint-robin.js` 提示）
 
@@ -149,17 +140,18 @@ node tools/flow-drawio/drawio-to-flow.js business/flows/<name>.drawio business/f
 > 设计器里那条「应用修复」按钮**不要点**：它直接改画布，`flow.json` 不变，
 > 下次生成就被覆盖，线上与仓库立刻漂移。修复一律回 `flow.json` 改，再重新生成。
 
-## 准入红线（来自 business/policy.json，设计阶段就避开）
-| 规则 | 禁止 / 条件 |
-|---|---|
-| `deny-close-outlook` | 任何 `Outlook.Close*` 动作 |
-| `deny-email-in-dry-run` | `DRY_RUN=1` 时不得出现发信动作 |
-| `deny-posting-in-dry-run` | `DRY_RUN=1` 时不得出现参数含 `%PostingVbsPath%` 的 `RunDOSCommand` |
-| `deny-prod-auto-repair` | 生产环境禁止自动改写 `.robin` |
-| `deny-write-outside-allowed-roots` | 只允许写 `PAD_ROOT` / 仓库工作区 / `TEMP` |
+## 准入红线（以策略文件为准）
 
-副作用（发信、过账、删文件）一律放进 `guard` 节点，条件 `DryRun <> $'''1'''`。
-提交前跑一遍只读准入检查：
+动作类红线不抄在文档里：统一由 `business/policy.json` 定义、由 `pad-admit.ps1` 的 POLICY 检查执行，
+规则清单与判定细节见 `docs/admission-gate.md`。设计阶段只需要守住两条：
+
+- 不出现 `Outlook.Close*`（会连带关掉用户已打开的主窗口）
+- 副作用（发信、过账、删文件）一律放进 `guard` 节点，条件 `DryRun <> $'''1'''`
+
+提交前跑一遍只读准入检查（先生成 `.robin`；不传 `-RobinFile` 时找不到同名脚本会静默跳过静态校验）：
+
 ```powershell
-.\tools\pad-sync\pad-admit.ps1 -FlowFile business/flows/<name>.json -ConfigFile business/config/<name>.json
+.\tools\pad-sync\pad-admit.ps1 -FlowFile business/flows/<name>.json -ConfigFile business/config/<name>.json -RobinFile business/flows/<name>.robin
 ```
+
+交付条件是 `fail=0` **且** `ask=0`：`ask` 的退出码是 2，同样阻断交付。

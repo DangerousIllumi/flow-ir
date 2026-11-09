@@ -33,7 +33,8 @@
       "output_map": { "Files": "Files" },
       "next": ["2"],
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "2",
@@ -43,7 +44,8 @@
       "params": { "Condition": "Enabled = $'''True''' AND Files.Count > 0" },
       "branch": { "trueBody": ["3"], "falseBody": ["4"] },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "3",
@@ -56,7 +58,8 @@
       },
       "output_map": { "ButtonPressed": "StartButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "4",
@@ -69,7 +72,8 @@
       },
       "output_map": { "ButtonPressed": "SkipButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     }
   ]
 }

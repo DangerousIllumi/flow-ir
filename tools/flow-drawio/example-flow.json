@@ -8,12 +8,39 @@
     "gate": "last-workday",
     "timeout_sec": 4200
   },
-  "budget": { "maxLoop": 1, "note": "示例流程无轮询；仅演示结构" },
+  "budget": {
+    "maxLoop": 1,
+    "note": "示例流程无轮询；仅演示结构"
+  },
   "variables": [
-    { "name": "ManagerEmail", "type": "string", "default": "user@example.com", "description": "收件人邮箱", "required": true },
-    { "name": "SenderFilter", "type": "string", "default": "sender@example.com", "description": "发件人过滤", "required": true },
-    { "name": "Month", "type": "string", "default": "2026-09", "description": "对账月份", "required": true },
-    { "name": "ExcelPath", "type": "string", "default": "<EXPORT_DIR>\\export.xlsx", "description": "SAP导出Excel路径", "required": true }
+    {
+      "name": "ManagerEmail",
+      "type": "string",
+      "default": "user@example.com",
+      "description": "收件人邮箱",
+      "required": true
+    },
+    {
+      "name": "SenderFilter",
+      "type": "string",
+      "default": "sender@example.com",
+      "description": "发件人过滤",
+      "required": true
+    },
+    {
+      "name": "Month",
+      "type": "string",
+      "default": "2026-09",
+      "description": "对账月份",
+      "required": true
+    },
+    {
+      "name": "ExcelPath",
+      "type": "string",
+      "default": "<EXPORT_DIR>\\export.xlsx",
+      "description": "SAP导出Excel路径",
+      "required": true
+    }
   ],
   "nodes": [
     {
@@ -22,9 +49,16 @@
       "pad_hint": "Outlook.Launch",
       "label": "启动 Outlook",
       "params": {},
-      "outputs": ["OutlookInstance"],
-      "next": ["2"],
-      "branch": null
+      "outputs": [
+        "OutlookInstance"
+      ],
+      "next": [
+        "2"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "2",
@@ -38,9 +72,18 @@
         "SubjectContains": "报表",
         "SaveAttachmentsInto": "<PAD_ROOT>\\Attachments"
       },
-      "output_skip": ["Messages"],
-      "next": ["3"],
-      "branch": null
+      "output_skip": [
+        "Messages"
+      ],
+      "next": [
+        "3"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": false,
+      "idempotency_note": "保存附件后会标记已读，重跑取不到同一封邮件，请先恢复未读状态",
+      "reversible": true,
+      "reversibility_note": "附件与标记已读均可重新生成或改回"
     },
     {
       "id": "3",
@@ -51,9 +94,18 @@
       "params": {
         "VBScriptCode": "WScript.Echo \"export done to {{variables.ExcelPath}}\""
       },
-      "output_skip": ["ScriptError", "ScriptOutput"],
-      "next": ["4"],
-      "branch": null
+      "output_skip": [
+        "ScriptError",
+        "ScriptOutput"
+      ],
+      "next": [
+        "4"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true,
+      "reversibility_note": "每次生成新的带时间戳导出文件，旧文件可直接删除"
     },
     {
       "id": "4",
@@ -64,9 +116,16 @@
         "Path": "{{variables.ExcelPath}}",
         "Visible": false
       },
-      "outputs": ["ExcelInstance"],
-      "next": ["5"],
-      "branch": null
+      "outputs": [
+        "ExcelInstance"
+      ],
+      "next": [
+        "5"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "5",
@@ -76,23 +135,39 @@
       "params": {
         "FirstLineIsHeader": true
       },
-      "outputs": ["ExcelData"],
-      "next": ["6"],
-      "branch": null
+      "outputs": [
+        "ExcelData"
+      ],
+      "next": [
+        "6"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "6",
       "type": "branch",
       "pad_hint": "IF",
       "label": "有差异吗",
-      "params": { "Condition": "ExcelData.Count > 0" },
-      "next": ["8"],
+      "params": {
+        "Condition": "ExcelData.Count > 0"
+      },
+      "next": [
+        "8"
+      ],
       "branch": {
         "condition": "ExcelData.Count > 0",
         "true": "7",
         "false": "8",
-        "body": ["7"]
-      }
+        "body": [
+          "7"
+        ]
+      },
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "7",
@@ -107,8 +182,14 @@
         "ColorName": "Red"
       },
       "outputs": [],
-      "next": ["8"],
-      "branch": null
+      "next": [
+        "8"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true,
+      "reversibility_note": "标色可直接改回或重新生成文件"
     },
     {
       "id": "8",
@@ -117,8 +198,13 @@
       "label": "保存并关闭 Excel",
       "params": {},
       "outputs": [],
-      "next": ["9"],
-      "branch": null
+      "next": [
+        "9"
+      ],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "9",
@@ -133,7 +219,12 @@
       },
       "outputs": [],
       "next": [],
-      "branch": null
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": false,
+      "idempotency_note": "每重跑一次会再发一封对账邮件",
+      "reversible": false,
+      "reversibility_note": "邮件已发出无法撤回，只能补发一封说明"
     }
   ]
 }

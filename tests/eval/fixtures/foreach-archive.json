@@ -33,7 +33,8 @@
       "output_map": { "Files": "CsvFiles" },
       "next": ["2"],
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "2",
@@ -43,7 +44,8 @@
       "loop": { "kind": "foreach", "item": "Item", "list": "{{1.CsvFiles}}", "body": ["3"] },
       "next": ["4"],
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     },
     {
       "id": "3",
@@ -76,7 +78,8 @@
       },
       "output_map": { "ButtonPressed": "DoneButton" },
       "run_mode": "auto",
-      "idempotent": true
+      "idempotent": true,
+      "reversible": true
     }
   ]
 }
