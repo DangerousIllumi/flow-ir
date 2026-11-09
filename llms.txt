@@ -1,58 +1,60 @@
 # flow-ir
 
-> 引擎无关的流程中间表示（IR）与多引擎适配器工具链：`flow.json` 是事实源，
-> **当前只实现了 PAD（Power Automate Desktop / Robin）一个适配器**，其他引擎（另一款 RPA、
-> 云端流、Python/VBS）属于尚未实现的扩展方向。适配器代码在 `tools/pad-robin/` 与 `tools/pad-sync/`。
+> An engine-agnostic intermediate representation (IR) for business processes, plus a multi-engine adapter
+> toolchain: `flow.json` is the source of truth, and **only one adapter is implemented today — PAD
+> (Power Automate Desktop / Robin)**. Other engines (another RPA product, cloud flows, Python/VBS) are
+> extension points that are not implemented yet. Adapter code lives in `tools/pad-robin/` and `tools/pad-sync/`.
 
-## 分层
+## Layers
 
-| 层 | 内容 | 位置 |
+| Layer | Contents | Location |
 |---|---|---|
-| IR 与引擎无关的校验 | 画布与 `edges` 一致性、需求级结构断言、公开层内容扫描、通用工具件 | `tools/flow-drawio/`、`tools/pad-robin/eval-flow.js`、`tools/publish/`、`tools/workday/`、`tools/xlsx/` |
-| PAD 适配器 | 生成 `.robin`、产物静态校验、准入、注入、发布、回滚、调度、遥测、验收 | `tools/pad-robin/flow-to-robin.js`、`tools/pad-sync/` |
+| Engine-agnostic IR checks | Canvas vs `edges` consistency, requirement-level structural assertions, public-content scanning, general utilities | `tools/flow-drawio/`, `tools/pad-robin/eval-flow.js`, `tools/publish/`, `tools/workday/`, `tools/xlsx/` |
+| PAD adapter | `.robin` generation, artifact static checks, admission, injection, publishing, rollback, scheduling, telemetry, acceptance | `tools/pad-robin/flow-to-robin.js`, `tools/pad-sync/` |
 
-`.robin` 是 PAD 适配器的产物，不是 IR 本身；IR 的节点、边、`guard`、`budget`、幂等、可逆性、
-`trigger` 等结构不绑定任何引擎。
+`.robin` is an artifact of the PAD adapter, not the IR itself. IR structures — nodes, edges, `guard`, `budget`,
+idempotency, reversibility, `trigger` — are not bound to any engine.
 
-## 最短上手
+## Getting started
 
 ```powershell
-.\tools\check-env.ps1    # 先确认 Node / Git / PowerShell
-.\setup.ps1              # Node 依赖 + 提交前门禁 + 克隆 PAD 动作知识库
+.\tools\check-env.ps1    # verify Node / Git / PowerShell first
+.\setup.ps1              # Node deps + pre-commit gate + clone the PAD action knowledge base
 ```
 
-验证环境是否可用：`.\examples\smoke.ps1`（画布 → 生成 → 静态校验 → 准入 → 结构评估一条龙，
-不依赖 `business/`、动作知识库或 `node_modules`，全过返回 0）。
+To verify the environment: `.\examples\smoke.ps1` (canvas → generate → static check → admission → structural
+evaluation in one run; needs no `business/`, no action knowledge base and no `node_modules`; exits 0 when green).
 
-然后照 `docs/nl-to-flow-guide.md` 走一遍：需求 → `flow.json` → 生成 → 静态校验 → 准入。
+Then walk through `docs/nl-to-flow-guide.md`: requirement → `flow.json` → generate → static check → admission.
 
-## 红线
+## Red lines
 
-1. 动作与参数不许编：`pad_hint` 必须是动作知识库里的三段式 `actionId`，`params` 键必须是该动作的真实参数名。
-2. 副作用必须可跳过：发信、过账、删文件放进 `guard`，`flow.json` 必须声明 `budget`。
-3. `business/` 永不入库、永不公开：整目录被忽略，提交前门禁与公开层扫描双重拦截。
-4. 不替人做三件事：不录 UI 元素、不编造 SAP 录制产物、不替人发布到生产。
-5. 触发声明只写 `kind`（`manual` / `schedule` / `file`）；旧 `type`/`config` 形状判 `TRIGGER_LEGACY_SHAPE`。
+1. Never invent actions or parameters: `pad_hint` must be a real three-part `actionId` from the action knowledge base, and `params` keys must be that action's real parameter names.
+2. Side effects must be skippable: sending mail, posting documents and deleting files go inside `guard`, and `flow.json` must declare a `budget`.
+3. `business/` is never committed and never public: the whole directory is ignored, and both the pre-push gate and the public-content scan block it.
+4. Three things are never automated away: recording UI elements, fabricating SAP recording artifacts, publishing to production.
+5. A trigger declares only `kind` (`manual` / `schedule` / `file`); the legacy `type`/`config` shape is reported as `TRIGGER_LEGACY_SHAPE`.
 
-## 读什么
+## Where to read next
 
-| 目标 | 从这里开始 |
+| Goal | Start here |
 |---|---|
-| 了解项目全貌 | [README.md](README.md) |
-| 动手前（生成 / 校验 / 发布） | [AGENTS.md](AGENTS.md) |
-| 写流程（需求 → `flow.json`） | [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) |
-| 写脚本红线 | [skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md) |
-| 门禁、准入、指纹 | [docs/admission-gate.md](docs/admission-gate.md) |
-| 切换引擎的边界 | [README.md](README.md) 的「分层：IR 是事实源，引擎是可替换的后端」 |
+| Understand the project as a whole | [README.md](README.md) |
+| Before doing the work (generate / check / publish) | [AGENTS.md](AGENTS.md) |
+| Writing a flow (requirement → `flow.json`) | [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md) |
+| Script red lines | [skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md) |
+| Gates, admission, fingerprints | [docs/admission-gate.md](docs/admission-gate.md) |
+| Boundaries when switching engines | [README.md](README.md), section "Layering: the IR is the source of truth, engines are replaceable back ends" |
 
-## 索引
+## Index
 
-- [AGENTS.md](AGENTS.md)：AI 助手的操作手册（环境准备、仓库地图、六步工作流、报错处理）
-- [README.md](README.md)：项目定位、能力边界、工具目录、逐条报错对照
-- [docs/nl-to-flow-guide.md](docs/nl-to-flow-guide.md)：一句话 → `flow.json` → 四项校验的完整示例
-- [docs/admission-gate.md](docs/admission-gate.md)：准入 16 项、策略、指纹与公开边界
-- [docs/agent-prompts.md](docs/agent-prompts.md)：`flow.json` 字段约定
-- [docs/script-standards.md](docs/script-standards.md)：脚本规范
-- [docs/trigger-adapter-design.md](docs/trigger-adapter-design.md)：触发声明与注册器设计
-- [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md)、[skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md)：设计与脚本红线
-- [tests/eval](tests/eval)：中性合成样例与结构断言，可当模板抄
+- [AGENTS.md](AGENTS.md): the operating manual for AI assistants (environment setup, repository map, six-step workflow, troubleshooting)
+- [README.md](README.md): positioning, capability boundaries, tool directories, error-by-error guide
+- [docs/nl-to-flow-guide.md](docs/nl-to-flow-guide.md): a complete walkthrough from one sentence to `flow.json` and the four checks
+- [docs/admission-gate.md](docs/admission-gate.md): the 16 admission checks, policy, fingerprints and the public boundary
+- [docs/doc-language.md](docs/doc-language.md): which document uses which language, and the two hard rules
+- [docs/agent-prompts.md](docs/agent-prompts.md): `flow.json` field conventions
+- [docs/script-standards.md](docs/script-standards.md): script standards
+- [docs/trigger-adapter-design.md](docs/trigger-adapter-design.md): trigger declarations and registry design
+- [skills/pad-flow-designer](skills/pad-flow-designer/SKILL.md), [skills/pad-robin-coder](skills/pad-robin-coder/SKILL.md): design rules and script red lines
+- [tests/eval](tests/eval): neutral synthetic samples and structural assertions, ready to copy as templates
