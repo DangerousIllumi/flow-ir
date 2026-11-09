@@ -9,9 +9,9 @@
 $script:Module = Join-Path $PSScriptRoot '..\tools\pad-sync\PadDesigner.psm1'
 Import-Module $script:Module -Force
 
-Describe 'PadDesigner 模块抽取与画布比对' {
+Describe 'PadDesigner module extraction and canvas comparison' {
 
-    It '模块可导入，编排层依赖的函数都已导出' {
+    It 'The module imports and every function the orchestration layer relies on is exported' {
         $names = (Get-Command -Module 'PadDesigner').Name
         foreach ($n in @('Get-DesignerWindow', 'Invoke-PadInject', 'Invoke-PadRun',
                          'Get-CanvasText', 'Test-CanvasMatch', 'Test-WindowOutside',
@@ -21,7 +21,7 @@ Describe 'PadDesigner 模块抽取与画布比对' {
         }
     }
 
-    It '日志被 PAD 占用（允许读、不允许写）时仍能读出内容' {
+    It 'A log locked by PAD (read allowed, write denied) can still be read' {
         $f = Join-Path $TestDrive 'locked.log'
         [IO.File]::WriteAllText($f, '{"index":1}', (New-Object Text.UTF8Encoding($false)))
         # 模拟 PAD 运行期间持有的句柄：别人只能读，不能写
@@ -35,7 +35,7 @@ Describe 'PadDesigner 模块抽取与画布比对' {
         }
     }
 
-    It '窗口越界判定：屏内不算越界，右侧出界与最小化算越界' {
+    It 'Window off-screen detection: on-screen is inside, right overflow and minimized count as outside' {
         (Test-WindowOutside -Left 0 -Top 0 -Right 1200 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080) | Should Be $false
         # 实测出现过的越界窗口：L=878 R=2078，超出 1920 屏宽
         (Test-WindowOutside -Left 878 -Top 0 -Right 2078 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080) | Should Be $true
@@ -43,7 +43,7 @@ Describe 'PadDesigner 模块抽取与画布比对' {
         (Test-WindowOutside -Left 0 -Top 0 -Right 1000 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080 -Minimized) | Should Be $true
     }
 
-    It '画布比对：注释 / @ 元数据 / 缩进 / 转义差异都视为一致' {
+    It 'Canvas comparison: comment, @ metadata, indentation and escape differences all count as matching' {
         $src = @"
 @@Type = 'PadFlow'
 # 这是注释，画布回读时不会有
@@ -61,7 +61,7 @@ END
         (Test-CanvasMatch -CanvasText $canvas -SourceText $src).match | Should Be $true
     }
 
-    It '画布比对：只粘进去一部分 → 不一致，且报第一处缺失行' {
+    It 'Canvas comparison: partially pasted content is a mismatch and reports the first missing line' {
         $src = @"
 SET A TO 1
 SET B TO 2
@@ -80,7 +80,7 @@ SET B TO 2
         $cmp.lineB | Should Be '<missing>'
     }
 
-    It '运行日志判定：逐动作行不算结束，末行汇总才返回终止状态' {
+    It 'Run log verdict: per-action lines do not end the run, only the final summary line returns a terminal status' {
         # 逐动作行带 index；整次运行的汇总行没有 index（PAD 的 Actions.log 约定）
         $log = Join-Path $TestDrive 'Actions.log'
         @(
@@ -93,14 +93,14 @@ SET B TO 2
         (Get-RunLogStatus -LogPath $log) | Should Be 'Succeeded'
     }
 
-    It '运行日志判定：文件不存在或为空时返回 null' {
+    It 'Run log verdict: a missing or empty file returns null' {
         (Get-RunLogStatus -LogPath (Join-Path $TestDrive 'nope.log')) | Should Be $null
         $empty = Join-Path $TestDrive 'empty.log'
         Set-Content -LiteralPath $empty -Value '' -Encoding UTF8
         (Get-RunLogStatus -LogPath $empty) | Should Be $null
     }
 
-    It '运行目录列举：只收 <流程>\Runs 下的目录' {
+    It 'Run directory listing: only directories under <flow>\Runs are collected' {
         $root = Join-Path $TestDrive 'Scripts'
         New-Item -ItemType Directory -Path (Join-Path $root 'flowA\Runs\run1') -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $root 'flowA\Runs\run2') -Force | Out-Null
@@ -110,7 +110,7 @@ SET B TO 2
         (($dirs | ForEach-Object { $_.Name }) -join ',') | Should Be 'run1,run2'
     }
 
-    It '运行目录只认本次 runId：找不到就返回 $null，绝不退化到取最新' {
+    It 'Run directory resolution honors this runId only: returns $null when not found and never falls back to the latest' {
         $root = Join-Path $TestDrive 'ResolveRun'
         $rid = 'c7483d18-9667-4ba8-b8ad-ec1dc5d1470b'
         New-Item -ItemType Directory -Path (Join-Path $root "flowA\Runs\$rid") -Force | Out-Null
@@ -132,7 +132,7 @@ SET B TO 2
         ($src -match 'Get-ChildItem -LiteralPath \$base -Recurse') | Should Be $false
     }
 
-    It 'pad-sync 已退化为薄封装：不再自带 Win32 声明与 UI 实现' {
+    It 'pad-sync is now a thin wrapper: it no longer carries Win32 declarations or UI implementations' {
         $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\tools\pad-sync\pad-sync.ps1'), [Text.Encoding]::UTF8)
         ($src -match 'DllImport') | Should Be $false
         ($src -match "PadDesigner\.psm1") | Should Be $true
@@ -140,40 +140,40 @@ SET B TO 2
     }
 }
 
-Describe '自动点按收窄：只认外部触发确认框' {
+Describe 'Auto-click narrowed: only the external-trigger confirmation dialog qualifies' {
 
-    It '真机确认框（Console.Host + 标题 Power Automate + 协议按钮）：允许点击' {
+    It 'Real confirmation dialog (Console.Host + Power Automate title + protocol button) is allowed to click' {
         (Test-ExternalTriggerDialog -ProcessName 'PAD.Console.Host' -WindowTitle 'Power Automate' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton' -ButtonControlType 'Button') | Should Be $true
     }
 
-    It '业务弹窗（机器人进程 / 完成提示标题）：一律不点，即使按钮文字是“确定”' {
+    It 'Business pop-ups (robot process / completion title) are never clicked, even when the button text is the Chinese "OK" label' {
         (Test-ExternalTriggerDialog -ProcessName 'PAD.RobotV2' -WindowTitle '通用报表·处理完成' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton' -ButtonControlType 'Button') | Should Be $false
         (Test-ExternalTriggerDialog -ProcessName 'PAD.RobotV2' -WindowTitle '通用报表' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton' -ButtonControlType 'Button') | Should Be $false
     }
 
-    It '标题不在白名单（Designer 带流程名的窗口）：不点' {
+    It 'Titles outside the allowlist (Designer windows carrying the flow name) are not clicked' {
         (Test-ExternalTriggerDialog -ProcessName 'PAD.Console.Host' -WindowTitle 'Power Automate | 通用报表' `
             -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton') | Should Be $false
     }
 
-    It '按钮 AutomationId 不匹配：不点（不靠按钮文字判定）' {
+    It 'A mismatched button AutomationId is not clicked (the decision does not rely on button text)' {
         (Test-ExternalTriggerDialog -ProcessName 'PAD.Console.Host' -WindowTitle 'Power Automate' `
             -ButtonAutomationId 'SomeOtherButton') | Should Be $false
     }
 
-    It '源码层面已移除 BM_CLICK 盲点：不再按按钮文字点机器人窗口' {
+    It 'The BM_CLICK blind spot is gone from the source: robot windows are no longer clicked by button text' {
         $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\tools\pad-sync\PadDesigner.psm1'), [Text.Encoding]::UTF8)
         ($src -match '0x00F5') | Should Be $false
         ($src -match '\$txt -eq ''确定''') | Should Be $false
     }
 }
 
-Describe '触发前校验：流程名必须解析出 flowId' {
+Describe 'Pre-trigger validation: the flow name must resolve to a flowId' {
 
-    It '解析到唯一流程：返回 flowId / environmentId' {
+    It 'Resolves a unique flow and returns flowId / environmentId' {
         $root = Join-Path $TestDrive 'IdRoot'
         $flowId = 'a40506df-b67b-4523-8f37-bdc3977a3479'
         $runId = '9f8f96ae-8999-457d-ad77-ba02c66ecec5'
@@ -192,7 +192,7 @@ Describe '触发前校验：流程名必须解析出 flowId' {
         $id.EnvironmentId | Should Be 'Default-ecaa386b-63b6-4dd7-a4b2-15a7900a4cf0'
     }
 
-    It '名字对不上：返回 $null（调用方据此在触发前拒绝）' {
+    It 'Name mismatch returns $null (the caller uses this to refuse before triggering)' {
         $root = Join-Path $TestDrive 'IdRoot2'
         $flowId = 'a40506df-b67b-4523-8f37-bdc3977a3479'
         $runId = '9f8f96ae-8999-457d-ad77-ba02c66ecec5'
@@ -208,7 +208,7 @@ Describe '触发前校验：流程名必须解析出 flowId' {
         (Resolve-PadFlowIdentity -WorkflowName '不存在的流程' -ScriptsRoot $root) | Should Be $null
     }
 
-    It '流程目录缺失：返回 $null（同样拒绝触发）' {
+    It 'Missing flow directory returns $null (triggering is refused as well)' {
         $root = Join-Path $TestDrive 'IdRoot3'
         $flowId = 'a40506df-b67b-4523-8f37-bdc3977a3479'
         $runId = '9f8f96ae-8999-457d-ad77-ba02c66ecec5'

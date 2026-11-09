@@ -86,14 +86,14 @@ function Get-FileErrorCode {
     }
 }
 
-Describe 'file 声明与配置解析' {
+Describe 'file declaration and config resolution' {
 
-    It 'file.dir 是字面路径 → TRIGGER_PATH_LITERAL' {
+    It 'file.dir as a literal path → TRIGGER_PATH_LITERAL' {
         $f = New-FileFlow -Dir $TestDrive -Name 'literal' -FileDir 'C:\inbox'
         (Get-FileErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_PATH_LITERAL'
     }
 
-    It '配置键只读解析：能解析 PadConfig 固定键集之外的键' {
+    It 'Read-only config resolution: keys outside the PadConfig fixed key set resolve' {
         $listen = Join-Path $TestDrive 'listen-a'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         $cfg = New-FileConfig -Dir $TestDrive -InboxPath $listen
@@ -104,7 +104,7 @@ Describe 'file 声明与配置解析' {
         $got | Should Be $listen
     }
 
-    It '配置里没有该键 → TRIGGER_CONFIG_UNRESOLVED' {
+    It 'Key missing from the config → TRIGGER_CONFIG_UNRESOLVED' {
         $cfg = New-FileConfig -Dir $TestDrive -InboxPath (Join-Path $TestDrive 'x')
         (Get-FileErrorCode {
             & $script:FileModule {
@@ -114,15 +114,15 @@ Describe 'file 声明与配置解析' {
         }) | Should Be 'TRIGGER_CONFIG_UNRESOLVED'
     }
 
-    It 'poll_sec 低于 15 → TRIGGER_INVALID' {
+    It 'poll_sec below 15 → TRIGGER_INVALID' {
         $f = New-FileFlow -Dir $TestDrive -Name 'poll-14' -PollSec 14
         (Get-FileErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
     }
 }
 
-Describe 'file -Test 只读校验' {
+Describe 'file -Test read-only validation' {
 
-    It '0 个候选：目录可读，判 ready' {
+    It 'Zero candidates: the directory is readable and the status is ready' {
         $listen = Join-Path $TestDrive 'listen-zero'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $listen 'note.txt') -Value 'x'
@@ -137,7 +137,7 @@ Describe 'file -Test 只读校验' {
         @($r.candidates).Count | Should Be 0
     }
 
-    It '1 个候选：判 ready，不做额外挑选' {
+    It 'One candidate: ready, with no extra selection' {
         $listen = Join-Path $TestDrive 'listen-one'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $listen 'report.csv') -Value 'a,b'
@@ -153,7 +153,7 @@ Describe 'file -Test 只读校验' {
         @($r.candidates)[0] | Should Be 'report.csv'
     }
 
-    It '≥2 个候选：判 TRIGGER_FILE_AMBIGUOUS，不取最新' {
+    It 'Two or more candidates: TRIGGER_FILE_AMBIGUOUS, never the newest' {
         $listen = Join-Path $TestDrive 'listen-many'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $listen 'a.csv') -Value '1'
@@ -170,7 +170,7 @@ Describe 'file -Test 只读校验' {
         @($r.candidates).Count | Should Be 2
     }
 
-    It '-Test 不写任何文件：监听目录与状态目录 mtime、文件清单前后一致' {
+    It '-Test writes no files: the watched directory and state directory keep identical mtimes and file listings before and after' {
         $listen = Join-Path $TestDrive 'listen-nowrite'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $listen 'only.csv') -Value 'abc'
@@ -186,7 +186,7 @@ Describe 'file -Test 只读校验' {
         (Get-DirSnapshot $state) | Should Be $beforeState
     }
 
-    It 'Register -DryRun 只返回 planned，不建状态目录、不注册任务' {
+    It 'Register -DryRun only returns planned, creating no state directory and registering no task' {
         $listen = Join-Path $TestDrive 'listen-dry'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         $state = Join-Path $TestDrive 'state-dry-not-created'
@@ -203,9 +203,9 @@ Describe 'file -Test 只读校验' {
     }
 }
 
-Describe 'file 守望与账本' {
+Describe 'file watch and ledger' {
 
-    It 'max_wait_sec 到点静默退出 0（空目录，不等文件）' {
+    It 'max_wait_sec expiry exits quietly with 0 (empty directory, no waiting for a file)' {
         $listen = Join-Path $TestDrive 'listen-timeout'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         $state = Join-Path $TestDrive 'state-timeout'
@@ -219,7 +219,7 @@ Describe 'file 守望与账本' {
         ($null -eq $r.triggeredFileName) | Should Be $true
     }
 
-    It '账本键是 fileName|size|lastWriteUtc，同一文件第二次返回 false' {
+    It 'The ledger key is fileName|size|lastWriteUtc, and the same file returns false the second time' {
         $listen = Join-Path $TestDrive 'listen-ledger'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         $file = Join-Path $listen 'report.csv'
@@ -242,7 +242,7 @@ Describe 'file 守望与账本' {
         (@($json.keys) -contains $key) | Should Be $true
     }
 
-    It 'CLI -Watch 超时：退出码 0，末行 status=timeout' {
+    It 'CLI -Watch timeout: exit code 0 with a final status=timeout line' {
         $listen = Join-Path $TestDrive 'listen-cli-timeout'
         New-Item -ItemType Directory -Path $listen -Force | Out-Null
         $state = Join-Path $TestDrive 'state-cli-timeout'

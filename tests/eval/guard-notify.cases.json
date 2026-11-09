@@ -1,10 +1,10 @@
 {
   "flow": "tests/eval/fixtures/guard-notify.json",
-  "description": "需求：任务完成后发通知，但测试模式不能真发",
+  "description": "Requirement: send a notification after the job completes, but never actually send it in test mode",
   "cases": [
     {
       "id": "notify-guarded",
-      "requirement": "发信必须在 DRY_RUN 守卫内",
+      "requirement": "Sending must be inside the DRY_RUN guard",
       "expect": [
         { "op": "guardContains", "id": "2", "nodes": ["3"] },
         { "op": "edge", "from": "2", "to": "4" }
@@ -12,14 +12,14 @@
     },
     {
       "id": "notify-target",
-      "requirement": "收件人来自变量，不能写死",
+      "requirement": "The recipient comes from a variable, not hard-coded",
       "expect": [
         { "op": "param", "id": "3", "name": "SendTo", "equals": "{{variables.AlertTo}}" }
       ]
     },
     {
       "id": "skip-hint",
-      "requirement": "被跳过时要有可见提示",
+      "requirement": "A visible notice is required when the step is skipped",
       "expect": [
         { "op": "action", "id": "4", "padHint": "Display.ShowMessageDialog.ShowMessage" }
       ]

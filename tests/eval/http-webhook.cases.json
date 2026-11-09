@@ -1,10 +1,10 @@
 {
   "flow": "tests/eval/fixtures/http-webhook.json",
-  "description": "需求：任务完成后 POST 通知，失败要能看出来",
+  "description": "Requirement: POST a notification after the job completes and make failures visible",
   "cases": [
     {
       "id": "post-with-json-body",
-      "requirement": "用 POST 发 JSON，内容类型是 application/json",
+      "requirement": "Send JSON via POST with content type application/json",
       "expect": [
         { "op": "action", "id": "1", "padHint": "Web.InvokeWebService.InvokeWebServicePost" },
         { "op": "param", "id": "1", "name": "ContentType", "equals": "application/json" },
@@ -13,7 +13,7 @@
     },
     {
       "id": "status-code-branch",
-      "requirement": "按 HTTP 状态码区分成功与失败",
+      "requirement": "Distinguish success from failure by HTTP status code",
       "expect": [
         { "op": "condition", "id": "2", "contains": "HttpStatus = 200" },
         { "op": "edge", "from": "2", "to": "4" }

@@ -6,7 +6,7 @@
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $here '..\tools\pad-sync\PadConfig.psm1') -Force
 
-Describe 'PadConfig 读取与校验' {
+Describe 'PadConfig loading and validation' {
     BeforeEach {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -27,7 +27,7 @@ Describe 'PadConfig 读取与校验' {
         $script:cfg | ConvertTo-Json | Set-Content -LiteralPath $script:cfgPath -Encoding UTF8
     }
 
-    It '正常读取：返回全部字段且类型正确' {
+    It 'normal load: all fields returned with the correct types' {
         $r = Get-PadRuntimeConfig -ConfigPath $script:cfgPath
         $r.PadSyncPath | Should Be $script:cfg.PadSyncPath
         $r.PythonExe | Should Be $script:cfg.PythonExe
@@ -37,7 +37,7 @@ Describe 'PadConfig 读取与校验' {
         $r.PadRoot | Should Be $script:cfg.PadRoot
     }
 
-    It '缺字段：CONFIG_MISSING，不静默补默认值' {
+    It 'missing field: CONFIG_MISSING with no silent default fill-in' {
         $cfg = [ordered]@{} + $script:cfg
         $cfg.Remove('PadRoot')
         $cfg | ConvertTo-Json | Set-Content -LiteralPath $script:cfgPath -Encoding UTF8
@@ -46,7 +46,7 @@ Describe 'PadConfig 读取与校验' {
         $code | Should Be 'CONFIG_MISSING'
     }
 
-    It '路径不存在：CONFIG_PATH_NOT_FOUND' {
+    It 'path not found: CONFIG_PATH_NOT_FOUND' {
         $cfg = [ordered]@{} + $script:cfg
         $cfg.PythonExe = Join-Path $TestDrive 'no-such-python.exe'
         $cfg | ConvertTo-Json | Set-Content -LiteralPath $script:cfgPath -Encoding UTF8
@@ -55,7 +55,7 @@ Describe 'PadConfig 读取与校验' {
         $code | Should Be 'CONFIG_PATH_NOT_FOUND'
     }
 
-    It '类型不对：RunTimeoutSec 非正整数记 CONFIG_INVALID_VALUE' {
+    It 'wrong type: a non-positive integer RunTimeoutSec records CONFIG_INVALID_VALUE' {
         foreach ($bad in @('123', 0, -5)) {
             $cfg = [ordered]@{} + $script:cfg
             $cfg.RunTimeoutSec = $bad
@@ -66,7 +66,7 @@ Describe 'PadConfig 读取与校验' {
         }
     }
 
-    It '配置文件不存在：CONFIG_PATH_NOT_FOUND' {
+    It 'config file missing: CONFIG_PATH_NOT_FOUND' {
         $code = $null
         try { Get-PadRuntimeConfig -ConfigPath (Join-Path $TestDrive 'missing.json') } catch { $code = $_.Exception.Data['code'] }
         $code | Should Be 'CONFIG_PATH_NOT_FOUND'

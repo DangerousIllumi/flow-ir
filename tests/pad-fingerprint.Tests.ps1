@@ -35,9 +35,9 @@ function New-FakePad([string]$Work, [string]$FlowName, [string]$FlowGuid, [strin
     return [ordered]@{ scripts = $scripts; workspace = $ws; robin = $robin; deployed = $deployed; runId = $RunId }
 }
 
-Describe 'PadFingerprint 定位与身份' {
+Describe 'PadFingerprint location and identity' {
 
-    It '从 Actions.log 路径解析 GUID 与 runId；非运行路径返回 null' {
+    It 'parses GUID and runId from an Actions.log path; non-run paths return null' {
         $p = 'C:\Users\x\Console\Scripts\CFD13222-CA5B-447E-B7FF-51FE823BA40B\Runs\d0a4989f-5798-45bb-b6b3-c8658d54fc52\Actions.log'
         $ids = Get-FlowGuidFromLogPath $p
         $ids.flowGuid | Should Be 'cfd13222-ca5b-447e-b7ff-51fe823ba40b'
@@ -45,7 +45,7 @@ Describe 'PadFingerprint 定位与身份' {
         (Get-FlowGuidFromLogPath 'C:\temp\nothing.log') | Should Be $null
     }
 
-    It 'Workspace 定位：runId 精确命中，其他旧修订不参与' {
+    It 'Workspace lookup: exact runId match; other old revisions are excluded' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $runId = '22222222-2222-2222-2222-222222222222'
@@ -59,7 +59,7 @@ Describe 'PadFingerprint 定位与身份' {
         (Find-WorkspaceRobin $fake.workspace $g $runId ([datetime]::UtcNow.AddHours(-1))) | Should Be $fake.robin
     }
 
-    It 'Workspace 定位：多个候选直接报错，不静默挑一个' {
+    It 'Workspace lookup: multiple candidates raise an error instead of silently picking one' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         foreach ($rev in 'AAAA0001', 'BBBB0002') {
@@ -76,7 +76,7 @@ Describe 'PadFingerprint 定位与身份' {
         $ex.Message | Should Match '2 candidate revisions'
     }
 
-    It '环境 ID：从合成 console.config 读取首个 EnvironmentId，读不到返回 null' {
+    It 'environment ID: reads the first EnvironmentId from a synthetic console.config; null when unreadable' {
         $work = New-Work
         $p = Join-Path $work 'console.config'
         [IO.File]::WriteAllText($p, '{"UserConfigs":{"-1":{"EnvironmentId":"Default-abc"}}}', (New-Object Text.UTF8Encoding($false)))
@@ -85,9 +85,9 @@ Describe 'PadFingerprint 定位与身份' {
     }
 }
 
-Describe 'PadFingerprint 比对' {
+Describe 'PadFingerprint comparison' {
 
-    It '哈希一致：基线与当前三件套相同 → pass' {
+    It 'identical hashes: baseline and the current triple match -> pass' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -104,7 +104,7 @@ Describe 'PadFingerprint 比对' {
         $r.code | Should Be 'OK'
     }
 
-    It '内容漂移：源 .robin 改过 → FINGERPRINT_SOURCE_MISMATCH（默认 fail）' {
+    It 'content drift: the source .robin changed -> FINGERPRINT_SOURCE_MISMATCH (default fail)' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -121,7 +121,7 @@ Describe 'PadFingerprint 比对' {
         (@($r.evidence).Count) | Should BeGreaterThan 1
     }
 
-    It '显式 Mode=warn 时同样的漂移只降级为 warn（不改判定）' {
+    It 'explicit Mode=warn downgrades the same drift to warn (verdict unchanged)' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -146,13 +146,13 @@ Describe 'PadFingerprint 比对' {
         $r.code | Should Be 'FINGERPRINT_SOURCE_MISMATCH'
     }
 
-    It '读不到定义 → FINGERPRINT_UNKNOWN' {
+    It 'unreadable definition -> FINGERPRINT_UNKNOWN' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath (Join-Path $TestDrive 'not-exist.robin') `
             -BaselinePath (Join-Path $TestDrive 'no-baseline.json')
         $r.code | Should Be 'FINGERPRINT_UNKNOWN'
     }
 
-    It '没有基线：默认（生产门禁）仍判 fail' {
+    It 'no baseline: the default production gate still fails' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
@@ -161,7 +161,7 @@ Describe 'PadFingerprint 比对' {
         $r.status | Should Be 'fail'
     }
 
-    It '没有基线：报告模式可降级为 warn，并给出完整的播种命令' {
+    It 'no baseline: report mode downgrades to warn and prints the complete seed command' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
@@ -179,7 +179,7 @@ Describe 'PadFingerprint 比对' {
         (@($r.evidence) -join ' ') | Should Match 'fix='
     }
 
-    It '基线损坏 → FINGERPRINT_BASELINE_CORRUPT' {
+    It 'corrupt baseline -> FINGERPRINT_BASELINE_CORRUPT' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         $base = Join-Path $work 'baseline.json'
@@ -189,7 +189,7 @@ Describe 'PadFingerprint 比对' {
         $r.code | Should Be 'FINGERPRINT_BASELINE_CORRUPT'
     }
 
-    It '基线缺 robin 哈希 → FINGERPRINT_BASELINE_CORRUPT' {
+    It 'baseline without a robin hash -> FINGERPRINT_BASELINE_CORRUPT' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         $base = Join-Path $work 'baseline.json'
@@ -199,7 +199,7 @@ Describe 'PadFingerprint 比对' {
             Should Be 'FINGERPRINT_BASELINE_CORRUPT'
     }
 
-    It '流程 GUID 变化 → FINGERPRINT_FLOW_STALE' {
+    It 'flow GUID changed -> FINGERPRINT_FLOW_STALE' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -211,7 +211,7 @@ Describe 'PadFingerprint 比对' {
         $r.code | Should Be 'FINGERPRINT_FLOW_STALE'
     }
 
-    It 'config 漂移 → FINGERPRINT_CONFIG_STALE' {
+    It 'config drift -> FINGERPRINT_CONFIG_STALE' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -227,7 +227,7 @@ Describe 'PadFingerprint 比对' {
             -BaselinePath $base -ScriptsRoot $fake.scripts).code | Should Be 'FINGERPRINT_CONFIG_STALE'
     }
 
-    It '批准记录一致 → pass；不一致 → FINGERPRINT_MISMATCH（始终 fail）' {
+    It 'matching approval record -> pass; mismatch -> FINGERPRINT_MISMATCH (always fail)' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
@@ -243,7 +243,7 @@ Describe 'PadFingerprint 比对' {
     }
 }
 
-Describe 'PadFingerprint 身份解析与哈希域拆分' {
+Describe 'PadFingerprint identity resolution and hash domain split' {
 
     # 造一条新格式基线：源与已发布各自一份，避免任何跨域比较
     function New-BaselineV2([string]$Work, [string]$SourceRobin, [string]$DeployedRobin, [string]$DisplayName, [string]$FlowGuid) {
@@ -269,7 +269,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         return $base
     }
 
-    It '身份解析：用基线里的 PAD 显示名，业务名不同也能命中' {
+    It 'identity resolution: the PAD display name from the baseline matches even when the business name differs' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work '示例流程显示名' $g '22222222-2222-2222-2222-222222222222'
@@ -280,7 +280,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r.code | Should Be 'OK'
     }
 
-    It '身份解析：搜不到 → UNKNOWN，并把搜过的名字写进 evidence' {
+    It 'identity resolution: nothing found -> UNKNOWN, with the searched names in the evidence' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -290,7 +290,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         ($r.evidence -join ' ') | Should Match 'searched=不存在的显示名'
     }
 
-    It '旧基线缺 deployed 段 → UNKNOWN（提示重新播种，不许当 pass）' {
+    It 'old baseline without a deployed section -> UNKNOWN (asks for a reseed, never pass)' {
         $work = New-Work
         $robin = Join-Path $work 'x.robin'
         [IO.File]::WriteAllText($robin, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
@@ -307,7 +307,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r.status | Should Be 'fail'
     }
 
-    It '形态一：源与已发布完全一致 → pass' {
+    It 'shape one: source and published copy are identical -> pass' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -317,7 +317,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r.code | Should Be 'OK'
     }
 
-    It '形态二：原始字节不同、规范化一致 → 仍 pass，并注明字节差异' {
+    It 'shape two: raw bytes differ but normalized text matches -> still pass, noting the byte difference' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         # PAD 落盘会追加 @@ 元数据头；规范化后与源完全一致
@@ -333,7 +333,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r.message | Should Match 'raw bytes differ'
     }
 
-    It '形态三：规范化后真漂移 → FINGERPRINT_DEPLOYED_MISMATCH（默认 fail）' {
+    It 'shape three: real drift after normalization -> FINGERPRINT_DEPLOYED_MISMATCH (default fail)' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -348,7 +348,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
     }
 }
 
-Describe 'PadFingerprint 已发布侧改比部署产物' {
+Describe 'PadFingerprint published side compares the deployment artifact' {
 
     # 用模块自带的 v2 播种：deployed 段取自部署产物
     function New-BaselineFromDeployed([string]$Work, $Fake, [string]$Guid) {
@@ -360,7 +360,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         return $base
     }
 
-    It '① 部署产物与 deployed.logicHash 一致 → pass' {
+    It '1) deployment artifact matches deployed.logicHash -> pass' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -372,7 +372,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $r.message | Should Match 'source is a template'
     }
 
-    It '② 篡改 deployed.logicHash → FINGERPRINT_DEPLOYED_MISMATCH' {
+    It '2) tampered deployed.logicHash -> FINGERPRINT_DEPLOYED_MISMATCH' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -386,7 +386,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $r.message | Should Match 'logically inconsistent with the published copy'
     }
 
-    It '③ 删掉部署产物 → FINGERPRINT_UNKNOWN（提示先生成，不许 pass）' {
+    It '3) deployment artifact deleted -> FINGERPRINT_UNKNOWN (asks to regenerate first, never pass)' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -398,7 +398,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $r.message | Should Match 'deployment artifact not found'
     }
 
-    It '④ 源 .robin 改字节 → 仍 FINGERPRINT_SOURCE_MISMATCH' {
+    It '4) source .robin bytes changed -> still FINGERPRINT_SOURCE_MISMATCH' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -411,8 +411,8 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
     }
 }
 
-Describe 'pad-fingerprint 基线命名与 pad-admit 同口径' {
-    It '按 pad_flow_name 反查 flow.json：基线落在 <flow文件名>.json，准入能读到' {
+Describe 'pad-fingerprint baseline naming uses the pad-admit convention' {
+    It 'resolves flow.json by pad_flow_name: the baseline lands in <flow file name>.json and admission can read it' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $runId = '22222222-2222-2222-2222-222222222222'
@@ -458,8 +458,8 @@ Describe 'pad-fingerprint 基线命名与 pad-admit 同口径' {
     }
 }
 
-Describe 'pad-fingerprint 播种必须人工确认' {
-    It '-Set 不加 -Confirm：打印定位结果、退出码 2、不写基线；加 -Confirm 才写' {
+Describe 'pad-fingerprint seeding requires human confirmation' {
+    It '-Set without -Confirm: prints the lookup result, exits with code 2 and writes no baseline; -Confirm writes it' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
@@ -489,7 +489,7 @@ Describe 'pad-fingerprint 播种必须人工确认' {
         $j.machine | Should Be $env:COMPUTERNAME
     }
 
-    It '多个候选修订：直接 AMBIGUOUS 停下，退出码 2，不写基线' {
+    It 'multiple candidate revisions: stops as AMBIGUOUS with exit code 2 and writes no baseline' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         # runId 精确命中不到同名修订目录，时间窗口内两个候选
@@ -511,7 +511,7 @@ Describe 'pad-fingerprint 播种必须人工确认' {
     }
 }
 
-Describe 'PadFingerprint scripts 段（v3）' {
+Describe 'PadFingerprint scripts section (v3)' {
 
     # 造一个最小仓库：两个仓库内脚本 + 两个仓库外（绝对路径）旧拷贝
     function New-ScriptRepo([string]$Work) {
@@ -529,7 +529,7 @@ Describe 'PadFingerprint scripts 段（v3）' {
         return [ordered]@{ repo = $rels; external = $ext }
     }
 
-    It '全部一致 → pass' {
+    It 'all match -> pass' {
         $work = New-Work
         $paths = New-ScriptRepo $work
         $base = Join-Path $work 'baseline.json'
@@ -546,7 +546,7 @@ Describe 'PadFingerprint scripts 段（v3）' {
         $r.code | Should Be 'OK'
     }
 
-    It '旧基线缺 scripts 段 → warn（不判 fail，向后兼容）' {
+    It 'old baseline without a scripts section -> warn (not fail, backward compatible)' {
         $work = New-Work
         $paths = New-ScriptRepo $work
         $base = Join-Path $work 'old-baseline.json'
@@ -561,7 +561,7 @@ Describe 'PadFingerprint scripts 段（v3）' {
         $r.status | Should Not Be 'fail'
     }
 
-    It '已有 scripts 段但缺 external 段 → 仍按 legacy warn，不判 fail' {
+    It 'scripts section present but external missing -> still a legacy warn, not fail' {
         $work = New-Work
         $paths = New-ScriptRepo $work
         $base = Join-Path $work 'no-external.json'
@@ -577,7 +577,7 @@ Describe 'PadFingerprint scripts 段（v3）' {
         ($r.message) | Should Match 'external'
     }
 
-    It '仓库外旧拷贝被改动 → MISMATCH，evidence 点名其绝对路径' {
+    It 'an old copy outside the repo changed -> MISMATCH, with its absolute path named in the evidence' {
         $work = New-Work
         $paths = New-ScriptRepo $work
         $base = Join-Path $work 'baseline.json'
@@ -598,7 +598,7 @@ Describe 'PadFingerprint scripts 段（v3）' {
         ($r.evidence -join ' ') | Should Not Match 'scripts/a\.vbs'
     }
 
-    It '单个仓库脚本被改动 → SCRIPT_FINGERPRINT_MISMATCH，evidence 点名该文件' {
+    It 'one repo script changed -> SCRIPT_FINGERPRINT_MISMATCH, with that file named in the evidence' {
         $work = New-Work
         $paths = New-ScriptRepo $work
         $base = Join-Path $work 'baseline.json'

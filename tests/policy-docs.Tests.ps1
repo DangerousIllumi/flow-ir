@@ -7,9 +7,9 @@ $skill = Join-Path $repo 'skills\pad-flow-designer\SKILL.md'
 $prompts = Join-Path $repo 'docs\agent-prompts.md'
 $policy = Join-Path $repo 'business\policy.json'
 
-Describe '策略规则文档一致性' {
+Describe 'Policy rule documentation consistency' {
 
-    It '设计 SKILL 不再抄规则表，只指向策略文件' {
+    It 'The design SKILL no longer copies the rule table and only points to the policy file' {
         $text = Get-Content -LiteralPath $skill -Raw -Encoding UTF8
         $text | Should Match 'business/policy\.json'
         $text | Should Match 'docs/admission-gate\.md'
@@ -17,7 +17,7 @@ Describe '策略规则文档一致性' {
         ([regex]::Matches($text, '\| `(deny-[a-z-]+|ask-[a-z-]+)`')).Count | Should Be 0
     }
 
-    It '文档里出现的规则名都存在于 business\policy.json（文件缺失时跳过）' {
+    It 'Rule names appearing in the docs all exist in business\policy.json (skipped when the file is missing)' {
         if (-not (Test-Path -LiteralPath $policy)) {
             Write-Host '[skip] business\policy.json 不存在（业务层不入库），跳过规则名比对'
             return

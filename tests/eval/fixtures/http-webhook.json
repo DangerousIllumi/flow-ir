@@ -1,6 +1,6 @@
 {
   "name": "http-webhook-notify",
-  "description": "POST 一个 JSON 到 webhook，按状态码分支（合成样例）",
+  "description": "POST a JSON payload to a webhook and branch on the status code (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-http-webhook",
@@ -14,13 +14,13 @@
   ],
   "edges": [
     { "from": "1", "to": "2" },
-    { "from": "2", "to": "3", "label": "是" },
-    { "from": "2", "to": "4", "label": "否" }
+    { "from": "2", "to": "3", "label": "yes" },
+    { "from": "2", "to": "4", "label": "no" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "POST 通知",
+      "label": "POST notification",
       "type": "action",
       "pad_hint": "Web.InvokeWebService.InvokeWebServicePost",
       "params": {
@@ -48,7 +48,7 @@
     },
     {
       "id": "2",
-      "label": "HTTP 200 才算成功",
+      "label": "Treat only HTTP 200 as success",
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "HttpStatus = 200" },
@@ -59,7 +59,7 @@
     },
     {
       "id": "3",
-      "label": "通知成功",
+      "label": "Notification succeeded",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {
@@ -73,7 +73,7 @@
     },
     {
       "id": "4",
-      "label": "通知失败",
+      "label": "Notification failed",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

@@ -1,6 +1,6 @@
 {
   "name": "guard-notify",
-  "description": "发通知邮件，但 DRY_RUN=1 时跳过（合成样例）",
+  "description": "Send a notification email, but skip it when DRY_RUN=1 (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-guard-notify",
@@ -16,13 +16,13 @@
   ],
   "edges": [
     { "from": "1", "to": "2" },
-    { "from": "2", "to": "3", "label": "非测试模式" },
+    { "from": "2", "to": "3", "label": "not DRY_RUN" },
     { "from": "2", "to": "4", "label": "DRY_RUN=1" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "启动 Outlook",
+      "label": "Launch Outlook",
       "type": "action",
       "pad_hint": "Outlook.Launch",
       "params": {},
@@ -33,7 +33,7 @@
     },
     {
       "id": "2",
-      "label": "DRY_RUN 守卫：测试模式不发信",
+      "label": "DRY_RUN guard: skip sending in test mode",
       "type": "guard",
       "pad_hint": "GUARD",
       "when": "DryRun <> $'''1'''",
@@ -45,7 +45,7 @@
     },
     {
       "id": "3",
-      "label": "发通知邮件",
+      "label": "Send notification email",
       "type": "action",
       "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
       "params": {
@@ -64,7 +64,7 @@
     },
     {
       "id": "4",
-      "label": "测试模式：提示已跳过发信",
+      "label": "Test mode: show skipped-send notice",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

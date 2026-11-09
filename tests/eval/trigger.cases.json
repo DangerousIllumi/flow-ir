@@ -1,15 +1,15 @@
 {
   "flow": "tests/eval/fixtures/trigger-manual.json",
-  "description": "需求：启动方式必须写在 flow.json 里，并且能被静态校验",
+  "description": "Requirement: the launch mode must be declared in flow.json and validated statically",
   "cases": [
     {
       "id": "trigger-manual-minimal",
-      "requirement": "manual 最小声明合法",
+      "requirement": "Minimal manual declaration is valid",
       "expect": [{ "op": "trigger" }]
     },
     {
       "id": "trigger-schedule-full",
-      "requirement": "schedule 完整声明合法（TRIGGER 无错误）",
+      "requirement": "Complete schedule declaration is valid (no TRIGGER error)",
       "expect": [
         {
           "op": "trigger",
@@ -26,7 +26,7 @@
     },
     {
       "id": "trigger-file-full",
-      "requirement": "file 完整声明合法（目录必须是配置引用）",
+      "requirement": "Complete file declaration is valid (the directory must be a config reference)",
       "expect": [
         {
           "op": "trigger",
@@ -49,17 +49,17 @@
     },
     {
       "id": "trigger-complete",
-      "requirement": "流程自身已声明触发（triggerComplete 通过）",
+      "requirement": "The flow declares its own trigger (triggerComplete passes)",
       "expect": [{ "op": "triggerComplete" }]
     },
     {
       "id": "trigger-kind-mail",
-      "requirement": "kind=mail 必须被拒绝（TRIGGER_KIND_UNSUPPORTED）",
+      "requirement": "kind=mail must be rejected (TRIGGER_KIND_UNSUPPORTED)",
       "expect": [{ "op": "trigger", "def": { "kind": "mail" }, "expect": "invalid", "code": "TRIGGER_KIND_UNSUPPORTED" }]
     },
     {
       "id": "trigger-file-literal-path",
-      "requirement": "file.dir 写死路径必须被拒绝（TRIGGER_PATH_LITERAL）",
+      "requirement": "A hard-coded file.dir path must be rejected (TRIGGER_PATH_LITERAL)",
       "expect": [
         {
           "op": "trigger",
@@ -75,14 +75,14 @@
     },
     {
       "id": "trigger-schedule-missing-time",
-      "requirement": "schedule 缺 time 必须被拒绝（TRIGGER_INVALID）",
+      "requirement": "schedule without time must be rejected (TRIGGER_INVALID)",
       "expect": [
         { "op": "trigger", "def": { "kind": "schedule" }, "expect": "invalid", "code": "TRIGGER_INVALID" }
       ]
     },
     {
       "id": "trigger-confirm-under-schedule",
-      "requirement": "schedule 触发 + run_mode=confirm 节点必须被拒绝（TRIGGER_UNATTENDED_CONFIRM）",
+      "requirement": "schedule trigger with a run_mode=confirm node must be rejected (TRIGGER_UNATTENDED_CONFIRM)",
       "flow": "tests/eval/fixtures/trigger-schedule-confirm.json",
       "expect": [
         { "op": "trigger", "expect": "invalid", "code": "TRIGGER_UNATTENDED_CONFIRM" }
@@ -90,13 +90,13 @@
     },
     {
       "id": "trigger-assisted-confirm-under-schedule",
-      "requirement": "assisted=true 时 schedule 触发 + confirm 节点合法（中途有人确认）",
+      "requirement": "With assisted=true, a schedule trigger plus a confirm node is valid (attended mid-run)",
       "flow": "tests/eval/fixtures/trigger-schedule-assisted.json",
       "expect": [{ "op": "trigger" }]
     },
     {
       "id": "trigger-assisted-no-timeout",
-      "requirement": "assisted=true 但缺 timeout_sec 必须被拒绝（TRIGGER_ASSISTED_NO_TIMEOUT）",
+      "requirement": "assisted=true without timeout_sec must be rejected (TRIGGER_ASSISTED_NO_TIMEOUT)",
       "expect": [
         {
           "op": "trigger",
@@ -114,20 +114,20 @@
     },
     {
       "id": "trigger-manual-with-assisted",
-      "requirement": "manual 声明 assisted 必须被拒绝（TRIGGER_INVALID）",
+      "requirement": "manual with assisted must be rejected (TRIGGER_INVALID)",
       "expect": [
         { "op": "trigger", "def": { "kind": "manual", "assisted": true }, "expect": "invalid", "code": "TRIGGER_INVALID" }
       ]
     },
     {
       "id": "trigger-reversible-all-true",
-      "requirement": "节点全是 reversible=true 时不给可逆性告警（正例）",
+      "requirement": "No reversibility warning when all nodes are reversible=true (positive case)",
       "flow": "tests/eval/fixtures/trigger-schedule-reversible.json",
       "expect": [{ "op": "trigger" }]
     },
     {
       "id": "trigger-irreversible-node",
-      "requirement": "schedule 触发 + reversible=false 节点必须报 TRIGGER_UNATTENDED_IRREVERSIBLE",
+      "requirement": "schedule trigger with a reversible=false node must report TRIGGER_UNATTENDED_IRREVERSIBLE",
       "flow": "tests/eval/fixtures/trigger-schedule-irreversible.json",
       "expect": [
         { "op": "trigger", "expect": "invalid", "code": "TRIGGER_UNATTENDED_IRREVERSIBLE" }
@@ -135,7 +135,7 @@
     },
     {
       "id": "trigger-missing-reversibility",
-      "requirement": "idempotent=false 但未声明 reversible 必须报 TRIGGER_MISSING_REVERSIBILITY",
+      "requirement": "idempotent=false without a declared reversible must report TRIGGER_MISSING_REVERSIBILITY",
       "flow": "tests/eval/fixtures/trigger-schedule-missing-reversibility.json",
       "expect": [
         { "op": "trigger", "expect": "invalid", "code": "TRIGGER_MISSING_REVERSIBILITY" }

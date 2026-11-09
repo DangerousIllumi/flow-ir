@@ -1,6 +1,6 @@
 {
   "name": "excel-read-write",
-  "description": "打开 Excel、读取全部数据、有数据就写一行标记再保存（合成样例）",
+  "description": "Open Excel, read all data, write one marker row only when data exists, then save (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-excel-read-write",
@@ -15,14 +15,14 @@
   "edges": [
     { "from": "1", "to": "2" },
     { "from": "2", "to": "3" },
-    { "from": "3", "to": "4", "label": "是" },
-    { "from": "3", "to": "5", "label": "否" },
+    { "from": "3", "to": "4", "label": "yes" },
+    { "from": "3", "to": "5", "label": "no" },
     { "from": "4", "to": "5" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "打开工作簿",
+      "label": "Open workbook",
       "type": "action",
       "pad_hint": "Excel.LaunchExcel.LaunchAndOpen",
       "params": {
@@ -39,7 +39,7 @@
     },
     {
       "id": "2",
-      "label": "读取全部数据",
+      "label": "Read all data",
       "type": "action",
       "pad_hint": "Excel.ReadFromExcel.ReadAllCells",
       "params": {
@@ -54,7 +54,7 @@
     },
     {
       "id": "3",
-      "label": "有数据才写标记",
+      "label": "Write marker only when data exists",
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "Rows.Count > 0" },
@@ -66,7 +66,7 @@
     },
     {
       "id": "4",
-      "label": "写一行标记",
+      "label": "Write one marker row",
       "type": "action",
       "pad_hint": "Excel.WriteToExcel.WriteCell",
       "params": { "Column": "A", "Row": 2, "Value": "$'''checked'''" },
@@ -76,7 +76,7 @@
     },
     {
       "id": "5",
-      "label": "保存并关闭",
+      "label": "Save and close",
       "type": "action",
       "pad_hint": "Excel.CloseExcel.CloseAndSave",
       "params": {},

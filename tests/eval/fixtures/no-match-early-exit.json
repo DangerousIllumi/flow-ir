@@ -1,6 +1,6 @@
 {
   "name": "no-match-early-exit",
-  "description": "轮询收件箱，收到就提前结束；一直没收到才提示（合成样例）",
+  "description": "Poll the inbox and stop early on receipt; notify only when nothing ever arrives (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-no-match-early-exit",
@@ -14,16 +14,16 @@
   ],
   "edges": [
     { "from": "1", "to": "2" },
-    { "from": "2", "to": "3", "label": "循环体" },
-    { "from": "2", "to": "6", "label": "结束循环" },
+    { "from": "2", "to": "3", "label": "loop body" },
+    { "from": "2", "to": "6", "label": "end loop" },
     { "from": "3", "to": "4" },
-    { "from": "4", "to": "5", "label": "是" },
-    { "from": "6", "to": "7", "label": "是" }
+    { "from": "4", "to": "5", "label": "yes" },
+    { "from": "6", "to": "7", "label": "yes" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "启动 Outlook",
+      "label": "Launch Outlook",
       "type": "action",
       "pad_hint": "Outlook.Launch",
       "params": {},
@@ -34,7 +34,7 @@
     },
     {
       "id": "2",
-      "label": "最多查 3 次",
+      "label": "Check at most 3 times",
       "type": "loop",
       "pad_hint": "LOOP",
       "loop": { "kind": "fromto", "index": "Idx", "from": 1, "to": 3, "step": 1, "body": ["3"] },
@@ -45,7 +45,7 @@
     },
     {
       "id": "3",
-      "label": "查未读邮件",
+      "label": "Check unread emails",
       "type": "action",
       "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmails",
       "params": {
@@ -64,7 +64,7 @@
     },
     {
       "id": "4",
-      "label": "收到就停",
+      "label": "Stop on receipt",
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "RetrievedEmails.Count > 0" },
@@ -75,7 +75,7 @@
     },
     {
       "id": "5",
-      "label": "提前结束轮询",
+      "label": "End polling early",
       "type": "break",
       "pad_hint": "EXIT LOOP",
       "run_mode": "auto",
@@ -84,7 +84,7 @@
     },
     {
       "id": "6",
-      "label": "一直没收到",
+      "label": "Nothing received",
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "RetrievedEmails.Count = 0" },
@@ -95,7 +95,7 @@
     },
     {
       "id": "7",
-      "label": "提示未收到",
+      "label": "Show no-mail notice",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

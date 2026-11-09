@@ -8,31 +8,31 @@
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-schedule.ps1') -NoMain
 
-Describe 'pad-schedule 纯函数测试' {
+Describe 'pad-schedule pure function tests' {
 
-    It '任务名：默认前缀 + 流程名' {
+    It 'task name: default prefix plus flow name' {
         (Get-ScheduleTaskName 'PAD_SYNC_TEST') | Should Be 'flow-ir-PAD_SYNC_TEST'
     }
 
-    It '任务名：空白与路径分隔符统一替换成下划线' {
+    It 'task name: whitespace and path separators become underscores' {
         (Get-ScheduleTaskName '示例流程/日常 汇总') | Should Be 'flow-ir-示例流程_日常_汇总'
     }
 
-    It '任务名：空流程名直接报错' {
+    It 'task name: empty flow name raises an error' {
         { Get-ScheduleTaskName '  ' } | Should Throw
     }
 
-    It '触发时刻：HH:mm 与 H:mm 都能解析' {
+    It 'trigger time: both HH:mm and H:mm parse' {
         (ConvertTo-ScheduleTime '09:00').ToString('HH:mm') | Should Be '09:00'
         (ConvertTo-ScheduleTime '9:30').ToString('HH:mm') | Should Be '09:30'
     }
 
-    It '触发时刻：非法格式报错并给出正确写法' {
+    It 'trigger time: an invalid format raises an error and shows the correct form' {
         { ConvertTo-ScheduleTime '二十五点' } | Should Throw
         try { ConvertTo-ScheduleTime 'abc' } catch { $_.Exception.Message | Should Match 'HH:mm' }
     }
 
-    It '动作命令：工作日历模式，任务先调本脚本 -RunIfWorkday 并带上日历参数' {
+    It 'action command: workday calendar mode calls this script with -RunIfWorkday and the calendar arguments' {
         $s = New-ScheduleActionSpec -ScriptPath 'C:\repo\tools\pad-sync\pad-schedule.ps1' -FlowName 'PAD_SYNC_TEST' `
             -WorkdayGate -PadSyncPath 'C:\repo\tools\pad-sync\pad-sync.ps1' `
             -PythonExe 'C:\Python313\python.exe' -CalendarPath 'C:\cal\workday-calendar.xlsx'
@@ -49,7 +49,7 @@ Describe 'pad-schedule 纯函数测试' {
     $scheduleScript = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-schedule.ps1'
     $workdayScript = Join-Path $PSScriptRoot '..\tools\workday\workday.py'
 
-    It '运行入口不传日历：非零退出，并明确提示用 -CalendarPath 指定' {
+    It 'run entry without a calendar: non-zero exit with an explicit hint to use -CalendarPath' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -PythonExe 'python' `
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
@@ -61,7 +61,7 @@ Describe 'pad-schedule 纯函数测试' {
         $out | Should Not Match 'RUN_START'
     }
 
-    It '运行入口日历文件不存在：非零退出、不运行，并标记 calendarOk=false' {
+    It 'run entry with a missing calendar file: non-zero exit, nothing runs and calendarOk=false' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -PythonExe 'python' `
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript `
@@ -76,7 +76,7 @@ Describe 'pad-schedule 纯函数测试' {
         $r.reason | Should Be 'calendar-unavailable'
     }
 
-    It '工作日判断脚本执行失败：非零退出、不运行，并标记 calendarOk=false' {
+    It 'workday check script failure: non-zero exit, nothing runs and calendarOk=false' {
         $py = (Get-Command python -ErrorAction SilentlyContinue).Source
         if (-not $py) { $py = (Get-Command python3 -ErrorAction SilentlyContinue).Source }
         $calendar = Join-Path $TestDrive 'workday-calendar.xlsx'
@@ -96,7 +96,7 @@ Describe 'pad-schedule 纯函数测试' {
         $r.reason | Should Be 'calendar-unavailable'
     }
 
-    It '注册模式不传日历：同样非零退出，不静默降级' {
+    It 'register mode without a calendar: also a non-zero exit with no silent downgrade' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -DryRun -PythonExe 'python' `
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
@@ -105,7 +105,7 @@ Describe 'pad-schedule 纯函数测试' {
         $out | Should Match '-CalendarPath'
     }
 
-    It '忽略日历模式不需要 -CalendarPath（显式声明才允许不看日历）' {
+    It 'ignore-calendar mode needs no -CalendarPath (skipping the calendar requires an explicit declaration)' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -DryRun -IgnoreCalendar -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
@@ -113,7 +113,7 @@ Describe 'pad-schedule 纯函数测试' {
         $out | Should Not Match 'CONFIG_MISSING'
     }
 
-    It '传入日历：参数被接受并原样转发给工作日判断脚本（不是工作日则跳过）' {
+    It 'calendar supplied: the arguments are accepted and forwarded verbatim to the workday check (skip on a non-workday)' {
         $py = (Get-Command python -ErrorAction SilentlyContinue).Source
         if (-not $py) { $py = (Get-Command python3 -ErrorAction SilentlyContinue).Source }
         $probe = Join-Path $TestDrive 'probe_calendar.py'
@@ -138,20 +138,20 @@ Describe 'pad-schedule 纯函数测试' {
         ([IO.File]::ReadAllText($probeLog, [Text.Encoding]::UTF8)) | Should Match 'workday-calendar\.xlsx'
     }
 
-    It '动作命令：忽略日历模式，直接调 pad-sync -RunOnly' {
+    It 'action command: ignore-calendar mode calls pad-sync -RunOnly directly' {
         $s = New-ScheduleActionSpec -ScriptPath 'C:\repo\tools\pad-sync\pad-sync.ps1' -FlowName 'PAD_SYNC_TEST'
         $s.args | Should Match '-RunOnly'
         $s.args | Should Not Match 'RunIfWorkday'
         $s.args | Should Not Match 'AllowProd'
     }
 
-    It '动作命令：-AllowProd 透传给被调脚本（生产流程）' {
+    It 'action command: -AllowProd is forwarded to the called script (production flow)' {
         $s = New-ScheduleActionSpec -ScriptPath 'C:\repo\tools\pad-sync\pad-sync.ps1' -FlowName '生产流程' -AllowProd
         $s.args | Should Match 'AllowProd'
         $s.args | Should Match '生产流程'
     }
 
-    It '动作命令：验收判据与配置透传给被调脚本' {
+    It 'action command: acceptance criteria and config are forwarded to the called script' {
         $s = New-ScheduleActionSpec -ScriptPath 'C:\repo\tools\pad-sync\pad-sync.ps1' -FlowName 'PAD_SYNC_TEST' `
             -AcceptanceFile 'C:\repo\business\flows\x.acceptance.json' -ConfigFile 'C:\repo\business\config\x.json'
         $s.args | Should Match '-AcceptanceFile'
@@ -160,7 +160,7 @@ Describe 'pad-schedule 纯函数测试' {
         $s.args | Should Match 'business\\config\\x\.json'
     }
 
-    It '动作命令：固化 -RunTimeoutSec，但不固化 -LockWaitSec（运行时取默认值）' {
+    It 'action command: pins -RunTimeoutSec but not -LockWaitSec (runtime default)' {
         $s = New-ScheduleActionSpec -ScriptPath 'C:\repo\pad-schedule.ps1' -FlowName 'PAD_SYNC_TEST' `
             -RunTimeoutSec 4200
         $s.args | Should Match '-RunTimeoutSec'
@@ -174,12 +174,12 @@ Describe 'pad-schedule 纯函数测试' {
         $s2.args | Should Not Match '-LockWaitSec'
     }
 
-    It '路径含空格时自动加引号，避免 -File 被截断' {
+    It 'paths with spaces are quoted so -File is not truncated' {
         $s = New-ScheduleActionSpec -ScriptPath 'C:\flow-ir\pad-sync.ps1' -FlowName 'PAD_SYNC_TEST'
         $s.args | Should Match '"C:\\flow-ir\\pad-sync.ps1"'
     }
 
-    It '工作日判断：日历文件不存在时直接报错，不再按周一至周五兜底' {
+    It 'workday check: a missing calendar file raises an error instead of falling back to Monday through Friday' {
         $script = Join-Path $PSScriptRoot '..\tools\workday\workday.py'
         try {
             Test-TodayWorkday 'python' $script (Join-Path $TestDrive 'nope.xlsx')
@@ -189,7 +189,7 @@ Describe 'pad-schedule 纯函数测试' {
         }
     }
 
-    It '工作日判断：判断脚本缺失时直接报错，不再按周一至周五兜底' {
+    It 'workday check: a missing check script raises an error instead of falling back to Monday through Friday' {
         try {
             Test-TodayWorkday 'python' (Join-Path $TestDrive 'nope.py') (Join-Path $TestDrive 'nope.xlsx')
             throw '预期应当抛错，但没有'
@@ -198,7 +198,7 @@ Describe 'pad-schedule 纯函数测试' {
         }
     }
 
-    It '日历过期：CALENDAR_STALE=1 时硬失败，不能当成今天休息' {
+    It 'stale calendar: CALENDAR_STALE=1 is a hard failure, not a day off' {
         # 用假的 python（cmd 脚本）回放 workday.py 的输出，不依赖真实日历
         $fake = Join-Path $TestDrive 'fake-python.cmd'
         Set-Content -LiteralPath $fake -Encoding ASCII -Value @(
@@ -221,7 +221,7 @@ Describe 'pad-schedule 纯函数测试' {
         }
     }
 
-    It '日历类失败分类：过期是 exit 5 / calendar-stale，不可用仍是 exit 1' {
+    It 'calendar failure classification: stale is exit 5 / calendar-stale, unavailable stays exit 1' {
         # 分类依据改为异常上的结果码，不再依赖中文消息内容
         $staleEx = [System.Exception]::new('CALENDAR_STALE: calendar does not cover today: today 2026-11-05 (covered 2026-01-01 ~ 2026-10-31); treating the calendar as stale; this run did not execute')
         $staleEx.Data['code'] = 'CALENDAR_STALE'
@@ -235,7 +235,7 @@ Describe 'pad-schedule 纯函数测试' {
         $down.stale | Should Be $false
     }
 
-    It '日历过期告警：kind=calendar-stale，带 calendarRange 且不混入 calendarOk' {
+    It 'stale calendar alert: kind=calendar-stale with calendarRange and no calendarOk' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $a = Write-RunAlert -FlowName 'F' -ExitCode 5 -Stage 'calendar' -Status 'skipped' `
             -CalendarStale -CalendarRange '2026-01-01 ~ 2026-10-31' -Dir $dir
@@ -247,7 +247,7 @@ Describe 'pad-schedule 纯函数测试' {
         $a.record.note | Should Match 'Next step: update the calendar file and rerun manually\.'
     }
 
-    It '解析 PAD_SYNC_RESULT：取最后一行，缺失时返回空' {
+    It 'parse PAD_SYNC_RESULT: take the last line; null when absent' {
         $lines = @(
             '[pad-sync] 开始',
             'PAD_SYNC_RESULT={"ok":true,"stage":"done"}',
@@ -257,7 +257,7 @@ Describe 'pad-schedule 纯函数测试' {
         (Read-ChildResult -Name 'SYNC' -Lines @('nothing here')) | Should Be $null
     }
 
-    It '失败告警只写 JSONL：字段完整、不带 BOM、可逐行解析' {
+    It 'failure alerts are JSONL only: complete fields, no BOM, parseable line by line' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $sync = ('{"ok":false,"stage":"run","status":"failed","error":{"code":"E1","message":"boom"},"logPath":"C:\\x\\Actions.log"}' | ConvertFrom-Json)
         $a = Write-RunAlert -FlowName 'PAD_SYNC_TEST' -ExitCode 1 -Stage 'run' `
@@ -274,7 +274,7 @@ Describe 'pad-schedule 纯函数测试' {
         $rec.error | Should Be 'boom'
     }
 
-    It '告警分级：退出码 4 记 run-lock-timeout（本次未执行），1 仍记 run-failed' {
+    It 'alert classification: exit 4 records run-lock-timeout (did not execute), 1 still records run-failed' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         # 4 = 等锁超时：流程根本没跑，告警要能一眼看出来
         Write-RunAlert -FlowName 'F' -ExitCode 4 -Stage 'lock' -Dir $dir | Out-Null
@@ -291,7 +291,7 @@ Describe 'pad-schedule 纯函数测试' {
         $fail.note | Should Match 'Next step: check the logs and the PAD console, then rerun manually\.'
     }
 
-    It '告警日志追加写入，不覆盖上一条' {
+    It 'alert log appends without overwriting the previous entry' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         Write-RunAlert -FlowName 'F' -ExitCode 1 -Stage 'run' -Dir $dir | Out-Null
         Write-RunAlert -FlowName 'F' -ExitCode 2 -Stage 'acceptance' -Dir $dir | Out-Null
@@ -301,7 +301,7 @@ Describe 'pad-schedule 纯函数测试' {
         ($lines[1] | ConvertFrom-Json).stage | Should Be 'acceptance'
     }
 
-    It '告警分级：退出码 3 记 run-needs-human-confirm 并带弹窗标题' {
+    It 'alert classification: exit 3 records run-needs-human-confirm with the dialog title' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $sync = [pscustomobject]@{
             needsHumanConfirm = $true
@@ -315,14 +315,14 @@ Describe 'pad-schedule 纯函数测试' {
         $a.record.status | Should Be 'NeedsHumanConfirm'
     }
 
-    It '告警分级：退出码 0 但结果标记 needsHumanConfirm 时仍按人工确认告警' {
+    It 'alert classification: exit 0 with needsHumanConfirm still alerts as human confirmation' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $sync = [pscustomobject]@{ needsHumanConfirm = $true; dialogTitle = '核对完成' }
         (Write-RunAlert -FlowName 'F' -ExitCode 0 -Stage 'needs-human-confirm' -SyncResult $sync -Dir $dir).record.kind |
             Should Be 'run-needs-human-confirm'
     }
 
-    It '告警分级：触发失败记 trigger-failed，并按 reason 给出不同说明' {
+    It 'alert classification: trigger failure records trigger-failed with a reason-specific note' {
         foreach ($reason in @('identity-mismatch', 'no-evidence', 'no-robot')) {
             $sync = [pscustomobject]@{ triggerFailed = $true; triggerReason = $reason }
             $g = Get-RunAlertKind -ExitCode 1 -SyncResult $sync
@@ -336,14 +336,14 @@ Describe 'pad-schedule 纯函数测试' {
         $g2.reason | Should Be 'unknown'
     }
 
-    It '告警分级：运行超时记 run-timeout，不被 Unknown 吞掉' {
+    It 'alert classification: a run timeout records run-timeout instead of being swallowed by Unknown' {
         $sync = [pscustomobject]@{ runTimeout = $true }
         $g = Get-RunAlertKind -ExitCode 1 -SyncResult $sync
         $g.kind | Should Be 'run-timeout'
         $g.note | Should Match 'without reaching a terminal state'
     }
 
-    It '触发失败写 JSONL 时带 reason 字段，且原有分级不受影响' {
+    It 'a trigger failure writes a reason field to JSONL without disturbing the existing classification' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $sync = [pscustomobject]@{
             triggerFailed = $true; triggerReason = 'no-robot'

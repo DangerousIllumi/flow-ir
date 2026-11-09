@@ -84,18 +84,18 @@ function collectEdges() {
     // IF 的 next 在旧规则里不画（表示分支结束后的汇合点），避免与分支边重复
     if (node.pad_hint !== "IF") {
       for (const to of node.next || []) {
-        edges.push({ from: node.id, to, label: node.pad_hint === "LOOP" ? "结束循环" : "" });
+        edges.push({ from: node.id, to, label: node.pad_hint === "LOOP" ? "end loop" : "" });
       }
     }
     if (node.branch) {
       const t = (node.branch.trueBody && node.branch.trueBody[0]) ||
         (node.branch.body && node.branch.body[0]) || node.branch.true;
-      if (t) edges.push({ from: node.id, to: t, label: "是" });
+      if (t) edges.push({ from: node.id, to: t, label: "yes" });
       const f = (node.branch.falseBody && node.branch.falseBody[0]) || node.branch.false;
-      if (f) edges.push({ from: node.id, to: f, label: "否" });
+      if (f) edges.push({ from: node.id, to: f, label: "no" });
     }
     if (node.loop && node.loop.body && node.loop.body[0]) {
-      edges.push({ from: node.id, to: node.loop.body[0], label: "循环体" });
+      edges.push({ from: node.id, to: node.loop.body[0], label: "loop body" });
     }
     if (node.switch) {
       for (const c of node.switch.cases || []) {
@@ -103,7 +103,7 @@ function collectEdges() {
         if (entry) edges.push({ from: node.id, to: entry, label: c.case });
       }
       const d = (node.switch.default || [])[0];
-      if (d) edges.push({ from: node.id, to: d, label: "默认" });
+      if (d) edges.push({ from: node.id, to: d, label: "default" });
     }
   }
   return edges.filter((e) => byId.has(e.from) && byId.has(e.to));

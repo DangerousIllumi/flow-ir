@@ -1,10 +1,10 @@
 {
   "flow": "tests/eval/fixtures/switch-exit-code.json",
-  "description": "需求：跑脚本并按退出码通知结果",
+  "description": "Requirement: run a script and report the result by exit code",
   "cases": [
     {
       "id": "three-way-branch",
-      "requirement": "0=成功、2=有差异、其他=异常，三路都要有",
+      "requirement": "0=success, 2=differences, anything else=error; all three branches must exist",
       "expect": [
         {
           "op": "switchCases",
@@ -18,14 +18,14 @@
     },
     {
       "id": "intent-tagged",
-      "requirement": "脚本节点必须带语义标签，策略才能按 intent 识别",
+      "requirement": "The script node must carry a semantic intent tag so policy can recognize it by intent",
       "expect": [
         { "op": "action", "id": "1", "padHint": "Scripting.RunDOSCommand.RunDOSCommand" }
       ]
     },
     {
       "id": "no-extra-branch",
-      "requirement": "不允许出现关闭 Outlook 这类越界动作",
+      "requirement": "Out-of-scope actions such as closing Outlook are not allowed",
       "expect": [
         { "op": "absentMatch", "pattern": "^Outlook\\.Close" }
       ]

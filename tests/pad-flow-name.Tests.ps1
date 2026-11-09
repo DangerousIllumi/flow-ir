@@ -17,15 +17,15 @@ function New-FlowFile([string]$Dir, [string]$FileName, [string]$InnerName, [stri
     return $path
 }
 
-Describe 'pad_flow_name 派生顺序' {
-    It '按 pad_flow_name 唯一命中' {
+Describe 'pad_flow_name resolution order' {
+    It 'unique match by pad_flow_name' {
         $dir = Join-Path $TestDrive 'by-display'
         New-Item -ItemType Directory -Path $dir | Out-Null
         $f = New-FlowFile $dir 'source.json' '内部名' '显示名-XYZ'
         (Resolve-FlowFileByName $dir '显示名-XYZ') | Should Be $f
     }
 
-    It '与文件名冲突时以 pad_flow_name 为准' {
+    It 'pad_flow_name wins over a conflicting file name' {
         $dir = Join-Path $TestDrive 'conflict'
         New-Item -ItemType Directory -Path $dir | Out-Null
         $byFile = New-FlowFile $dir '显示名-XYZ.json' '另一个流程' $null
@@ -34,21 +34,21 @@ Describe 'pad_flow_name 派生顺序' {
         (Resolve-FlowFileByName $dir '显示名-XYZ') | Should Not Be $byFile
     }
 
-    It '无 pad_flow_name 时回落到文件名' {
+    It 'falls back to the file name when pad_flow_name is absent' {
         $dir = Join-Path $TestDrive 'by-file'
         New-Item -ItemType Directory -Path $dir | Out-Null
         $f = New-FlowFile $dir 'plain-flow.json' '内部名' $null
         (Resolve-FlowFileByName $dir 'plain-flow') | Should Be $f
     }
 
-    It '无 pad_flow_name 时回落到顶层 name' {
+    It 'falls back to the top-level name when pad_flow_name is absent' {
         $dir = Join-Path $TestDrive 'by-name'
         New-Item -ItemType Directory -Path $dir | Out-Null
         $f = New-FlowFile $dir 'other.json' '内部名-XYZ' $null
         (Resolve-FlowFileByName $dir '内部名-XYZ') | Should Be $f
     }
 
-    It '两个文件声明同名 pad_flow_name：报 ADMIT_AMBIGUOUS_FLOW' {
+    It 'two files declare the same pad_flow_name: ADMIT_AMBIGUOUS_FLOW' {
         $dir = Join-Path $TestDrive 'ambiguous'
         New-Item -ItemType Directory -Path $dir | Out-Null
         [void](New-FlowFile $dir 'a.json' 'A' '同名-XYZ')
@@ -61,8 +61,8 @@ Describe 'pad_flow_name 派生顺序' {
     }
 }
 
-Describe 'pad_flow_name 对生成链路只接受不消费' {
-    It '生成器与 check.js 接受该字段且不写进 .robin' {
+Describe 'pad_flow_name is accepted but not consumed by the generation chain' {
+    It 'the generator and check.js accept the field without writing it into .robin' {
         # pad-admit 被 dot-source 时设了 ErrorAction Stop，node 的 stderr 会被当成终止错误
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -90,7 +90,7 @@ Describe 'pad_flow_name 对生成链路只接受不消费' {
         }
     }
 
-    It 'eval-flow.js 可以断言该字段，且不会因未知字段报错' {
+    It 'eval-flow.js can assert the field without raising an unknown-field error' {
         $flowPath = Join-Path $repo 'tools\flow-drawio\example-flow.json'
         $obj = [ordered]@{}
         $orig = [IO.File]::ReadAllText($flowPath, [Text.Encoding]::UTF8) | ConvertFrom-Json

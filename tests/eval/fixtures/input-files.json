@@ -1,6 +1,6 @@
 {
   "name": "input-files",
-  "description": "在读取前声明本步骤需要的输入文件（合成样例）",
+  "description": "Declare the input files required by this step before reading (synthetic sample)",
   "trigger": { "kind": "manual" },
   "budget": { "maxLoop": 1 },
   "variables": [
@@ -13,7 +13,7 @@
   "nodes": [
     {
       "id": "1",
-      "label": "读取输入文件",
+      "label": "Read input file",
       "type": "action",
       "pad_hint": "File.ReadTextFromFile.ReadText",
       "inputs": [
@@ -29,7 +29,7 @@
     },
     {
       "id": "2",
-      "label": "写出结果",
+      "label": "Write result",
       "type": "action",
       "pad_hint": "File.WriteText",
       "params": {

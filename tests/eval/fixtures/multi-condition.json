@@ -1,6 +1,6 @@
 {
   "name": "multi-condition-branch",
-  "description": "两个条件同时成立才处理（合成样例）",
+  "description": "Process only when both conditions hold (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-multi-condition",
@@ -15,13 +15,13 @@
   ],
   "edges": [
     { "from": "1", "to": "2" },
-    { "from": "2", "to": "3", "label": "是" },
-    { "from": "2", "to": "4", "label": "否" }
+    { "from": "2", "to": "3", "label": "yes" },
+    { "from": "2", "to": "4", "label": "no" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "列出待处理文件",
+      "label": "List pending files",
       "type": "action",
       "pad_hint": "Folder.GetFiles",
       "params": {
@@ -38,7 +38,7 @@
     },
     {
       "id": "2",
-      "label": "开关打开且有文件才处理",
+      "label": "Process only when enabled and files exist",
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "Enabled = $'''True''' AND Files.Count > 0" },
@@ -49,7 +49,7 @@
     },
     {
       "id": "3",
-      "label": "开始处理",
+      "label": "Start processing",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {
@@ -63,7 +63,7 @@
     },
     {
       "id": "4",
-      "label": "跳过",
+      "label": "Skip",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

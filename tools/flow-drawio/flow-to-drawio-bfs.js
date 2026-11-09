@@ -212,7 +212,7 @@ for (const node of nodes) {
   // 再画一条会与分支边重复）；LOOP 的 next 表示「结束循环」、SWITCH 的 next 表示「分支结束」
   if (node.pad_hint !== "IF") {
     for (const toId of node.next || []) {
-      edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${toId}`, node.pad_hint === "LOOP" ? "结束循环" : ""));
+      edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${toId}`, node.pad_hint === "LOOP" ? "end loop" : ""));
     }
   }
   // 分支边：只画「入口」一条，支路内部的连线由各节点的 next 边表达
@@ -220,14 +220,14 @@ for (const node of nodes) {
     const tEntry = (node.branch.trueBody && node.branch.trueBody[0]) ||
                    (node.branch.body && node.branch.body[0]) ||
                    node.branch.true;
-    if (tEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${tEntry}`, "是"));
+    if (tEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${tEntry}`, "yes"));
     const fEntry = (node.branch.falseBody && node.branch.falseBody[0]) ||
                    node.branch.false;
-    if (fEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${fEntry}`, "否"));
+    if (fEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${fEntry}`, "no"));
   }
   // 循环体边：LOOP → 体首节点（循环体内节点的 next 边照常绘制）
   if (node.loop && node.loop.body && node.loop.body[0]) {
-    edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${node.loop.body[0]}`, "循环体"));
+    edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${node.loop.body[0]}`, "loop body"));
   }
   // 分支选择边：SWITCH → 各 CASE 体首节点 / DEFAULT 首节点
   if (node.switch) {
@@ -236,7 +236,7 @@ for (const node of nodes) {
       if (entry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${entry}`, c.case));
     }
     const dEntry = (node.switch.default || [])[0];
-    if (dEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${dEntry}`, "默认"));
+    if (dEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${dEntry}`, "default"));
   }
 }
 }

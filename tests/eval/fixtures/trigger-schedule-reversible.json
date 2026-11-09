@@ -1,6 +1,6 @@
 {
   "name": "<流程名>",
-  "description": "触发声明断言用：schedule 触发 + 节点全是 reversible=true（可逆性正例）",
+  "description": "For trigger assertion: schedule trigger with all nodes reversible=true (reversibility positive case)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-trigger-fixture",
@@ -14,7 +14,7 @@
       "id": "3",
       "type": "mail.attachments",
       "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments",
-      "label": "保存附件",
+      "label": "Save attachments",
       "params": {},
       "outputs": [],
       "next": [],

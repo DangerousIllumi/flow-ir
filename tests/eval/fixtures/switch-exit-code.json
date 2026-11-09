@@ -1,6 +1,6 @@
 {
   "name": "run-script-three-way",
-  "description": "跑一个脚本，按退出码三路分支（合成样例）",
+  "description": "Run a script and branch three ways on its exit code (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-switch-exit-code",
@@ -17,12 +17,12 @@
     { "from": "1", "to": "2" },
     { "from": "2", "to": "3", "label": "= 0" },
     { "from": "2", "to": "4", "label": "= 2" },
-    { "from": "2", "to": "5", "label": "默认" }
+    { "from": "2", "to": "5", "label": "default" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "运行脚本",
+      "label": "Run script",
       "type": "action",
       "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand",
       "intent": "run-job",
@@ -40,7 +40,7 @@
     },
     {
       "id": "2",
-      "label": "按退出码分支",
+      "label": "Branch on exit code",
       "type": "switch",
       "pad_hint": "SWITCH",
       "switch": {
@@ -57,7 +57,7 @@
     },
     {
       "id": "3",
-      "label": "成功",
+      "label": "Success",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {
@@ -71,7 +71,7 @@
     },
     {
       "id": "4",
-      "label": "有差异",
+      "label": "Differences found",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {
@@ -85,7 +85,7 @@
     },
     {
       "id": "5",
-      "label": "异常",
+      "label": "Error",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

@@ -1,6 +1,6 @@
 {
   "name": "normalize-text",
-  "description": "读取一个文本文件，原样写到另一个文件（合成样例）",
+  "description": "Read a text file and write it verbatim to another file (synthetic sample)",
   "trigger": { "kind": "manual" },
   "budget": { "maxLoop": 1 },
   "variables": [
@@ -13,7 +13,7 @@
   "nodes": [
     {
       "id": "1",
-      "label": "读取源文件",
+      "label": "Read source file",
       "type": "action",
       "pad_hint": "File.ReadTextFromFile.ReadText",
       "params": {
@@ -28,7 +28,7 @@
     },
     {
       "id": "2",
-      "label": "写到目标文件",
+      "label": "Write to target file",
       "type": "action",
       "pad_hint": "File.WriteText",
       "params": {

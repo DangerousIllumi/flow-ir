@@ -69,9 +69,9 @@ function Test-TaskAbsent([string]$TaskName) {
     return (@(Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue).Count -eq 0)
 }
 
-Describe 'TriggerRegistry 声明解析' {
+Describe 'TriggerRegistry declaration parsing' {
 
-    It 'schedule 声明：解析出 kind/time/days/gate/timeout/taskName' {
+    It 'schedule declaration: resolves kind/time/days/gate/timeout/taskName' {
         $t = [ordered]@{
             kind = 'schedule'; time = '09:00'
             days = @('mon', 'tue', 'wed', 'thu', 'fri')
@@ -87,14 +87,14 @@ Describe 'TriggerRegistry 声明解析' {
         $spec.taskName | Should Be $script:UniqueTask
     }
 
-    It 'schedule 未写 task_name：按 flow-ir-<流程名> 派生' {
+    It 'schedule without task_name: derived as flow-ir-<flow name>' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'PESTER_DERIVE' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
         $spec.taskName | Should Be 'flow-ir-PESTER_TRIGGER'
     }
 
-    It 'manual 声明：不产生任务名，默认值齐全' {
+    It 'manual declaration: no task name produced and all defaults present' {
         $t = [ordered]@{ kind = 'manual' }
         $f = New-TestFlow -Dir $TestDrive -Name 'manual' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
@@ -103,44 +103,44 @@ Describe 'TriggerRegistry 声明解析' {
         $spec.timeoutSec | Should Be 4200
     }
 
-    It 'manual 声明 time 被拒：TRIGGER_INVALID' {
+    It 'manual declaration with time is rejected: TRIGGER_INVALID' {
         $t = [ordered]@{ kind = 'manual'; time = '09:00' }
         $f = New-TestFlow -Dir $TestDrive -Name 'manual-bad' -Trigger $t
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
     }
 
-    It 'schedule 缺 time 被拒：TRIGGER_INVALID' {
+    It 'schedule without time is rejected: TRIGGER_INVALID' {
         $t = [ordered]@{ kind = 'schedule'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'schedule-no-time' -Trigger $t
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
     }
 
-    It '无人值守声明遇到 run_mode=confirm 节点被拒：TRIGGER_UNATTENDED_CONFIRM' {
+    It 'An unattended declaration with a run_mode=confirm node is rejected: TRIGGER_UNATTENDED_CONFIRM' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'schedule-confirm' -Trigger $t -NodeRunMode 'confirm'
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_UNATTENDED_CONFIRM'
     }
 
-    It 'assisted=true 遇到 confirm 节点放行：NO_ERROR' {
+    It 'assisted=true with a confirm node passes: NO_ERROR' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'
             timeout_sec = 4200; assisted = $true }
         $f = New-TestFlow -Dir $TestDrive -Name 'assisted-ok' -Trigger $t -NodeRunMode 'confirm'
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'NO_ERROR'
     }
 
-    It 'assisted 缺 timeout_sec 被拒：TRIGGER_ASSISTED_NO_TIMEOUT' {
+    It 'assisted without timeout_sec is rejected: TRIGGER_ASSISTED_NO_TIMEOUT' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; assisted = $true }
         $f = New-TestFlow -Dir $TestDrive -Name 'assisted-no-timeout' -Trigger $t
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_ASSISTED_NO_TIMEOUT'
     }
 
-    It 'manual 声明 assisted 被拒：TRIGGER_INVALID' {
+    It 'manual declaration with assisted is rejected: TRIGGER_INVALID' {
         $t = [ordered]@{ kind = 'manual'; assisted = $true }
         $f = New-TestFlow -Dir $TestDrive -Name 'manual-assisted' -Trigger $t
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_INVALID'
     }
 
-    It 'assisted 非布尔被拒：TRIGGER_INVALID' {
+    It 'A non-boolean assisted is rejected: TRIGGER_INVALID' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'
             timeout_sec = 4200; assisted = 'yes' }
         $f = New-TestFlow -Dir $TestDrive -Name 'assisted-not-bool' -Trigger $t
@@ -148,9 +148,9 @@ Describe 'TriggerRegistry 声明解析' {
     }
 }
 
-Describe 'TriggerRegistry 可逆性交叉校验（收窄后）' {
+Describe 'TriggerRegistry reversibility cross-checks (after narrowing)' {
 
-    It '节点全是 reversible=true：warnings 里没有可逆性提示' {
+    It 'All nodes have reversible=true: no reversibility warnings' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'rev-all-true' -Trigger $t `
             -NodeProps @{ idempotent = $false; reversible = $true }
@@ -158,7 +158,7 @@ Describe 'TriggerRegistry 可逆性交叉校验（收窄后）' {
         @($spec.warnings).Count | Should Be 0
     }
 
-    It '存在 reversible=false：warnings 含 TRIGGER_UNATTENDED_IRREVERSIBLE（带节点与说明）' {
+    It 'A reversible=false node: warnings contain TRIGGER_UNATTENDED_IRREVERSIBLE (with node and note)' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'rev-false' -Trigger $t `
             -NodeProps @{ idempotent = $false; reversible = $false; reversibility_note = '邮件已发出不可撤回' }
@@ -169,7 +169,7 @@ Describe 'TriggerRegistry 可逆性交叉校验（收窄后）' {
             Should Match '邮件已发出不可撤回'
     }
 
-    It 'idempotent=false 缺 reversible：warnings 含 TRIGGER_MISSING_REVERSIBILITY' {
+    It 'idempotent=false without reversible: warnings contain TRIGGER_MISSING_REVERSIBILITY' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'rev-missing' -Trigger $t `
             -NodeProps @{ idempotent = $false }
@@ -178,7 +178,7 @@ Describe 'TriggerRegistry 可逆性交叉校验（收窄后）' {
         ($codes -join ',') | Should Match 'TRIGGER_MISSING_REVERSIBILITY'
     }
 
-    It 'manual：即使 reversible=false 也不产生可逆性提示' {
+    It 'manual: no reversibility warnings even with reversible=false' {
         $t = [ordered]@{ kind = 'manual' }
         $f = New-TestFlow -Dir $TestDrive -Name 'rev-manual' -Trigger $t `
             -NodeProps @{ idempotent = $false; reversible = $false }
@@ -187,9 +187,9 @@ Describe 'TriggerRegistry 可逆性交叉校验（收窄后）' {
     }
 }
 
-Describe 'TriggerRegistry 指纹与幂等' {
+Describe 'TriggerRegistry fingerprint and idempotency' {
 
-    It 'hash 稳定：重复计算一致，且与 trigger 字段书写顺序无关' {
+    It 'hash is stable: recomputation matches and is independent of the trigger field order' {
         $t1 = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('mon', 'fri'); gate = 'workday' }
         $t2 = [ordered]@{ time = '09:00'; gate = 'workday'; days = @('mon', 'fri'); kind = 'schedule' }
         $f1 = New-TestFlow -Dir $TestDrive -Name 'hash-a' -Trigger $t1
@@ -203,7 +203,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $h1.Length | Should Be 64
     }
 
-    It 'hash 随声明变化：改 time 或 gate 都会得到新 hash' {
+    It 'hash changes with the declaration: changing time or gate yields a new hash' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('mon'); gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'hash-c' -Trigger $t
         $base = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f)
@@ -213,7 +213,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         (Get-TriggerFingerprint -Spec $s2) | Should Not Be $base
     }
 
-    It 'assisted 进入 specHash：改它 hash 必变' {
+    It 'assisted is part of specHash: changing it always changes the hash' {
         $t1 = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('mon'); gate = 'none'
             timeout_sec = 4200; assisted = $false }
         $t2 = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('mon'); gate = 'none'
@@ -226,7 +226,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $h2 | Should Not Be $h1
     }
 
-    It '描述前缀能取出 hash，非法描述返回空' {
+    It 'The description prefix yields the hash, and an invalid description returns empty' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'desc' -Trigger $t
         $hash = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f)
@@ -242,7 +242,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         ($null -eq $empty) | Should Be $true
     }
 
-    It '动作构造复用 pad-schedule：gate=workday 走 run-hidden.vbs + -RunIfWorkday' {
+    It 'Action construction reuses pad-schedule: gate=workday goes through run-hidden.vbs + -RunIfWorkday' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = New-TestFlow -Dir $TestDrive -Name 'action-workday' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
@@ -259,7 +259,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $action.args | Should Not Match 'RunOnly'
     }
 
-    It '动作构造复用 pad-schedule：gate=none 直接调 pad-sync -RunOnly' {
+    It 'Action construction reuses pad-schedule: gate=none calls pad-sync -RunOnly directly' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'action-none' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
@@ -274,7 +274,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $action.args | Should Not Match 'RunIfWorkday'
     }
 
-    It '任务匹配：描述 hash 与动作都一致才算命中' {
+    It 'Task match: a hit requires both the description hash and the actions to match' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'match' -Trigger $t
         $hash = Get-TriggerFingerprint -Spec (Get-TriggerSpec -FlowFile $f)
@@ -298,7 +298,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $miss | Should Be $false
     }
 
-    It '-Test 忽略 -AllowProd：注册带该开关也不误判 drift，严格比较仍判不一致' {
+    It '-Test ignores -AllowProd: registering with that switch is not misjudged as drift, while the strict comparison still reports a mismatch' {
         $hash = 'f' * 64
         $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'flow watch' }
         $task = [pscustomobject]@{
@@ -319,7 +319,7 @@ Describe 'TriggerRegistry 指纹与幂等' {
         $strict | Should Be $false
     }
 
-    It '回读校验失败：描述 hash 不一致抛 TRIGGER_DRIFT' {
+    It 'Readback validation failure: a mismatched description hash throws TRIGGER_DRIFT' {
         $actionSpec = [ordered]@{ exe = 'wscript.exe'; args = 'a b c' }
         $task = [pscustomobject]@{
             Description = 'flow-ir-spec:' + ('0' * 64) + '；说明'
@@ -336,9 +336,9 @@ Describe 'TriggerRegistry 指纹与幂等' {
     }
 }
 
-Describe 'TriggerRegistry 只读与 kind 边界' {
+Describe 'TriggerRegistry read-only behavior and kind boundaries' {
 
-    It 'Register -DryRun 只返回 planned，不写系统' {
+    It 'Register -DryRun only returns planned and writes nothing to the system' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; task_name = $script:UniqueTask }
         $f = New-TestFlow -Dir $TestDrive -Name 'dry-run' -Trigger $t
         $runtime = New-TestRuntime -Dir $TestDrive
@@ -351,7 +351,7 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
     }
 
-    It 'Test 未注册：返回 TRIGGER_NOT_REGISTERED，且仍不写系统' {
+    It 'Test on an unregistered task: returns TRIGGER_NOT_REGISTERED and still writes nothing to the system' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; task_name = $script:UniqueTask }
         $f = New-TestFlow -Dir $TestDrive -Name 'test-absent' -Trigger $t
         $runtime = New-TestRuntime -Dir $TestDrive
@@ -362,7 +362,7 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
     }
 
-    It 'Unregister -DryRun 只读，任务本来不存在时返回 absent' {
+    It 'Unregister -DryRun is read-only and returns absent when the task never existed' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; task_name = $script:UniqueTask }
         $f = New-TestFlow -Dir $TestDrive -Name 'unreg-dry' -Trigger $t
         $r = Unregister-Trigger -FlowFile $f -DryRun
@@ -371,7 +371,7 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
     }
 
-    It 'file kind 已支持：缺 -ConfigFile 时无法解析 {{config.KEY}}，硬失败' {
+    It 'The file kind is supported: without -ConfigFile {{config.KEY}} cannot be resolved and the check fails hard' {
         $t = [ordered]@{ kind = 'file'; time = '09:00'; gate = 'none'; file = @{ dir = '{{config.INBOX}}'; pattern = '*.csv' } }
         $f = New-TestFlow -Dir $TestDrive -Name 'file-kind' -Trigger $t
         $runtime = New-TestRuntime -Dir $TestDrive
@@ -383,13 +383,13 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         $u.changed | Should Be 'absent'
     }
 
-    It '未知 kind 报 TRIGGER_UNKNOWN_KIND' {
+    It 'An unknown kind reports TRIGGER_UNKNOWN_KIND' {
         $t = [ordered]@{ kind = 'smoke' }
         $f = New-TestFlow -Dir $TestDrive -Name 'unknown-kind' -Trigger $t
         (Get-TriggerErrorCode { Get-TriggerSpec -FlowFile $f }) | Should Be 'TRIGGER_UNKNOWN_KIND'
     }
 
-    It 'CLI -Register -DryRun：退出码 0，末行 changed=planned，不写系统' {
+    It 'CLI -Register -DryRun: exit code 0, a final changed=planned line, and nothing written to the system' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; task_name = $script:UniqueTask }
         $f = New-TestFlow -Dir $TestDrive -Name 'cli-dry' -Trigger $t
         $runtime = New-TestRuntime -Dir $TestDrive
@@ -403,7 +403,7 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
     }
 
-    It 'CLI -Test 未注册：退出码 1，code=TRIGGER_NOT_REGISTERED，不写系统' {
+    It 'CLI -Test on an unregistered task: exit code 1, code=TRIGGER_NOT_REGISTERED, and nothing written to the system' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none'; task_name = $script:UniqueTask }
         $f = New-TestFlow -Dir $TestDrive -Name 'cli-test' -Trigger $t
         $runtime = New-TestRuntime -Dir $TestDrive
@@ -417,9 +417,9 @@ Describe 'TriggerRegistry 只读与 kind 边界' {
     }
 }
 
-Describe 'TriggerRegistry 流程名派生（pad_flow_name 优先）' {
+Describe 'TriggerRegistry flow name derivation (pad_flow_name wins)' {
 
-    It 'pad_flow_name 与 name 不同：任务名与 -FlowName 都用 pad_flow_name' {
+    It 'pad_flow_name differs from name: both the task name and -FlowName use pad_flow_name' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = New-TestFlow -Dir $TestDrive -Name 'pad-name' -Trigger $t -PadFlowName 'PESTER_DISPLAY'
         $spec = Get-TriggerSpec -FlowFile $f
@@ -436,7 +436,7 @@ Describe 'TriggerRegistry 流程名派生（pad_flow_name 优先）' {
         $action.args | Should Match '-FlowName "PESTER_DISPLAY"'
     }
 
-    It '没有 pad_flow_name 时回退内部 name' {
+    It 'Without pad_flow_name it falls back to the internal name' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'no-pad-name' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
@@ -445,9 +445,9 @@ Describe 'TriggerRegistry 流程名派生（pad_flow_name 优先）' {
     }
 }
 
-Describe 'TriggerRegistry days 生效为 Weekly' {
+Describe 'TriggerRegistry days take effect as Weekly' {
 
-    It '声明 days：按对应星期建 Weekly（mon..fri = 62），日历门禁参数保留' {
+    It 'days declared: a Weekly trigger is built for those weekdays (mon..fri = 62) and the calendar gate argument is kept' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'
             days = @('mon', 'tue', 'wed', 'thu', 'fri'); gate = 'workday' }
         $f = New-TestFlow -Dir $TestDrive -Name 'days-weekly' -Trigger $t
@@ -466,7 +466,7 @@ Describe 'TriggerRegistry days 生效为 Weekly' {
         $action.args | Should Match '-RunIfWorkday'
     }
 
-    It '只声明周六周日：Weekly 只含 sat/sun（64 + 1 = 65）' {
+    It 'Only Saturday and Sunday declared: Weekly contains just sat/sun (64 + 1 = 65)' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; days = @('sat', 'sun'); gate = 'none' }
         $f = New-TestFlow -Dir $TestDrive -Name 'days-weekend' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
@@ -475,7 +475,7 @@ Describe 'TriggerRegistry days 生效为 Weekly' {
         $trigger.DaysOfWeek | Should Be 65
     }
 
-    It '未声明 days 且带日历门禁：保持 Daily' {
+    It 'No days declared with a calendar gate: stays Daily' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = New-TestFlow -Dir $TestDrive -Name 'days-undeclared' -Trigger $t
         $spec = Get-TriggerSpec -FlowFile $f
@@ -484,7 +484,7 @@ Describe 'TriggerRegistry days 生效为 Weekly' {
         $trigger.CimClass.CimClassName | Should Be 'MSFT_TaskDailyTrigger'
     }
 
-    It '注册设置显式关闭 StartWhenAvailable：休眠恢复后不补跑周末遗失实例' {
+    It 'Registration explicitly disables StartWhenAvailable: no catch-up of missed weekend instances after resuming from sleep' {
         $settings = & $script:TriggerModule {
             param($Minutes)
             New-ScheduleTaskSettings -ExecutionTimeLimitMinutes $Minutes
@@ -494,7 +494,7 @@ Describe 'TriggerRegistry days 生效为 Weekly' {
         $settings.MultipleInstances | Should Be 'IgnoreNew'
     }
 
-    It '显式 days 与未声明 days 的 specHash 不同：不能判成未变更' {
+    It 'Explicit days and undeclared days give different specHash values and cannot be judged unchanged' {
         $t1 = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $t2 = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday'
             days = @('mon', 'tue', 'wed', 'thu', 'fri') }

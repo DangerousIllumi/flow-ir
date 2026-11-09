@@ -33,9 +33,9 @@ function New-TextFile([string]$Path, [string[]]$Lines, [string]$Kind = 'utf-8') 
     }
 }
 
-Describe '推送前内容门禁' {
+Describe 'Pre-push content gate' {
 
-    It '命中业务词：退出码 1，命中行带文件与行号' {
+    It 'Business term hit: exit code 1 and the hit line carries the file and line number' {
         $work = New-Work
         $f = Join-Path $work 'sample.ps1'
         New-TextFile $f @('第一行：无害内容', '第二行：示例业务词')
@@ -51,7 +51,7 @@ Describe '推送前内容门禁' {
         $r.Hits[0].Category | Should Be 'businessName'
     }
 
-    It '子进程退出码为 1，且输出符合 文件:行号:命中词' {
+    It 'The child process exits with code 1 and the output matches file:line:hit' {
         $work = New-Work
         $f = Join-Path $work 'sample.txt'
         New-TextFile $f @('干净行', 'DEMO_TOKEN_ABC')
@@ -65,7 +65,7 @@ Describe '推送前内容门禁' {
         (@($out) -join "`n") | Should Match ([regex]::Escape($f) + ':2:DEMO_TOKEN_ABC')
     }
 
-    It '全部干净：退出码 0，无命中' {
+    It 'All clean: exit code 0 and no hits' {
         $work = New-Work
         $f = Join-Path $work 'clean.ps1'
         New-TextFile $f @('第一行：通用说明', '第二行：仍然通用')
@@ -78,7 +78,7 @@ Describe '推送前内容门禁' {
         @($r.Hits).Count | Should Be 0
     }
 
-    It 'UTF-16LE（带 BOM）按行正确解码，不产生乱码假阳性' {
+    It 'UTF-16LE (with BOM) decodes line by line correctly with no mojibake false positives' {
         $work = New-Work
         $d = New-DenylistFile $work @{
             businessName = @{ rules = @(@{ id = 'demo'; pattern = '示例业务词'; regex = $false }) }
@@ -98,7 +98,7 @@ Describe '推送前内容门禁' {
         @($r2.Hits).Count | Should Be 0
     }
 
-    It '二进制文件按 Latin1 扫描，不因 UTF-8 硬读产生假阳性' {
+    It 'Binary files are scanned as Latin1 and produce no false positives from forced UTF-8 reads' {
         $work = New-Work
         $bin = Join-Path $work 'sample.bin'
         # PNG 文件头 + 若干高位字节：按 UTF-8 硬读会解码失败或产生乱码
@@ -115,7 +115,7 @@ Describe '推送前内容门禁' {
         ($r.Binary -contains $bin) | Should Be $true
     }
 
-    It '正则规则能命中路径类模式' {
+    It 'A regex rule can match path-like patterns' {
         $work = New-Work
         $f = Join-Path $work 'sample.ps1'
         New-TextFile $f @('第一行：无害', '路径：D:\DEMO\scripts\run.ps1')
@@ -130,7 +130,7 @@ Describe '推送前内容门禁' {
         $r.Hits[0].Match | Should Match 'DEMO'
     }
 
-    It '自动合并本地覆盖文件：真实词只放 local 文件' {
+    It 'Local override files merge automatically: real terms live only in the local file' {
         $work = New-Work
         $cfg = Join-Path $work 'tools\publish'
         New-Item -ItemType Directory -Path $cfg -Force | Out-Null
@@ -157,7 +157,7 @@ Describe '推送前内容门禁' {
         @($r.Sources).Count | Should Be 2
     }
 
-    It '业务目录被列入清单：退出码 2，明确报错而不是静默跳过' {
+    It 'A business directory listed for scanning: exit code 2 with an explicit error instead of a silent skip' {
         $work = New-Work
         $business = Join-Path $work 'business\flows'
         New-Item -ItemType Directory -Path $business -Force | Out-Null
@@ -173,7 +173,7 @@ Describe '推送前内容门禁' {
         @($r.Hits).Count | Should Be 0
     }
 
-    It '清单里的文件不存在：退出码 2，不静默跳过' {
+    It 'A listed file that does not exist: exit code 2, no silent skip' {
         $work = New-Work
         $d = New-DenylistFile $work @{
             businessName = @{ rules = @(@{ id = 'demo'; pattern = '示例业务词'; regex = $false }) }
@@ -183,7 +183,7 @@ Describe '推送前内容门禁' {
         @($r.Missing).Count | Should Be 1
     }
 
-    It '默认词表覆盖五类，且扫描器自身、词表、文档不命中自己的规则' {
+    It 'The default denylist covers five categories, and the scanner, denylist and docs do not hit their own rules' {
         $dl = Join-Path $script:Repo 'tools\publish\public-safe.denylist.json'
         (Test-Path -LiteralPath $dl) | Should Be $true
 
@@ -207,12 +207,12 @@ Describe '推送前内容门禁' {
     }
 }
 
-Describe 'UNC 路径规则边界' {
+Describe 'UNC path rule boundaries' {
 
     # 直接用仓库里的默认词表，保证测的是真实规则，而不是测试里另写一份
     $dl = Join-Path $script:Repo 'tools\publish\public-safe.denylist.json'
 
-    It '真实 UNC 路径仍然命中（server 段至少 2 个字符、share 段不以点开头）' {
+    It 'A real UNC path still hits (server segment of at least 2 characters, share segment not starting with a dot)' {
         $work = New-Work
         $f = Join-Path $work 'real.txt'
         # 拼接构造，避免测试文件本身出现 UNC 字面量而被门禁扫到
@@ -227,7 +227,7 @@ Describe 'UNC 路径规则边界' {
         $r.Hits[0].Match | Should Match 'demo-host'
     }
 
-    It '正则字面量与转义序列不再误命中' {
+    It 'Regex literals and escape sequences no longer produce false hits' {
         $work = New-Work
         $f = Join-Path $work 'regex-literals.ps1'
         # 双反斜杠 + 单字符（x / n / t）不是 UNC 路径，只是正则转义写法
@@ -239,11 +239,11 @@ Describe 'UNC 路径规则边界' {
     }
 }
 
-Describe '保留域白名单' {
+Describe 'Reserved domain allowlist' {
 
     $dl = Join-Path $script:Repo 'tools\publish\public-safe.denylist.json'
 
-    It '保留域中的邮箱不命中（example.com / company.com / github.com）' {
+    It 'Emails in reserved domains do not hit (example.com / company.com / github.com)' {
         $work = New-Work
         $f = Join-Path $work 'emails.txt'
         New-TextFile $f @('sender@example.com', 'manager@company.com', 'git@github.com')
@@ -253,7 +253,7 @@ Describe '保留域白名单' {
         @($r.Hits).Count | Should Be 0
     }
 
-    It '非保留域仍然命中' {
+    It 'Non-reserved domains still hit' {
         $work = New-Work
         $f = Join-Path $work 'emails-real.txt'
         # 假域是占位构造的，不对应任何真实客户；字符串拼接是为了测试文件自身也不带真实域名
@@ -267,7 +267,7 @@ Describe '保留域白名单' {
         (@($r.Hits) | ForEach-Object { $_.RuleId }) -join ',' | Should Be 'email-address,email-address'
     }
 
-    It '白名单可被 enabled:false 关闭' {
+    It 'The allowlist can be turned off with enabled:false' {
         $work = New-Work
         $doc = [ordered]@{
             version    = 1

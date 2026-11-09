@@ -1,6 +1,6 @@
 {
   "name": "loop-with-break",
-  "description": "有界循环，满足条件就提前跳出（合成样例）",
+  "description": "Bounded loop that exits early when the condition is met (synthetic sample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-loop-with-break",
@@ -13,14 +13,14 @@
     { "name": "Threshold", "type": "number", "default": 3 }
   ],
   "edges": [
-    { "from": "1", "to": "2", "label": "循环体" },
-    { "from": "1", "to": "4", "label": "结束循环" },
-    { "from": "2", "to": "3", "label": "是" }
+    { "from": "1", "to": "2", "label": "loop body" },
+    { "from": "1", "to": "4", "label": "end loop" },
+    { "from": "2", "to": "3", "label": "yes" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "最多重试 5 次",
+      "label": "Retry at most 5 times",
       "type": "loop",
       "pad_hint": "LOOP",
       "loop": { "kind": "fromto", "index": "Idx", "from": 1, "to": 5, "step": 1, "body": ["2"] },
@@ -31,7 +31,7 @@
     },
     {
       "id": "2",
-      "label": "达到阈值就停",
+      "label": "Stop when the threshold is reached",
       "type": "if",
       "pad_hint": "IF",
       "params": { "Condition": "Idx >= Threshold" },
@@ -42,7 +42,7 @@
     },
     {
       "id": "3",
-      "label": "跳出循环",
+      "label": "Exit loop",
       "type": "break",
       "pad_hint": "EXIT LOOP",
       "run_mode": "auto",
@@ -51,7 +51,7 @@
     },
     {
       "id": "4",
-      "label": "完成提示",
+      "label": "Done notification",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

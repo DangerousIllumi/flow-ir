@@ -28,9 +28,9 @@ function Invoke-ChildLockWaited([string]$FlowName, [int]$WaitSec) {
     return (($out -join '') -replace '\s', '')
 }
 
-Describe 'PadLock 跨进程互斥' {
+Describe 'PadLock cross-process mutual exclusion' {
 
-    It '持有锁时另一进程排队，超时返回失败' {
+    It 'While the lock is held another process queues and times out with failure' {
         (Enter-PadRunLock -FlowName 'HOLDER' -WaitSec 5).ok | Should Be $true
         try {
             (Invoke-ChildLockAttempt 'WAITER' 2) | Should Be 'TIMEOUT'
@@ -39,14 +39,14 @@ Describe 'PadLock 跨进程互斥' {
         }
     }
 
-    It '持有者释放后，排队方立即拿到锁' {
+    It 'After the holder releases, the queued process acquires the lock immediately' {
         $got = Enter-PadRunLock -FlowName 'HOLDER' -WaitSec 5
         $got.ok | Should Be $true
         Exit-PadRunLock
         (Invoke-ChildLockAttempt 'NEXT' 5) | Should Be 'GOT'
     }
 
-    It '残留锁文件不会造成死等（互斥以 Mutex 为准）' {
+    It 'A stale lock file does not cause a hang (the Mutex is authoritative)' {
         $path = Get-PadLockFile
         # 伪造一份“持有者早已不存在”的锁文件
         [IO.File]::WriteAllText($path,
@@ -63,7 +63,7 @@ Describe 'PadLock 跨进程互斥' {
         }
     }
 
-    It '持锁期间锁文件记录持有流程与 PID，供等待方识别' {
+    It 'While held, the lock file records the holding flow and PID so waiters can identify it' {
         (Enter-PadRunLock -FlowName 'PAD_LOCK_TEST' -WaitSec 5).ok | Should Be $true
         try {
             $info = Get-PadLockInfo
@@ -77,7 +77,7 @@ Describe 'PadLock 跨进程互斥' {
         (Get-PadLockInfo) | Should Be $null
     }
 
-    It '写日志不会重写锁文件：锁文件只在抢锁成功时写一次' {
+    It 'Logging does not rewrite the lock file: it is written once when the lock is acquired' {
         # 静态断言：pad-sync 的 Write-Log 不得再刷新锁文件，避免每条日志一次整文件重写
         $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\tools\pad-sync\pad-sync.ps1'), [Text.Encoding]::UTF8)
         ([regex]::Matches($src, 'Write-PadLockInfo')).Count | Should Be 0
@@ -93,7 +93,7 @@ Describe 'PadLock 跨进程互斥' {
         }
     }
 
-    It '未等待时 waitedSec 为 0' {
+    It 'waitedSec is 0 when no waiting occurred' {
         $r = Enter-PadRunLock -FlowName 'NO-WAIT' -WaitSec 5
         $r.ok | Should Be $true
         # 直接拿到锁，没有排队，等待时长必须是 0（pad-sync 的 lockWaitSec 也据此为 0）
@@ -101,7 +101,7 @@ Describe 'PadLock 跨进程互斥' {
         Exit-PadRunLock
     }
 
-    It '等锁后 waitedSec 反映真实等待秒数' {
+    It 'After waiting, waitedSec reflects the real number of seconds waited' {
         $hold = Enter-PadRunLock -FlowName 'HOLD-FOR-WAIT' -WaitSec 5
         $hold.ok | Should Be $true
         try {
@@ -118,7 +118,7 @@ Describe 'PadLock 跨进程互斥' {
         }
     }
 
-    It '不再导出 Get-PadLockState：调用方不需要另一个导出面' {
+    It 'Get-PadLockState is no longer exported: callers do not need a second export surface' {
         # 模块导出面收成一个入口：抢锁结果与等待时长都由 Enter-PadRunLock 带回
         (Get-Command Get-PadLockState -ErrorAction SilentlyContinue) | Should Be $null
         # pad-sync 里也不得再残留对它的调用

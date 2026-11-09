@@ -26,15 +26,15 @@ function Write-RunDef([string]$Path, [string]$FlowGuid, [string]$FlowName, [stri
     [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
 }
 
-Describe 'pad-release 纯函数测试' {
+Describe 'pad-release pure function tests' {
 
-    It '规范化：去掉 @@ 头 / IMPORT 行 / 空行 / 行尾空白，CRLF 统一为 LF' {
+    It 'normalization: strips @@ headers, IMPORT lines, blank lines and trailing whitespace; CRLF becomes LF' {
         $raw = "@@ConnectionString: ''`r`nIMPORT 'a.appmask' AS appmask`r`n`r`nSET A TO 'x'   `r`n  IMPORT 'b.imgrepo' AS imgrepo`r`nSET B TO 'y'"
         $norm = ConvertTo-NormalizedRobin $raw
         $norm | Should Be ("SET A TO 'x'" + "`n" + "SET B TO 'y'")
     }
 
-    It '哈希一致性：deployed（含注释）与 workspace（含 @ 元数据）规范化后哈希相同' {
+    It 'hash consistency: deployed (with comments) and workspace (with @ metadata) hash the same after normalization' {
         # 源文件带中文注释；PAD 发布后注释整行丢弃，并追加 @SENSITIVE 等元数据行
         $deployed = "# 这是中文注释，发布后会被丢弃`r`nSET A TO 'x'`r`nSET B TO 'y'"
         $workspace = "@@ConnectionString: ''`r`n@@Type: 'Local'`r`n@SENSITIVE: []`r`nIMPORT 'controlRepo.appmask' AS appmask`r`n`r`nSET A TO 'x'  `r`nSET B TO 'y'`r`n"
@@ -42,13 +42,13 @@ Describe 'pad-release 纯函数测试' {
         (Compare-RobinText $deployed $workspace).match | Should Be $true
     }
 
-    It '规范化：注释行不同不影响比对结果' {
+    It 'normalization: differing comment lines do not affect the comparison result' {
         $a = "# 旧注释`nSET A TO 'x'"
         $b = "# 新注释`nSET A TO 'x'"
         (Compare-RobinText $a $b).match | Should Be $true
     }
 
-    It '逐行比对：中间一行不同 → 报首个差异行号与两侧内容' {
+    It 'line-by-line comparison: a difference in the middle reports the first differing line and both sides' {
         $a = "SET A TO 'x'`nSET B TO 'y'`nSET C TO 'z'"
         $b = "SET A TO 'x'`nSET B TO 'CHANGED'`nSET C TO 'z'"
         $cmp = Compare-RobinText $a $b
@@ -57,7 +57,7 @@ Describe 'pad-release 纯函数测试' {
         $cmp.lineB | Should Match 'CHANGED'
     }
 
-    It '逐行比对：行数不同 → 差异行报「缺失」' {
+    It 'line-by-line comparison: differing line counts report a missing line' {
         $a = "SET A TO 'x'`nSET B TO 'y'"
         $b = "SET A TO 'x'"
         $cmp = Compare-RobinText $a $b
@@ -66,7 +66,7 @@ Describe 'pad-release 纯函数测试' {
         $cmp.lineB | Should Be '<missing>'
     }
 
-    It '从 Actions.log 路径解析流程 GUID 与 runId' {
+    It 'parses flow GUID and runId from an Actions.log path' {
         $p = 'C:\Users\x\AppData\Local\Microsoft\Power Automate Desktop\Console\Scripts\CFD13222-CA5B-447E-B7FF-51FE823BA40B\Runs\d0a4989f-5798-45bb-b6b3-c8658d54fc52\Actions.log'
         $ids = Get-FlowGuidFromLogPath $p
         $ids.flowGuid | Should Be 'cfd13222-ca5b-447e-b7ff-51fe823ba40b'
@@ -74,7 +74,7 @@ Describe 'pad-release 纯函数测试' {
         (Get-FlowGuidFromLogPath 'C:\temp\no-guid.log') | Should Be $null
     }
 
-    It '历史运行查找：按流程名过滤，按 startTime 取最新' {
+    It 'historical run lookup: filters by flow name and takes the latest startTime' {
         $work = New-Work
         $root = Join-Path $work 'Scripts'
         $g1 = '11111111-1111-1111-1111-111111111111'
@@ -91,7 +91,7 @@ Describe 'pad-release 纯函数测试' {
         (Find-LatestFlowRun $root '不存在的流程') | Should Be $null
     }
 
-    It '历史运行查找：跳过损坏的 JSON 文件' {
+    It 'historical run lookup: skips corrupt JSON files' {
         $work = New-Work
         $root = Join-Path $work 'Scripts'
         $g1 = '11111111-1111-1111-1111-111111111111'
@@ -102,7 +102,7 @@ Describe 'pad-release 纯函数测试' {
         (Find-LatestFlowRun $root '目标流程').flowGuid | Should Be $g1
     }
 
-    It 'Workspace 定义定位：按 runId 精确匹配，不因修改时间更新而选错' {
+    It 'Workspace definition lookup: exact runId match, not misled by a newer modification time' {
         $work = New-Work
         $g1 = '11111111-1111-1111-1111-111111111111'
         $runId = '22222222-2222-2222-2222-222222222222'
@@ -118,7 +118,7 @@ Describe 'pad-release 纯函数测试' {
         (Find-WorkspaceRobin $work '33333333-3333-3333-3333-333333333333' $runId ([datetime]::UtcNow)) | Should Be $null
     }
 
-    It 'Workspace 定义定位：无 runId 时只认本次发布之后写入的修订，取不到返回 null' {
+    It 'Workspace definition lookup: without a runId only revisions written after this release count; null when none' {
         $work = New-Work
         $g1 = '11111111-1111-1111-1111-111111111111'
         $r1 = Join-Path $work "$g1\AAAA0001\script.robin"
@@ -130,7 +130,7 @@ Describe 'pad-release 纯函数测试' {
         (Find-WorkspaceRobin $work $g1 '' ([datetime]'2026-10-19 09:00:00')) | Should Be $r1
     }
 
-    It 'Workspace 定义定位：多个候选修订无法确定时报错，不静默挑一个' {
+    It 'Workspace definition lookup: ambiguous candidates raise an error instead of silently picking one' {
         $work = New-Work
         $g1 = '11111111-1111-1111-1111-111111111111'
         foreach ($rev in 'AAAA0001', 'BBBB0002') {
@@ -145,7 +145,7 @@ Describe 'pad-release 纯函数测试' {
         $ex.Message | Should Match '2 candidate revisions'
     }
 
-    It 'manifest 追加：一行一个合法 JSON，字段齐全，多次追加不覆盖' {
+    It 'manifest append: one valid JSON per line with all fields; repeated appends do not overwrite' {
         $work = New-Work
         $mf = Join-Path $work 'manifest.jsonl'
         $entry = [ordered]@{ ts = '2026-10-27T00:00:00Z'; type = 'release'; flow = 'F'; sha256 = 'abc'; ok = $true; errors = @() }
@@ -158,7 +158,7 @@ Describe 'pad-release 纯函数测试' {
         $j.sha256 | Should Be 'abc'
     }
 
-    It '运行记录：type=run，模式/状态/错误码字段齐全，可直接序列化为一行 JSON' {
+    It 'run record: type=run with mode, status and error code fields, serializable as one JSON line' {
         $e = New-RunManifestEntry -FlowName 'PAD_SYNC_TEST' -RunId 'r-1' -Mode 'local' `
             -Ok $true -Stage 'done' -Status 'Succeeded' -Actions 42 -TotalMs 1234 `
             -ErrorCode $null -ErrorMessage $null -LogPath 'C:\log.txt' -CanvasVerified $true
@@ -172,7 +172,7 @@ Describe 'pad-release 纯函数测试' {
         ($j.PSObject.Properties.Name | Where-Object { $_ -eq 'canvasVerified' }) | Should Be 'canvasVerified'
     }
 
-    It '运行记录：warnings 字段默认是空数组，传入时按数组序列化' {
+    It 'run record: warnings defaults to an empty array and serializes as an array when supplied' {
         $e = New-RunManifestEntry -FlowName 'F' -Ok $true -Stage 'done'
         (@($e.warnings)).Count | Should Be 0
         $e2 = New-RunManifestEntry -FlowName 'F' -Ok $true -Stage 'done' -Warnings @('缓存未刷新')
@@ -180,7 +180,7 @@ Describe 'pad-release 纯函数测试' {
         (@((($e2 | ConvertTo-Json -Depth 6 -Compress) | ConvertFrom-Json).warnings))[0] | Should Be '缓存未刷新'
     }
 
-    It 'manifest 保留：run 记录按 90 天清理，release/rollback 永久保留' {
+    It 'manifest retention: run records expire after 90 days; release and rollback are kept forever' {
         $mf = Join-Path $TestDrive ('manifest-' + [guid]::NewGuid().ToString('N') + '.jsonl')
         $old = [datetime]::UtcNow.AddDays(-120).ToString('o')
         $fresh = [datetime]::UtcNow.AddDays(-1).ToString('o')
@@ -198,7 +198,7 @@ Describe 'pad-release 纯函数测试' {
         ($left -contains 'rollback') | Should Be $true
     }
 
-    It '批准指纹：存在的文件取 SHA256，缺失的记 null，短格式带前缀' {
+    It 'approval fingerprint: SHA256 for existing files, null when missing, prefixed short format' {
         $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $d | Out-Null
         foreach ($n in 'a.robin', 'b.json', 'c.json') {
@@ -215,8 +215,8 @@ Describe 'pad-release 纯函数测试' {
     }
 }
 
-Describe 'pad-release 不再默认到具体业务流程' {
-    It '未传 -SourceRobin 且按流程名派生不到：非零退出，且不进入执行阶段' {
+Describe 'pad-release no longer defaults to a concrete business flow' {
+    It 'no -SourceRobin and the flow name resolves to nothing: non-zero exit before the execution stage' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:Release `
             -FlowName 'NoSuchFlow-XYZ' -DryRun -SkipTests 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0

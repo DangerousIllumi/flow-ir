@@ -1,6 +1,6 @@
 {
   "name": "<流程名>",
-  "description": "触发声明断言用：schedule 触发 + idempotent=false 但未声明 reversible（补声明反例）",
+  "description": "For trigger assertion: schedule trigger with idempotent=false but no reversible declared (missing-declaration counterexample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-trigger-fixture",
@@ -14,7 +14,7 @@
       "id": "29",
       "type": "mail.send",
       "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
-      "label": "发送提醒邮件",
+      "label": "Send reminder email",
       "params": {},
       "outputs": [],
       "next": [],

@@ -57,9 +57,9 @@ function Write-Robin([string]$Path, [string]$Text, [bool]$Bom = $false) {
     [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding($Bom)))
 }
 
-Describe 'repair-executor 规则测试' {
+Describe 'repair-executor rule tests' {
 
-    It 'R1：缺失文件在 PadRoot 下有唯一同名项 → 改路径并退出 0' {
+    It 'R1: a missing file with a unique same-name match under PadRoot → path rewritten and exit 0' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
@@ -76,7 +76,7 @@ Describe 'repair-executor 规则测试' {
         (Test-Path (Hint-Of $out)) | Should Be $false
     }
 
-    It 'R1：缺失路径在 PadRoot 下有多个同名项 → 放弃并写提示' {
+    It 'R1: a missing path with several same-name matches under PadRoot → give up and write a hint' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         New-Item -ItemType File -Path (Join-Path $pad 'A\dup.txt') -Force | Out-Null
@@ -93,7 +93,7 @@ Describe 'repair-executor 规则测试' {
         (Test-Path $out) | Should Be $false
     }
 
-    It 'R1：多个路径同时缺失 → 放弃（无法确定该改哪个）' {
+    It 'R1: several paths missing at once → give up (cannot decide which one to rewrite)' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         New-Item -ItemType Directory -Path $pad -Force | Out-Null
@@ -109,7 +109,7 @@ Describe 'repair-executor 规则测试' {
         (Test-Path (Hint-Of $out)) | Should Be $true
     }
 
-    It 'R2：缺失目录在 PadRoot 下 → 直接创建，.robin 原样输出' {
+    It 'R2: a missing directory under PadRoot → created directly, .robin emitted unchanged' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         New-Item -ItemType Directory -Path $pad -Force | Out-Null
@@ -127,7 +127,7 @@ Describe 'repair-executor 规则测试' {
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Be $robinText
     }
 
-    It '路径都存在但报 FileNotFound → 不改路径，放弃并写提示' {
+    It 'All paths exist but FileNotFound is reported → no path rewrite, give up and write a hint' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'exists.txt'
@@ -142,7 +142,7 @@ Describe 'repair-executor 规则测试' {
         (Test-Path (Hint-Of $out)) | Should Be $true
     }
 
-    It 'R3：SAP 错误族 → 提示里给 SAP 针对性建议' {
+    It 'R3: SAP error family → the hint contains SAP-specific advice' {
         $work = New-Work
         $in = Join-Path $work 'in.robin'
         Write-Robin $in 'SET X TO 1'
@@ -155,7 +155,7 @@ Describe 'repair-executor 规则测试' {
         $hint | Should Match 'SAP'
     }
 
-    It 'R3：未识别错误码 → 提示走默认文案' {
+    It 'R3: unrecognized error code → the hint uses the default text' {
         $work = New-Work
         $in = Join-Path $work 'in.robin'
         Write-Robin $in 'SET X TO 1'
@@ -168,7 +168,7 @@ Describe 'repair-executor 规则测试' {
         $hint | Should Match 'script-standards'
     }
 
-    It '错误码两级兜底：run 级为空时取 failedAction 级（仍能触发 R1）' {
+    It 'Two-level error code fallback: when the run-level code is empty the failedAction-level one is used (R1 still triggers)' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
@@ -184,7 +184,7 @@ Describe 'repair-executor 规则测试' {
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }
 
-    It '输出 .robin 保留输入的 BOM：有 BOM 进 → 有 BOM 出；无 BOM 进 → 无 BOM 出' {
+    It 'The output .robin preserves the input BOM: BOM in → BOM out; no BOM in → no BOM out' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
@@ -209,7 +209,7 @@ Describe 'repair-executor 规则测试' {
         ($b2[0] -eq 0xEF) | Should Be $false
     }
 
-    It '规则 JSON 化：新增错误码只追加 hintRules，不改执行器脚本' {
+    It 'Rules as JSON: adding an error code only appends hintRules without changing the executor script' {
         $work = New-Work
         $in = Join-Path $work 'in.robin'
         Write-Robin $in 'SET X TO 1'
@@ -230,7 +230,7 @@ Describe 'repair-executor 规则测试' {
         $hint | Should Match '自定义规则：Acme 错误族'
     }
 
-    It '规则 JSON 化：新增 fixerRules 后新错误码也能走 R1 重定位' {
+    It 'Rules as JSON: after adding fixerRules a new error code can also go through R1 relocation' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
@@ -255,7 +255,7 @@ Describe 'repair-executor 规则测试' {
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }
 
-    It '未传 -PadRoot 时由环境变量 FLOW_IR_PAD_ROOT 决定搜索根（不再固定 C:\PAD）' {
+    It 'Without -PadRoot the search root comes from the FLOW_IR_PAD_ROOT environment variable (no longer fixed to C:\PAD)' {
         $work = New-Work
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
@@ -278,7 +278,7 @@ Describe 'repair-executor 规则测试' {
         ([IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)) | Should Match ([regex]::Escape((To-Raw $real)))
     }
 
-    It '显式 -PadRoot 优先于环境变量 FLOW_IR_PAD_ROOT' {
+    It 'An explicit -PadRoot takes precedence over the FLOW_IR_PAD_ROOT environment variable' {
         $work = New-Work
         $explicit = Join-Path $work 'explicit'
         $fromEnv = Join-Path $work 'from-env'

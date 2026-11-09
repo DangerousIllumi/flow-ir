@@ -13,9 +13,9 @@ Import-Module $modulePath -Force
 # Pester 3.4 没有 BeforeAll，脚本级 dot-source 只取函数、不跑主流程
 . $cfgScript -NoMain
 
-Describe 'PadPreflight 前置探查' {
+Describe 'PadPreflight preflight probes' {
 
-    It 'PAD 根目录缺子目录时判定为缺失并给出缺失清单' {
+    It 'PAD root missing subdirectories is reported as missing with a list of what is missing' {
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $root | Out-Null
         $r = Test-PadInstalled -PadRoot $root
@@ -24,7 +24,7 @@ Describe 'PadPreflight 前置探查' {
         $r.Hint | Should Not BeNullOrEmpty
     }
 
-    It 'PAD 根目录子目录齐全时判定通过' {
+    It 'PAD root with all subdirectories present passes' {
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         foreach ($d in 'Scripts', 'Results') {
             New-Item -ItemType Directory -Path (Join-Path $root $d) -Force | Out-Null
@@ -33,13 +33,13 @@ Describe 'PadPreflight 前置探查' {
         $r.Ok | Should Be $true
     }
 
-    It 'Python 路径不存在时判定为缺失' {
+    It 'A nonexistent Python path is reported as missing' {
         $r = Get-PythonProbe -PythonExe (Join-Path $TestDrive 'nope\python.exe')
         $r.Ok | Should Be $false
         $r.Hint | Should Match 'PYTHON_EXE'
     }
 
-    It '真实 Python 能输出版本并通过探测' {
+    It 'A real Python prints its version and passes the probe' {
         $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
         if (-not $cmd) { Set-TestInconclusive '本机没有 python.exe'; return }
         $r = Get-PythonProbe -PythonExe $cmd.Source
@@ -47,20 +47,20 @@ Describe 'PadPreflight 前置探查' {
         $r.Detail | Should Match 'Python 3'
     }
 
-    It 'SAP Logon 路径存在与否分别判定' {
+    It 'SAP Logon path presence and absence are judged separately' {
         $fake = Join-Path $TestDrive 'saplogon.exe'
         New-Item -ItemType File -Path $fake -Force | Out-Null
         (Get-SapGuiProbe -SapLogonPath $fake).Ok | Should Be $true
         (Get-SapGuiProbe -SapLogonPath (Join-Path $TestDrive 'no\saplogon.exe')).Ok | Should Be $false
     }
 
-    It 'Outlook 无任何候选注册表键时判定为缺失' {
+    It 'Outlook with no candidate registry keys is reported as missing' {
         $r = Get-OutlookProbe -OfficeKeys @()
         $r.Ok | Should Be $false
         $r.Hint | Should Match 'Outlook'
     }
 
-    It '按需求声明执行 dirs 检查：缺目录失败、齐全通过' {
+    It 'Runs the dirs check from the requirement declaration: missing directories fail, complete ones pass' {
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $root | Out-Null
         $req = [pscustomobject]@{
@@ -73,7 +73,7 @@ Describe 'PadPreflight 前置探查' {
         $r2[0].Ok | Should Be $true
     }
 
-    It '按需求声明执行 files 检查：缺文件失败、齐全通过' {
+    It 'Runs the files check from the requirement declaration: missing files fail, complete ones pass' {
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $root | Out-Null
         $req = [pscustomobject]@{
@@ -84,7 +84,7 @@ Describe 'PadPreflight 前置探查' {
         (Invoke-PreflightChecks -Requirements $req -Variables @{ PAD_ROOT = $root })[0].Ok | Should Be $true
     }
 
-    It '需求声明里出现未知类型时给出可读提示而不是崩溃' {
+    It 'An unknown check type in the requirement declaration yields a readable hint instead of a crash' {
         $req = [pscustomobject]@{ checks = @([pscustomobject]@{ name = 'X'; type = 'bogus' }) }
         $r = Invoke-PreflightChecks -Requirements $req -Variables @{}
         $r[0].Ok | Should Be $false
@@ -92,9 +92,9 @@ Describe 'PadPreflight 前置探查' {
     }
 }
 
-Describe 'pad-configure 配置生成' {
+Describe 'pad-configure configuration generation' {
 
-    It '答案优先于默认值，探查值优先于默认值' {
+    It 'Answers win over defaults, and probe values win over defaults' {
         $defaults = [pscustomobject]@{ PAD_ROOT = 'D:\RPA\PAD'; PYTHON_EXE = 'C:\py\python.exe'; SAP_CLIENT = '100' }
         $cfg = New-ConfiguredConfig -Defaults $defaults `
             -Answers @{ SAP_CLIENT = '200' } `
@@ -104,7 +104,7 @@ Describe 'pad-configure 配置生成' {
         $cfg.PYTHON_EXE | Should Be 'C:\py\python.exe'
     }
 
-    It '写出的 JSON 可被重新解析且键值一致' {
+    It 'The written JSON can be re-parsed with identical keys and values' {
         $p = Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + '.json')
         $cfg = [ordered]@{ PAD_ROOT = 'C:\PAD'; SAP_CLIENT = '100' }
         Save-ConfigFile -Config $cfg -Path $p
@@ -113,7 +113,7 @@ Describe 'pad-configure 配置生成' {
         $back.SAP_CLIENT | Should Be '100'
     }
 
-    It '答案文件缺失时抛出明确错误' {
+    It 'A missing answers file throws an explicit error' {
         { Invoke-ConfigureMain -PadRoot $TestDrive -PythonExe 'x' `
             -ConfigPath (Join-Path $TestDrive 'c.json') `
             -SchemaFile (Join-Path $TestDrive 'c.schema.json') `
@@ -122,8 +122,8 @@ Describe 'pad-configure 配置生成' {
     }
 }
 
-Describe 'pad-configure 不再默认到具体业务流程' {
-    It '配置名派生不到示例：非零退出，且不进入逐项确认/写盘' {
+Describe 'pad-configure no longer defaults to a specific business flow' {
+    It 'A config name that derives no example exits non-zero and never enters per-item confirmation or writing' {
         $scriptPath = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-configure.ps1'
         # 指定一个不存在的业务配置名 → 派生出的 <stem>.example.json 也必然不存在
         $cfg = Join-Path $TestDrive 'no-such-flow.json'

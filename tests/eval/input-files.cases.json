@@ -1,20 +1,20 @@
 {
   "flow": "tests/eval/fixtures/input-files.json",
-  "description": "需求：第 N 步只声明并核对第 N 步需要的输入文件（目录 + 文件名模式 + 必需/可选）",
+  "description": "Requirement: step N declares and verifies only the input files needed by step N (directory + file pattern + required/optional)",
   "cases": [
     {
       "id": "inputs-declared",
-      "requirement": "读取步骤声明一必需一可选两份输入，声明形状合法",
+      "requirement": "The read step declares one required and one optional input, with a valid declaration shape",
       "expect": [{ "op": "inputs" }]
     },
     {
       "id": "inputs-single-node",
-      "requirement": "只验指定节点也能通过",
+      "requirement": "Validating only the specified node also passes",
       "expect": [{ "op": "inputs", "node": "1" }]
     },
     {
       "id": "inputs-path-literal",
-      "requirement": "目录写死字面路径必须被拒绝（INPUT_PATH_LITERAL）",
+      "requirement": "A hard-coded literal directory path must be rejected (INPUT_PATH_LITERAL)",
       "expect": [
         {
           "op": "inputs",
@@ -26,7 +26,7 @@
     },
     {
       "id": "inputs-required-not-explicit",
-      "requirement": "required 未显式声明必须被拒绝（INPUT_INVALID，不默认填充）",
+      "requirement": "An omitted required field must be rejected (INPUT_INVALID, no default fill)",
       "expect": [
         {
           "op": "inputs",
@@ -38,7 +38,7 @@
     },
     {
       "id": "inputs-empty-pattern",
-      "requirement": "pattern 为空必须被拒绝（INPUT_INVALID）",
+      "requirement": "An empty pattern must be rejected (INPUT_INVALID)",
       "expect": [
         {
           "op": "inputs",
@@ -50,7 +50,7 @@
     },
     {
       "id": "inputs-undeclared",
-      "requirement": "老流程不写 inputs：只给一条 INPUT_UNDECLARED 提示，不判失败",
+      "requirement": "Legacy flows without inputs: emit one INPUT_UNDECLARED warning, not a failure",
       "flow": "tests/eval/fixtures/file-copy-text.json",
       "expect": [{ "op": "inputs", "expect": "warning", "code": "INPUT_UNDECLARED" }]
     }

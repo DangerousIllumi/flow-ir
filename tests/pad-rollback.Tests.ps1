@@ -24,9 +24,9 @@ function New-Snap([string]$Root, [string]$Flow, [string]$Stamp, [string]$Sha, [s
     return $p
 }
 
-Describe 'pad-rollback 快照测试' {
+Describe 'pad-rollback snapshot tests' {
 
-    It '快照归档：按流程名建目录，文件名 = 时间戳 + sha 前 8 位，内容与成品一致' {
+    It 'snapshot archive: per-flow directory, file name is timestamp plus the first 8 sha characters, content matches the artifact' {
         $work = New-Work
         $src = Join-Path $work 'sample.deployed.robin'
         [IO.File]::WriteAllText($src, "SET A TO 'x'", (New-Object Text.UTF8Encoding($false)))
@@ -35,7 +35,7 @@ Describe 'pad-rollback 快照测试' {
         ([IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)) | Should Be "SET A TO 'x'"
     }
 
-    It '快照列举：按文件名升序（即时间升序），并排除 *.deployed.robin 部署产物' {
+    It 'snapshot listing: ascending file name order (ascending time), excluding *.deployed.robin artifacts' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261026-100000' 'aaaaaaaa' | Out-Null
@@ -50,13 +50,13 @@ Describe 'pad-rollback 快照测试' {
         $list[2].Name | Should Be '20261028-100000-cccccccc.robin'
     }
 
-    It '快照列举：目录不存在时返回空数组' {
+    It 'snapshot listing: returns an empty array when the directory is missing' {
         $work = New-Work
         $list = @(Get-ReleaseSnapshots (Join-Path $work 'snapshots') '不存在的流程')
         $list.Count | Should Be 0
     }
 
-    It '默认回退一个版本：跳过最近一个快照，取倒数第二个' {
+    It 'default rollback of one version: skip the newest snapshot and take the second newest' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261026-100000' 'aaaaaaaa' | Out-Null
@@ -67,7 +67,7 @@ Describe 'pad-rollback 快照测试' {
         $t.FullName | Should Not Be $latest
     }
 
-    It '-Back 2 回退到更早的一版' {
+    It '-Back 2 rolls back to an earlier version' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261026-100000' 'aaaaaaaa' | Out-Null
@@ -76,7 +76,7 @@ Describe 'pad-rollback 快照测试' {
         (Select-RollbackSnapshot $root 'F' -Back 2).Name | Should Be '20261026-100000-aaaaaaaa.robin'
     }
 
-    It '版本不足时回退报错，且错误信息给出当前版本数' {
+    It 'insufficient versions raise an error with the current version count' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261028-100000' 'cccccccc' | Out-Null
@@ -84,14 +84,14 @@ Describe 'pad-rollback 快照测试' {
         try { Select-RollbackSnapshot $root 'F' -Back 1 } catch { $_.Exception.Message | Should Match 'only 1 version' }
     }
 
-    It '-Back 小于 1 直接报错' {
+    It '-Back below 1 raises an error' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261028-100000' 'cccccccc' | Out-Null
         { Select-RollbackSnapshot $root 'F' -Back 0 } | Should Throw
     }
 
-    It '-To 支持完整文件名与 sha 前缀' {
+    It '-To accepts a full file name and a sha prefix' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261026-100000' 'aaaaaaaa' | Out-Null
@@ -101,14 +101,14 @@ Describe 'pad-rollback 快照测试' {
         (Select-RollbackSnapshot $root 'F' -To '20261027-100000-bbbbbbbb.robin').Name | Should Be '20261027-100000-bbbbbbbb.robin'
     }
 
-    It '-To 匹配不到时报错' {
+    It '-To with no match raises an error' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261028-100000' 'cccccccc' | Out-Null
         { Select-RollbackSnapshot $root 'F' -To 'ffffffff' } | Should Throw
     }
 
-    It '流程无任何快照时报错，并给出快照目录' {
+    It 'a flow without snapshots raises an error naming the snapshot directory' {
         $work = New-Work
         try { Select-RollbackSnapshot (Join-Path $work 'snapshots') '新流程' } catch {
             $_.Exception.Message | Should Match 'has no snapshots'
@@ -116,7 +116,7 @@ Describe 'pad-rollback 快照测试' {
         }
     }
 
-    It '流程名含路径分隔符等非法字符时，目录名被安全替换' {
+    It 'illegal characters such as path separators in a flow name are safely replaced in the directory name' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         $dir = Get-ReleaseSnapshotDir $root 'A/B:C*D?E"F<G>H|I'
@@ -125,7 +125,7 @@ Describe 'pad-rollback 快照测试' {
         (Split-Path -Leaf (Get-ReleaseSnapshotDir $root '通用示例流程')) | Should Be '通用示例流程'
     }
 
-    It '快照保留：超过 20 个时只保留最新 20 个' {
+    It 'snapshot retention: keep only the newest 20 when more than 20 exist' {
         $work = New-Work
         $root = Join-Path $work 'snapshots'
         for ($i = 1; $i -le 25; $i++) {
@@ -138,8 +138,8 @@ Describe 'pad-rollback 快照测试' {
     }
 }
 
-Describe 'pad-rollback 不再默认到具体业务流程' {
-    It '未传 -ConfigFile 且按流程名派生不到：非零退出，且不进入定位/发布阶段' {
+Describe 'pad-rollback no longer defaults to a concrete business flow' {
+    It 'no -ConfigFile and the flow name resolves to nothing: non-zero exit before lookup or publishing' {
         $script = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-rollback.ps1'
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script `
             -FlowName 'NoSuchFlow-XYZ' -DryRun 2>&1 | Out-String

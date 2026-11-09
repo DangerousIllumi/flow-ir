@@ -3,7 +3,7 @@
 # 为什么复制脚本到临时目录：flows 目录由脚本自身位置推导，
 # 只有在临时目录里才能造出「0 个 / 多个候选」两种失败场景。
 
-Describe 'pad-verify 不再默认到具体业务流程' {
+Describe 'pad-verify no longer defaults to a concrete business flow' {
 
     # 把 tools\pad-sync 复制到独立目录，得到一个可控的 business\flows 目录
     function New-VerifySandbox {
@@ -25,7 +25,7 @@ Describe 'pad-verify 不再默认到具体业务流程' {
         return $p
     }
 
-    It 'flows 目录为空：非零退出，要求显式 -FlowFile，且不生成判据' {
+    It 'empty flows directory: non-zero exit demanding an explicit -FlowFile and generating no criteria' {
         $box = New-VerifySandbox
         $cfg = New-EmptyConfig
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $box.Script `
@@ -38,7 +38,7 @@ Describe 'pad-verify 不再默认到具体业务流程' {
         $out | Should Not Match '"checks"'
     }
 
-    It 'flows 目录有多个候选：非零退出，并报告候选数' {
+    It 'multiple flow candidates: non-zero exit reporting the candidate count' {
         $box = New-VerifySandbox
         foreach ($n in 'a.json', 'b.json') {
             [IO.File]::WriteAllText((Join-Path $box.Flows $n), '{}', (New-Object Text.UTF8Encoding($false)))

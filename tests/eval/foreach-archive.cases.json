@@ -1,10 +1,10 @@
 {
   "flow": "tests/eval/fixtures/foreach-archive.json",
-  "description": "需求：定期把下载目录里的 CSV 归档",
+  "description": "Requirement: periodically archive CSVs from the downloads directory",
   "cases": [
     {
       "id": "foreach-over-files",
-      "requirement": "把目录里的 CSV 逐个处理（不是只处理第一个）",
+      "requirement": "Process each CSV in the directory one by one, not just the first one",
       "expect": [
         { "op": "loop", "id": "2", "kind": "foreach", "item": "Item" },
         { "op": "action", "id": "1", "padHint": "Folder.GetFiles" },
@@ -13,14 +13,14 @@
     },
     {
       "id": "move-overwrite",
-      "requirement": "同名文件直接覆盖，不能因为已存在就中断",
+      "requirement": "Overwrite same-name files directly instead of aborting when the file already exists",
       "expect": [
         { "op": "param", "id": "3", "name": "IfFileExists", "equals": "Overwrite" }
       ]
     },
     {
       "id": "finish-notice",
-      "requirement": "归档结束后提示一次",
+      "requirement": "Show one completion notice after archiving",
       "expect": [
         { "op": "action", "id": "4", "padHint": "Display.ShowMessageDialog.ShowMessage" }
       ]

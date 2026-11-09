@@ -14,9 +14,9 @@ function New-Work {
     return $d
 }
 
-Describe 'PadTelemetry 遥测解析' {
+Describe 'PadTelemetry telemetry parsing' {
 
-    It '成功样本：Succeeded / 总耗时 / 模块动作耗时 / 无错误码' {
+    It 'Success sample: Succeeded / total duration / timed action durations / no error code' {
         $r = Get-RobinTelemetryFromFile (Join-Path $script:Fixtures 'robinrobot-success.log')
         $r.status | Should Be 'Succeeded'
         $r.totalMs | Should Be 9000
@@ -26,7 +26,7 @@ Describe 'PadTelemetry 遥测解析' {
         $r.runId | Should Be 'aaaaaaaa-1111-2222-3333-444444444444'
     }
 
-    It '失败样本：Failed / 错误码取自 padExceptionInfo / 动作级异常被收集' {
+    It 'Failure sample: Failed / error code taken from padExceptionInfo / action-level exceptions are collected' {
         $r = Get-RobinTelemetryFromFile (Join-Path $script:Fixtures 'robinrobot-failure.log')
         $r.status | Should Be 'Failed'
         $r.errorCode | Should Be 'SAP.ElementNotFound'
@@ -37,12 +37,12 @@ Describe 'PadTelemetry 遥测解析' {
         $r.totalMs | Should Be $null
     }
 
-    It '空行与损坏 JSON 被跳过；没有任何事件时返回 null' {
+    It 'Blank lines and corrupted JSON are skipped; no events at all returns null' {
         $r = ConvertFrom-RobinTelemetryLines -Lines @('', '这不是 JSON', '{"x":1}', '{"event":""}')
         $r | Should Be $null
     }
 
-    It '日志定位：按 Since 过滤并取最新一份' {
+    It 'Log location: filters by Since and picks the newest one' {
         $work = New-Work
         $old = Join-Path $work '20260101T000000-RobinRobot.log'
         $new = Join-Path $work '20260102T000000-RobinRobot.log'
@@ -58,7 +58,7 @@ Describe 'PadTelemetry 遥测解析' {
     }
 }
 
-Describe 'Get-RobinTelemetryFromFile 共享读（真实文件句柄，不 mock）' {
+Describe 'Get-RobinTelemetryFromFile shared read (real file handles, no mocks)' {
 
     # 写一份只含“开始 + 成功”两类 run 级事件的 RobinRobot.log
     function Write-RobotLog {
@@ -72,7 +72,7 @@ Describe 'Get-RobinTelemetryFromFile 共享读（真实文件句柄，不 mock�
         return $p
     }
 
-    It '被 FileShare.ReadWrite 写句柄占用：仍能解析出完成事件' {
+    It 'Held by a FileShare.ReadWrite write handle: the completion event can still be parsed' {
         $work = New-Work
         $runId = 'ffffffff-1111-2222-3333-444444444444'
         $log = Write-RobotLog -Dir $work -RunId $runId
@@ -88,7 +88,7 @@ Describe 'Get-RobinTelemetryFromFile 共享读（真实文件句柄，不 mock�
         } finally { $h.Dispose() }
     }
 
-    It '被 FileShare.None 独占：返回 $null 且不抛异常' {
+    It 'Held exclusively with FileShare.None: returns $null without throwing' {
         $work = New-Work
         $runId = 'abababab-1111-2222-3333-444444444444'
         $log = Write-RobotLog -Dir $work -RunId $runId
@@ -104,7 +104,7 @@ Describe 'Get-RobinTelemetryFromFile 共享读（真实文件句柄，不 mock�
         } finally { $h.Dispose() }
     }
 
-    It '正常可读：结果与改前一致（回归）' {
+    It 'Normally readable: the result matches the previous behavior (regression)' {
         $work = New-Work
         $runId = 'cdcdcdcd-1111-2222-3333-444444444444'
         $log = Write-RobotLog -Dir $work -RunId $runId
@@ -118,9 +118,9 @@ Describe 'Get-RobinTelemetryFromFile 共享读（真实文件句柄，不 mock�
     }
 }
 
-Describe 'Read-ChildResult 子进程结果解析' {
+Describe 'Read-ChildResult child process result parsing' {
 
-    It '正常 JSON：取最后一条 PAD_*_RESULT 行并解析' {
+    It 'Normal JSON: takes the last PAD_*_RESULT line and parses it' {
         $lines = @('[pad-sync] 开始运行', 'PAD_SYNC_RESULT={"ok":true,"status":"success","stage":"done"}')
         $r = Read-ChildResult -Name 'SYNC' -Lines $lines
         $r.ok | Should Be $true
@@ -128,13 +128,13 @@ Describe 'Read-ChildResult 子进程结果解析' {
         $r.stage | Should Be 'done'
     }
 
-    It '末行是日志不是结果：仍取前面的结果行；完全没有结果行返回 $null' {
+    It 'When the last line is a log line rather than a result: the earlier result line is still used; no result line at all returns $null' {
         $lines = @('PAD_SYNC_RESULT={"ok":true,"status":"success"}', '[pad-sync] 收尾日志')
         (Read-ChildResult -Name 'SYNC' -Lines $lines -Logger { param($m) }).ok | Should Be $true
         (Read-ChildResult -Name 'SYNC' -Lines @('只有日志，没有结果') -Logger { param($m) }) | Should Be $null
     }
 
-    It 'JSON 损坏：返回 $null 且不抛异常' {
+    It 'Corrupted JSON: returns $null without throwing' {
         $threw = $false
         $r = $null
         try {
@@ -145,48 +145,48 @@ Describe 'Read-ChildResult 子进程结果解析' {
     }
 }
 
-Describe 'Get-AdmitGateDecision 准入 fail-closed' {
+Describe 'Get-AdmitGateDecision admission fail-closed' {
 
-    It '脚本缺失：拒绝，reason=script-missing' {
+    It 'Missing script: denied, reason=script-missing' {
         $d = Get-AdmitGateDecision -ExitCode 0 -Output '' -ScriptPath (Join-Path $TestDrive 'nope.ps1')
         $d.allow | Should Be $false
         $d.reason | Should Be 'script-missing'
     }
 
-    It '非零退出：拒绝，reason=execution-failed' {
+    It 'Non-zero exit: denied, reason=execution-failed' {
         $d = Get-AdmitGateDecision -ExitCode 2 -Output '[pad-admit] 待批准' -ScriptPath $PSCommandPath
         $d.allow | Should Be $false
         $d.reason | Should Be 'execution-failed'
     }
 
-    It '空输出 / 乱码：拒绝，reason=unparsable' {
+    It 'Empty or garbled output: denied, reason=unparsable' {
         $d = Get-AdmitGateDecision -ExitCode 0 -Output 'PAD_ADMIT_RESULT={坏掉的 JSON' -ScriptPath $PSCommandPath
         $d.allow | Should Be $false
         $d.reason | Should Be 'unparsable'
         (Get-AdmitGateDecision -ExitCode 0 -Output '' -ScriptPath $PSCommandPath).reason | Should Be 'unparsable'
     }
 
-    It '正常通过（fail=0 / ask=0 / pass>0）：放行' {
+    It 'Normal pass (fail=0 / ask=0 / pass>0): allowed' {
         $json = '{"summary":{"pass":5,"warn":0,"ask":0,"fail":0}}'
         $d = Get-AdmitGateDecision -ExitCode 0 -Output "PAD_ADMIT_RESULT=$json" -ScriptPath $PSCommandPath
         $d.allow | Should Be $true
         $d.reason | Should Be 'passed'
     }
 
-    It '仅 warn：放行（与既有语义一致）' {
+    It 'Warnings only: allowed (consistent with the existing semantics)' {
         $json = '{"summary":{"pass":3,"warn":2,"ask":0,"fail":0}}'
         $d = Get-AdmitGateDecision -ExitCode 0 -Output "PAD_ADMIT_RESULT=$json" -ScriptPath $PSCommandPath
         $d.allow | Should Be $true
     }
 
-    It '存在 fail 或 ask：拒绝' {
+    It 'Any fail or ask present: denied' {
         $fail = '{"summary":{"pass":2,"warn":0,"ask":0,"fail":1}}'
         (Get-AdmitGateDecision -ExitCode 0 -Output "PAD_ADMIT_RESULT=$fail" -ScriptPath $PSCommandPath).reason | Should Be 'checks-failed'
         $ask = '{"summary":{"pass":2,"warn":0,"ask":1,"fail":0}}'
         (Get-AdmitGateDecision -ExitCode 0 -Output "PAD_ADMIT_RESULT=$ask" -ScriptPath $PSCommandPath).allow | Should Be $false
     }
 
-    It '没有任何通过项（pass=0）：拒绝，reason=no-pass' {
+    It 'No passing checks at all (pass=0): denied, reason=no-pass' {
         $json = '{"summary":{"pass":0,"warn":0,"ask":0,"fail":0}}'
         $d = Get-AdmitGateDecision -ExitCode 0 -Output "PAD_ADMIT_RESULT=$json" -ScriptPath $PSCommandPath
         $d.allow | Should Be $false
@@ -194,9 +194,9 @@ Describe 'Get-AdmitGateDecision 准入 fail-closed' {
     }
 }
 
-Describe 'Get-PadConsoleRunOutcome 按 runId 取证' {
+Describe 'Get-PadConsoleRunOutcome evidence lookup by runId' {
 
-    It 'Console 成功事件 → Succeeded' {
+    It 'Console success event → Succeeded' {
         $work = New-Work
         $runId = 'aaaaaaaa-1111-2222-3333-444444444444'
         $lines = @(
@@ -211,7 +211,7 @@ Describe 'Get-PadConsoleRunOutcome 按 runId 取证' {
         $r.logPath | Should Be $log
     }
 
-    It 'Console 异常事件 → Failed' {
+    It 'Console exception event → Failed' {
         $work = New-Work
         $runId = 'bbbbbbbb-1111-2222-3333-444444444444'
         $log = Join-Path $work '2026-11-04-01-59-PadConsole.log'
@@ -220,7 +220,7 @@ Describe 'Get-PadConsoleRunOutcome 按 runId 取证' {
         (Get-PadConsoleRunOutcome -RunId $runId -DataCollectionDir $work).outcome | Should Be 'Failed'
     }
 
-    It '没有该 runId 的任何事件 → Unknown（未知不等于失败）' {
+    It 'No events at all for that runId → Unknown (unknown is not failure)' {
         $work = New-Work
         $log = Join-Path $work '2026-11-04-02-00-PadConsole.log'
         [IO.File]::WriteAllText($log, '{"event":"flow.run.success","runId":"cccccccc-1111-2222-3333-444444444444"}',
@@ -228,15 +228,15 @@ Describe 'Get-PadConsoleRunOutcome 按 runId 取证' {
         (Get-PadConsoleRunOutcome -RunId 'dddddddd-1111-2222-3333-444444444444' -DataCollectionDir $work).outcome | Should Be 'Unknown'
     }
 
-    It '目录不存在：返回 $null' {
+    It 'Missing directory: returns $null' {
         (Get-PadConsoleRunOutcome -RunId 'eeeeeeee-1111-2222-3333-444444444444' `
             -DataCollectionDir (Join-Path $TestDrive 'nope')) | Should Be $null
     }
 }
 
-Describe 'Get-PadConsoleRunOutcome 共享读（真实文件句柄，不 mock）' {
+Describe 'Get-PadConsoleRunOutcome shared read (real file handles, no mocks)' {
 
-    It 'Actions.log 与 PadConsole.log 同时被写句柄占用：仍能读到成功事件' {
+    It 'Actions.log and PadConsole.log both held by write handles: the success event can still be read' {
         $work = New-Work
         $runId = 'ffffffff-1111-2222-3333-444444444444'
         $act = Join-Path $work 'Actions.log'
@@ -260,7 +260,7 @@ Describe 'Get-PadConsoleRunOutcome 共享读（真实文件句柄，不 mock）'
         }
     }
 
-    It '日志完全读不到：Unknown + 可读 warning，且不抛异常' {
+    It 'A completely unreadable log: Unknown plus a readable warning, and no exception thrown' {
         $work = New-Work
         $runId = 'abababab-1111-2222-3333-444444444444'
         $log = Join-Path $work '2026-11-04-03-47-PadConsole.log'
@@ -279,7 +279,7 @@ Describe 'Get-PadConsoleRunOutcome 共享读（真实文件句柄，不 mock）'
         }
     }
 
-    It '明确失败事件（同样在写句柄下）：仍判 Failed' {
+    It 'An explicit failure event (also under a write handle) is still judged Failed' {
         $work = New-Work
         $runId = 'cdcdcdcd-1111-2222-3333-444444444444'
         $log = Join-Path $work '2026-11-04-03-48-PadConsole.log'
@@ -296,18 +296,18 @@ Describe 'Get-PadConsoleRunOutcome 共享读（真实文件句柄，不 mock）'
     }
 }
 
-Describe 'New-RunManifestEntry 结果未知不误报失败' {
+Describe 'New-RunManifestEntry does not misreport an unknown result as failure' {
 
     Import-Module (Join-Path $PSScriptRoot '..\tools\pad-sync\PublishHistory.psm1') -Force
 
-    It 'ok=$null（未知）：manifest 保持 null，不写成 false' {
+    It 'ok=$null (unknown): the manifest stays null and is not written as false' {
         $e = New-RunManifestEntry -FlowName 'F' -RunId 'r1' -Mode 'run-only' `
             -Ok $null -Stage 'done' -Status 'Unknown'
         $e.ok | Should Be $null
         $e.status | Should Be 'Unknown'
     }
 
-    It 'ok=$true / $false 保持布尔语义' {
+    It 'ok=$true / $false keep their boolean semantics' {
         (New-RunManifestEntry -FlowName 'F' -RunId 'r2' -Mode 'run-only' -Ok $true -Stage 'done' -Status 'Succeeded').ok |
             Should Be $true
         (New-RunManifestEntry -FlowName 'F' -RunId 'r3' -Mode 'run-only' -Ok $false -Stage 'done' -Status 'Failed').ok |

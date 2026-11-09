@@ -1,6 +1,6 @@
 {
   "name": "<流程名>",
-  "description": "触发声明断言用：schedule 触发 + assisted=true + 一个需人工确认的节点（中途有人确认）",
+  "description": "For trigger assertion: schedule trigger with assisted=true plus a node requiring manual confirmation (attended mid-run)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-trigger-assisted",
@@ -15,7 +15,7 @@
       "id": "1",
       "type": "dialog.confirm",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
-      "label": "人工确认",
+      "label": "Manual confirmation",
       "params": {},
       "outputs": [],
       "next": [],

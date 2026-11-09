@@ -1,6 +1,6 @@
 {
   "name": "archive-csv-files",
-  "description": "把下载目录里的 CSV 逐个移动到归档目录（合成样例，用于结构评估）",
+  "description": "Move each CSV from the downloads directory into the archive directory one by one (synthetic sample for structural evaluation)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-sample-foreach-archive",
@@ -15,13 +15,13 @@
   ],
   "edges": [
     { "from": "1", "to": "2" },
-    { "from": "2", "to": "3", "label": "循环体" },
-    { "from": "2", "to": "4", "label": "结束循环" }
+    { "from": "2", "to": "3", "label": "loop body" },
+    { "from": "2", "to": "4", "label": "end loop" }
   ],
   "nodes": [
     {
       "id": "1",
-      "label": "列出待归档的 CSV",
+      "label": "List CSVs to archive",
       "type": "action",
       "pad_hint": "Folder.GetFiles",
       "params": {
@@ -38,7 +38,7 @@
     },
     {
       "id": "2",
-      "label": "逐个归档",
+      "label": "Archive each file",
       "type": "loop",
       "pad_hint": "LOOP",
       "loop": { "kind": "foreach", "item": "Item", "list": "{{1.CsvFiles}}", "body": ["3"] },
@@ -49,7 +49,7 @@
     },
     {
       "id": "3",
-      "label": "移动到归档目录",
+      "label": "Move to archive directory",
       "type": "action",
       "pad_hint": "File.Move",
       "params": {
@@ -65,7 +65,7 @@
     },
     {
       "id": "4",
-      "label": "完成提示",
+      "label": "Done notification",
       "type": "action",
       "pad_hint": "Display.ShowMessageDialog.ShowMessage",
       "params": {

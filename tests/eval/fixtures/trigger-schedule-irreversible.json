@@ -1,6 +1,6 @@
 {
   "name": "<流程名>",
-  "description": "触发声明断言用：schedule 触发 + 一个后果不可回退的节点（可逆性反例）",
+  "description": "For trigger assertion: schedule trigger plus one node whose effect cannot be reverted (reversibility counterexample)",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-trigger-fixture",
@@ -14,7 +14,7 @@
       "id": "43",
       "type": "script.run",
       "pad_hint": "Scripting.RunDOSCommand.RunDOSCommand",
-      "label": "过账提交",
+      "label": "Submit posting",
       "params": {},
       "outputs": [],
       "next": [],

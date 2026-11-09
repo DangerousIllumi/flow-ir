@@ -261,7 +261,7 @@ if (flow.variables && flow.variables.length) {
       definedVars.add(v.name);
     } else {
       // 无默认值：生成注释提醒
-      lines.push(`# TODO: 变量 ${v.name}（${v.type}）无默认值，请在 PAD 中设为输入变量或补值`);
+      lines.push(`# TODO: variable ${v.name} (${v.type}) has no default value; set it as an input variable in PAD or supply a value`);
       warnings.push(`variable ${v.name} has no default value`);
     }
   }

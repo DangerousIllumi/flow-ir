@@ -19,9 +19,9 @@ function Read-Alerts([string]$Dir) {
         ForEach-Object { $_ | ConvertFrom-Json })
 }
 
-Describe 'PadAlerts 失败告警' {
+Describe 'PadAlerts failure alerts' {
 
-    It '失败分支写一条，字段齐全且文案带下一步' {
+    It 'failure branch writes one record with all fields and a next-step note' {
         $dir = New-AlertDir
         # 模拟触发失败：流程名解析不出 flowId
         $sync = [ordered]@{ triggerFailed = $true; triggerReason = 'identity-mismatch'; runId = 'run-001' }
@@ -43,7 +43,7 @@ Describe 'PadAlerts 失败告警' {
         $rec.note | Should Match 'Next step'
     }
 
-    It '同一 runId + 同一 kind 重复调用只写一条' {
+    It 'repeated calls with the same runId and kind write only one record' {
         $dir = New-AlertDir
         $sync = [ordered]@{ runTimeout = $true; runId = 'run-002' }
         $null = Write-RunAlert -FlowName '示例流程' -ExitCode 1 -Stage 'run' -Status 'RunTimeout' `
@@ -55,7 +55,7 @@ Describe 'PadAlerts 失败告警' {
         @(Read-Alerts $dir)[0].kind | Should Be 'run-timeout'
     }
 
-    It '成功不写：exit 0 且无失败标记时直接跳过' {
+    It 'success writes nothing: skipped on exit 0 without failure markers' {
         $dir = New-AlertDir
         $r = Write-RunAlert -FlowName '示例流程' -ExitCode 0 -Stage 'done' -Status 'Succeeded' `
             -SyncResult ([ordered]@{ runId = 'run-003' }) -Dir $dir -RunId 'run-003'
@@ -63,7 +63,7 @@ Describe 'PadAlerts 失败告警' {
         (Test-Path (Join-Path $dir 'alerts.jsonl')) | Should Be $false
     }
 
-    It '发布类失败用显式 kind，不留散字符串' {
+    It 'release failures use an explicit kind instead of a loose string' {
         $dir = New-AlertDir
         $ak = Get-AlertKindConstants
         $r = Write-RunAlert -FlowName '示例流程' -ExitCode 1 -Stage 'inject' -Status 'Failed' `
@@ -73,7 +73,7 @@ Describe 'PadAlerts 失败告警' {
         @(Read-Alerts $dir)[0].note | Should Match 'Next step'
     }
 
-    It '没有 runId 时按 flow + kind + stage + 当天去重' {
+    It 'without a runId, dedupe by flow + kind + stage + day' {
         $dir = New-AlertDir
         $ak = Get-AlertKindConstants
         $null = Write-RunAlert -FlowName '示例流程' -ExitCode 1 -Stage 'publish' -Status 'Failed' `
