@@ -39,15 +39,15 @@ function Test-TriggerPositiveInt($Value) {
 
 # 读取流程文件；FlowFile 缺失/不存在/不是 JSON 一律输入错误
 function Read-TriggerFlow([string]$FlowFile) {
-    if (-not $FlowFile) { throw (New-TriggerException 'TRIGGER_INPUT_MISSING' '未提供 -FlowFile') }
+    if (-not $FlowFile) { throw (New-TriggerException 'TRIGGER_INPUT_MISSING' 'missing -FlowFile') }
     if (-not (Test-Path -LiteralPath $FlowFile)) {
-        throw (New-TriggerException 'TRIGGER_INPUT_MISSING' "流程文件不存在：$FlowFile")
+        throw (New-TriggerException 'TRIGGER_INPUT_MISSING' "flow file not found: $FlowFile")
     }
     try {
         $text = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $FlowFile).Path, [Text.Encoding]::UTF8)
         return ($text | ConvertFrom-Json)
     } catch {
-        throw (New-TriggerException 'TRIGGER_INPUT_INVALID' "流程文件不是合法 JSON：$FlowFile（$($_.Exception.Message)）")
+        throw (New-TriggerException 'TRIGGER_INPUT_INVALID' "flow file is not valid JSON: $FlowFile ($($_.Exception.Message))")
     }
 }
 
@@ -61,20 +61,20 @@ function Get-TriggerSpec {
     $trg = $null
     if (Test-TriggerProp $flow 'trigger') { $trg = $flow.trigger }
     if ($null -eq $trg) {
-        throw (New-TriggerException 'TRIGGER_MISSING' '流程没有 trigger 声明，无法确定启动方式')
+        throw (New-TriggerException 'TRIGGER_MISSING' 'the flow has no trigger declaration; cannot determine how it starts')
     }
     if (-not (Test-TriggerProp $trg 'kind') -and (Test-TriggerProp $trg 'type')) {
-        throw (New-TriggerException 'TRIGGER_LEGACY_SHAPE' 'trigger 是 type/config 旧形状，请迁移到 kind')
+        throw (New-TriggerException 'TRIGGER_LEGACY_SHAPE' 'trigger uses the legacy type/config shape; migrate it to kind')
     }
     if (-not (Test-TriggerProp $trg 'kind') -or -not [string]$trg.kind) {
-        throw (New-TriggerException 'TRIGGER_INVALID' 'trigger.kind 缺失或不是字符串')
+        throw (New-TriggerException 'TRIGGER_INVALID' 'trigger.kind is missing or not a string')
     }
     $kind = [string]$trg.kind
     if ($script:TriggerReservedKinds -contains $kind) {
-        throw (New-TriggerException 'TRIGGER_KIND_UNSUPPORTED' "kind=$kind 是保留值，v1 没有对应注册器")
+        throw (New-TriggerException 'TRIGGER_KIND_UNSUPPORTED' "kind=$kind is a reserved value; v1 has no registrar for it")
     }
     if ($script:TriggerKinds -notcontains $kind) {
-        throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$kind 不在 manual/schedule/file")
+        throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$kind is not one of manual/schedule/file")
     }
 
     # 流程名：优先 PAD 显示名 pad_flow_name，其次内部 name，最后文件名。
@@ -108,73 +108,73 @@ function Get-TriggerSpec {
     if ($kind -eq 'manual') {
         foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file', 'assisted')) {
             if (Test-TriggerProp $trg $k) {
-                throw (New-TriggerException 'TRIGGER_INVALID' "manual 不允许声明 $k（声明了也没人执行）")
+                throw (New-TriggerException 'TRIGGER_INVALID' "manual must not declare $k (nothing would execute it)")
             }
         }
     } else {
         if ((Test-TriggerProp $trg 'time')) { $time = [string]$trg.time }
         if (-not $time -or $time -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
-            throw (New-TriggerException 'TRIGGER_INVALID' "time=$time（应为 HH:mm，如 09:00）")
+            throw (New-TriggerException 'TRIGGER_INVALID' "time=$time (expected HH:mm, e.g. 09:00)")
         }
         if ((Test-TriggerProp $trg 'days')) {
             $daysDeclared = $true
             $days = @($trg.days)
             $bad = @($days | Where-Object { $script:TriggerDays -notcontains [string]$_ })
             if ($days.Count -eq 0 -or $bad.Count -gt 0) {
-                throw (New-TriggerException 'TRIGGER_INVALID' 'days 必须是非空数组，取值 mon..sun')
+                throw (New-TriggerException 'TRIGGER_INVALID' 'days must be a non-empty array with values mon..sun')
             }
         }
         if ((Test-TriggerProp $trg 'gate')) { $gate = [string]$trg.gate }
         if ($script:TriggerGates -notcontains $gate) {
-            throw (New-TriggerException 'TRIGGER_INVALID' "gate=$gate 不在 none/workday/last-workday")
+            throw (New-TriggerException 'TRIGGER_INVALID' "gate=$gate is not one of none/workday/last-workday")
         }
         if ((Test-TriggerProp $trg 'timeout_sec')) {
             if (-not (Test-TriggerPositiveInt $trg.timeout_sec)) {
-                throw (New-TriggerException 'TRIGGER_INVALID' "timeout_sec=$($trg.timeout_sec)（应为正整数秒）")
+                throw (New-TriggerException 'TRIGGER_INVALID' "timeout_sec=$($trg.timeout_sec) (expected a positive integer number of seconds)")
             }
             $timeoutSec = [int]$trg.timeout_sec
         }
         if ($kind -eq 'file') {
             if (-not (Test-TriggerProp $trg 'file')) {
-                throw (New-TriggerException 'TRIGGER_INVALID' 'file 触发必须带 file 对象')
+                throw (New-TriggerException 'TRIGGER_INVALID' 'file trigger requires a file object')
             }
             $f = $trg.file
             if (Test-TriggerProp $f 'dir') { $fileDir = [string]$f.dir }
             if (-not $fileDir) {
-                throw (New-TriggerException 'TRIGGER_INVALID' 'file.dir 必填')
+                throw (New-TriggerException 'TRIGGER_INVALID' 'file.dir is required')
             }
             # 只接受配置引用：字面路径在别的机器上无法复用，注册时也解析不了
             if ($fileDir -notmatch '^\{\{config\.(\w+)\}\}$') {
-                throw (New-TriggerException 'TRIGGER_PATH_LITERAL' "file.dir 必须是 {{config.<KEY>}} 引用：$fileDir")
+                throw (New-TriggerException 'TRIGGER_PATH_LITERAL' "file.dir must be a {{config.<KEY>}} reference: $fileDir")
             }
             if (Test-TriggerProp $f 'pattern') { $filePattern = [string]$f.pattern }
             if (-not $filePattern -or $filePattern.Trim().Length -eq 0) {
-                throw (New-TriggerException 'TRIGGER_INVALID' 'file.pattern 必填且不能为空')
+                throw (New-TriggerException 'TRIGGER_INVALID' 'file.pattern is required and must not be empty')
             }
             if (Test-TriggerProp $f 'poll_sec') {
                 if (-not (Test-TriggerPositiveInt $f.poll_sec)) {
-                    throw (New-TriggerException 'TRIGGER_INVALID' "file.poll_sec=$($f.poll_sec)（应为正整数秒）")
+                    throw (New-TriggerException 'TRIGGER_INVALID' "file.poll_sec=$($f.poll_sec) (expected a positive integer number of seconds)")
                 }
                 $filePollSec = [int]$f.poll_sec
             }
             if ($filePollSec -lt 15) {
-                throw (New-TriggerException 'TRIGGER_INVALID' "file.poll_sec=$filePollSec 低于下限 15 秒")
+                throw (New-TriggerException 'TRIGGER_INVALID' "file.poll_sec=$filePollSec is below the 15s minimum")
             }
             if (Test-TriggerProp $f 'settle_sec') {
                 if (-not (Test-TriggerPositiveInt $f.settle_sec)) {
-                    throw (New-TriggerException 'TRIGGER_INVALID' "file.settle_sec=$($f.settle_sec)（应为正整数秒）")
+                    throw (New-TriggerException 'TRIGGER_INVALID' "file.settle_sec=$($f.settle_sec) (expected a positive integer number of seconds)")
                 }
                 $fileSettleSec = [int]$f.settle_sec
             }
             if (Test-TriggerProp $f 'max_wait_sec') {
                 if (-not (Test-TriggerPositiveInt $f.max_wait_sec)) {
-                    throw (New-TriggerException 'TRIGGER_INVALID' "file.max_wait_sec=$($f.max_wait_sec)（应为正整数秒）")
+                    throw (New-TriggerException 'TRIGGER_INVALID' "file.max_wait_sec=$($f.max_wait_sec) (expected a positive integer number of seconds)")
                 }
                 $fileMaxWaitSec = [int]$f.max_wait_sec
             }
             if (Test-TriggerProp $f 'once_per_file') {
                 if (-not ($f.once_per_file -is [bool])) {
-                    throw (New-TriggerException 'TRIGGER_INVALID' 'file.once_per_file 必须是 true/false')
+                    throw (New-TriggerException 'TRIGGER_INVALID' 'file.once_per_file must be true/false')
                 }
                 $fileOncePerFile = [bool]$f.once_per_file
             }
@@ -182,12 +182,12 @@ function Get-TriggerSpec {
         # assisted：到点自动启动、中途有人确认；必须显式声明 timeout_sec，没人点时靠超时告警兜底
         if (Test-TriggerProp $trg 'assisted') {
             if (-not ($trg.assisted -is [bool])) {
-                throw (New-TriggerException 'TRIGGER_INVALID' "assisted=$($trg.assisted)（应为 true/false）")
+                throw (New-TriggerException 'TRIGGER_INVALID' "assisted=$($trg.assisted) (expected true/false)")
             }
             $assisted = [bool]$trg.assisted
             if ($assisted -and -not (Test-TriggerProp $trg 'timeout_sec')) {
                 throw (New-TriggerException 'TRIGGER_ASSISTED_NO_TIMEOUT' `
-                    'assisted=true 必须显式声明 timeout_sec（没人点确认时靠超时告警兜底）')
+                    'assisted=true requires an explicit timeout_sec (the timeout alert is the fallback when nobody confirms)')
             }
         }
         # 无人值守触发遇到人工确认节点是硬矛盾；显式 assisted=true 表示中途有人确认，放行
@@ -196,7 +196,7 @@ function Get-TriggerSpec {
         })
         if ($confirm.Count -gt 0 -and -not $assisted) {
             throw (New-TriggerException 'TRIGGER_UNATTENDED_CONFIRM' `
-                ("无人值守触发但节点需要人工确认：" + (@($confirm | ForEach-Object { $_.id }) -join ',')))
+                ("unattended trigger but nodes require manual confirmation: " + (@($confirm | ForEach-Object { $_.id }) -join ',')))
         }
         # 可逆性收窄：与幂等性是两个正交的轴。
         #   idempotent = 同一输入重跑是否收敛（重跑安全）
@@ -210,8 +210,8 @@ function Get-TriggerSpec {
             if (Test-TriggerProp $n 'reversibility_note') { $note = [string]$n.reversibility_note }
             $triggerWarnings += [ordered]@{
                 code     = 'TRIGGER_UNATTENDED_IRREVERSIBLE'
-                message  = "无人值守触发但节点 $($n.id) 后果不可回退（reversible=false）"
-                evidence = @("节点 $($n.id) reversible=false" + $(if ($note) { "：$note" } else { '' }))
+                message  = "unattended trigger but node $($n.id) has irreversible consequences (reversible=false)"
+                evidence = @("node $($n.id) reversible=false" + $(if ($note) { ": $note" } else { '' }))
             }
         }
         # idempotent=false 却没声明 reversible：提示补声明，不默认填充
@@ -222,8 +222,8 @@ function Get-TriggerSpec {
         foreach ($n in $missingRev) {
             $triggerWarnings += [ordered]@{
                 code     = 'TRIGGER_MISSING_REVERSIBILITY'
-                message  = "节点 $($n.id) idempotent=false 但未声明 reversible"
-                evidence = @("节点 $($n.id) idempotent=false，reversible 未声明")
+                message  = "node $($n.id) idempotent=false but reversible is not declared"
+                evidence = @("node $($n.id) idempotent=false; reversible not declared")
             }
         }
     }
@@ -241,7 +241,7 @@ function Get-TriggerSpec {
         if ((Test-TriggerProp $trg 'task_name')) {
             $taskName = [string]$trg.task_name
             if ($taskName -notmatch '^[A-Za-z0-9._-]{1,64}$') {
-                throw (New-TriggerException 'TRIGGER_INVALID' "task_name=$taskName 不匹配 ^[A-Za-z0-9._-]{1,64}$")
+                throw (New-TriggerException 'TRIGGER_INVALID' "task_name=$taskName does not match ^[A-Za-z0-9._-]{1,64}$")
             }
         }
         if (-not $taskName) { $taskName = Get-ScheduleTaskName $flowName }
@@ -311,14 +311,14 @@ function Resolve-TriggerRuntimeConfigPath {
     param([string]$RuntimeConfigPath)
     if ($RuntimeConfigPath) {
         if (-not (Test-Path -LiteralPath $RuntimeConfigPath)) {
-            throw (New-TriggerException 'CONFIG_MISSING' "运行时配置不存在：$RuntimeConfigPath")
+            throw (New-TriggerException 'CONFIG_MISSING' "runtime config not found: $RuntimeConfigPath")
         }
         return (Resolve-Path -LiteralPath $RuntimeConfigPath).Path
     }
     $candidate = Join-Path $moduleRepo 'business\config\runtime.json'
     if (-not (Test-Path -LiteralPath $candidate)) {
         throw (New-TriggerException 'CONFIG_MISSING' `
-            '未提供 -RuntimeConfigPath，且仓库内没有 business\config\runtime.json；请显式指定运行时配置')
+            'missing -RuntimeConfigPath and the repository has no business\config\runtime.json; specify the runtime config explicitly')
     }
     return $candidate
 }
@@ -329,11 +329,11 @@ function Resolve-TriggerRuntimeConfig {
     try {
         $cfg = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json
     } catch {
-        throw (New-TriggerException 'CONFIG_INVALID' "运行时配置不是合法 JSON：$path（$($_.Exception.Message)）")
+        throw (New-TriggerException 'CONFIG_INVALID' "runtime config is not valid JSON: $path ($($_.Exception.Message))")
     }
     foreach ($k in @('PadSyncPath', 'PythonExe', 'CalendarPath', 'WorkdayScript', 'RunTimeoutSec')) {
         if (-not (Test-TriggerProp $cfg $k) -or -not [string]$cfg.$k) {
-            throw (New-TriggerException 'CONFIG_MISSING' "运行时配置缺少 $k（$path）")
+            throw (New-TriggerException 'CONFIG_MISSING' "runtime config is missing $k ($path)")
         }
     }
     return $cfg
@@ -395,19 +395,19 @@ function Test-TriggerTaskMatch {
 function Assert-TriggerReadback {
     param($Task, $ActionSpec, [string]$SpecHash, [string]$TaskName)
     if (-not $Task) {
-        throw (New-TriggerException 'TRIGGER_DRIFT' "注册后回读不到任务：$TaskName")
+        throw (New-TriggerException 'TRIGGER_DRIFT' "task not found on readback after registration: $TaskName")
     }
     if (-not (Test-TriggerTaskMatch $Task $ActionSpec $SpecHash)) {
-        throw (New-TriggerException 'TRIGGER_DRIFT' "回读校验失败：任务描述 hash 或动作参数与声明不一致（$TaskName）")
+        throw (New-TriggerException 'TRIGGER_DRIFT' "readback check failed: the task description hash or action arguments disagree with the declaration ($TaskName)")
     }
 }
 
 function Get-TriggerSummary($Spec) {
-    if ($Spec.kind -eq 'manual') { return 'manual（手工或外部链接触发，无需注册）' }
+    if ($Spec.kind -eq 'manual') { return 'manual (started by hand or an external link; no registration needed)' }
     if ($Spec.kind -eq 'file') {
-        return "file $($Spec.fileDir)\$($Spec.filePattern)（$($Spec.time) 起守望 $($Spec.fileMaxWaitSec) 秒）"
+        return "file $($Spec.fileDir)\$($Spec.filePattern) (watching from $($Spec.time) for $($Spec.fileMaxWaitSec)s)"
     }
-    return "$($Spec.kind) $($Spec.time)（gate=$($Spec.gate)）"
+    return "$($Spec.kind) $($Spec.time) (gate=$($Spec.gate))"
 }
 
 # ---- file 分支的只读配置解析与目录探测 ----
@@ -417,26 +417,26 @@ function Get-TriggerSummary($Spec) {
 function Resolve-TriggerConfigRef {
     param([string]$Token, [string]$ConfigFile)
     if (-not $Token) {
-        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' 'file.dir 为空，无法解析')
+        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' 'file.dir is empty; cannot resolve it')
     }
     $m = [regex]::Match([string]$Token, '^\{\{config\.(\w+)\}\}$')
     if (-not $m.Success) {
-        throw (New-TriggerException 'TRIGGER_PATH_LITERAL' "file.dir 必须是 {{config.<KEY>}} 引用：$Token")
+        throw (New-TriggerException 'TRIGGER_PATH_LITERAL' "file.dir must be a {{config.<KEY>}} reference: $Token")
     }
     $key = $m.Groups[1].Value
     if (-not $ConfigFile) {
-        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "未提供 -ConfigFile，无法解析 {{config.$key}}")
+        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "missing -ConfigFile; cannot resolve {{config.$key}}")
     }
     if (-not (Test-Path -LiteralPath $ConfigFile)) {
-        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "配置文件不存在：$ConfigFile")
+        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "config file not found: $ConfigFile")
     }
     try {
         $cfg = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $ConfigFile).Path, [Text.Encoding]::UTF8) | ConvertFrom-Json
     } catch {
-        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "配置文件不是合法 JSON：$ConfigFile（$($_.Exception.Message)）")
+        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "config file is not valid JSON: $ConfigFile ($($_.Exception.Message))")
     }
     if (-not (Test-TriggerProp $cfg $key) -or -not [string]$cfg.$key) {
-        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "配置里没有可用键 $key（$ConfigFile）")
+        throw (New-TriggerException 'TRIGGER_CONFIG_UNRESOLVED' "config has no usable key $key ($ConfigFile)")
     }
     return [string]$cfg.$key
 }
@@ -445,12 +445,12 @@ function Resolve-TriggerConfigRef {
 function Get-TriggerFileCandidates {
     param([string]$Dir, [string]$Pattern)
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) {
-        throw (New-TriggerException 'TRIGGER_FILE_DIR_UNREADABLE' "监听目录不存在：$Dir")
+        throw (New-TriggerException 'TRIGGER_FILE_DIR_UNREADABLE' "watch directory not found: $Dir")
     }
     try {
         return @(Get-ChildItem -LiteralPath $Dir -Filter $Pattern -File -ErrorAction Stop)
     } catch {
-        throw (New-TriggerException 'TRIGGER_FILE_DIR_UNREADABLE' "监听目录不可读：$Dir（$($_.Exception.Message)）")
+        throw (New-TriggerException 'TRIGGER_FILE_DIR_UNREADABLE' "watch directory is unreadable: $Dir ($($_.Exception.Message))")
     }
 }
 
@@ -513,7 +513,7 @@ function Read-TriggerLedger([string]$Path) {
     try {
         $json = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json
     } catch {
-        throw (New-TriggerException 'TRIGGER_LEDGER_INVALID' "状态账本不是合法 JSON：$Path（$($_.Exception.Message)）")
+        throw (New-TriggerException 'TRIGGER_LEDGER_INVALID' "state ledger is not valid JSON: $Path ($($_.Exception.Message))")
     }
     if (-not (Test-TriggerProp $json 'keys')) { return @() }
     return @($json.keys | ForEach-Object { [string]$_ })
@@ -571,7 +571,7 @@ function Register-ScheduleTrigger {
             ok = $true; action = 'register'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = 'planned'; dryRun = $true
             description = $description; exe = $actionSpec.exe; args = $actionSpec.args
-            evidence = @('DryRun：未写计划任务')
+            evidence = @('DryRun: scheduled task not written')
         }
     }
 
@@ -580,7 +580,7 @@ function Register-ScheduleTrigger {
         return [ordered]@{
             ok = $true; action = 'register'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = 'unchanged'; dryRun = $false
-            evidence = @('已注册且 specHash 一致，未写系统')
+            evidence = @('already registered with a matching specHash; nothing written')
         }
     }
     $changed = $(if ($existing) { 'updated' } else { 'created' })
@@ -599,12 +599,12 @@ function Register-ScheduleTrigger {
         Assert-TriggerReadback -Task $task -ActionSpec $actionSpec -SpecHash $hash -TaskName $Spec.taskName
         $info = Get-ScheduledTaskInfo -TaskName $Spec.taskName
         if (-not $info.NextRunTime) {
-            throw (New-TriggerException 'TRIGGER_DRIFT' "任务已注册但没有下次触发时间（$($Spec.taskName)）")
+            throw (New-TriggerException 'TRIGGER_DRIFT' "task is registered but has no next run time ($($Spec.taskName))")
         }
         return [ordered]@{
             ok = $true; action = 'register'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = $changed; dryRun = $false
-            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('回读校验通过')
+            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed')
         }
     } catch {
         # 注册/回读失败：硬失败并写告警，不做“继续部署”的降级
@@ -628,14 +628,14 @@ function Test-ScheduleTrigger {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; status = 'not-registered'
-            code = 'TRIGGER_NOT_REGISTERED'; message = "本机找不到计划任务 $($Spec.taskName)"
+            code = 'TRIGGER_NOT_REGISTERED'; message = "scheduled task $($Spec.taskName) not found on this machine"
         }
     }
     if (-not (Test-TriggerTaskMatch $task $actionSpec $hash -IgnoreAllowProd)) {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; status = 'drift'
-            code = 'TRIGGER_DRIFT'; message = "计划任务与声明不一致（$($Spec.taskName)）"
+            code = 'TRIGGER_DRIFT'; message = "scheduled task disagrees with the declaration ($($Spec.taskName))"
         }
     }
     $info = Get-ScheduledTaskInfo -TaskName $Spec.taskName
@@ -643,13 +643,13 @@ function Test-ScheduleTrigger {
         return [ordered]@{
             ok = $false; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; status = 'drift'
-            code = 'TRIGGER_DRIFT'; message = "任务没有下次触发时间（$($Spec.taskName)）"
+            code = 'TRIGGER_DRIFT'; message = "task has no next run time ($($Spec.taskName))"
         }
     }
     return [ordered]@{
         ok = $true; action = 'test'; kind = $Spec.kind; flow = $Spec.flowName
         taskName = $Spec.taskName; specHash = $hash; status = 'registered'
-        nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('描述 hash 与动作参数均一致')
+        nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('description hash and action arguments match')
     }
 }
 
@@ -660,21 +660,21 @@ function Unregister-ScheduleTrigger {
         return [ordered]@{
             ok = $true; action = 'unregister'; kind = $Spec.kind; flow = $Spec.flowName
             taskName = $Spec.taskName; changed = $(if ($task) { 'planned' } else { 'absent' }); dryRun = $true
-            evidence = @('DryRun：未删除计划任务')
+            evidence = @('DryRun: scheduled task not deleted')
         }
     }
     $task = Get-ScheduledTask -TaskName $Spec.taskName -ErrorAction SilentlyContinue
     if (-not $task) {
         return [ordered]@{
             ok = $true; action = 'unregister'; kind = $Spec.kind; flow = $Spec.flowName
-            taskName = $Spec.taskName; changed = 'absent'; dryRun = $false; evidence = @('任务本来就不存在')
+            taskName = $Spec.taskName; changed = 'absent'; dryRun = $false; evidence = @('the task did not exist')
         }
     }
     try {
         Unregister-ScheduledTask -TaskName $Spec.taskName -Confirm:$false -ErrorAction Stop
         return [ordered]@{
             ok = $true; action = 'unregister'; kind = $Spec.kind; flow = $Spec.flowName
-            taskName = $Spec.taskName; changed = 'removed'; dryRun = $false; evidence = @('已删除计划任务')
+            taskName = $Spec.taskName; changed = 'removed'; dryRun = $false; evidence = @('scheduled task deleted')
         }
     } catch {
         if (-not $_.Exception.Data.Contains('code')) {
@@ -714,13 +714,13 @@ function Register-FileTrigger {
         $dir = Resolve-TriggerConfigRef -Token $Spec.fileDir -ConfigFile $Spec.configFile
         $candidates = @(Get-TriggerFileCandidates -Dir $dir -Pattern $Spec.filePattern)
         if ($candidates.Count -ge 2) {
-            $names = (@($candidates | ForEach-Object { $_.Name }) -join '、')
+            $names = (@($candidates | ForEach-Object { $_.Name }) -join ', ')
             throw (New-TriggerException 'TRIGGER_FILE_AMBIGUOUS' `
-                "监听目录有 $($candidates.Count) 个候选文件（$names），不做'取最新'的猜测；请先清理目录")
+                "watch directory has $($candidates.Count) candidate files ($names); this will not guess 'latest', clean up the directory first")
         }
         $stateDir = Resolve-TriggerStateDir $runtime
         if (-not (Test-TriggerDirWritable $stateDir)) {
-            throw (New-TriggerException 'TRIGGER_STATE_DIR_UNWRITABLE' "状态账本目录不可写：$stateDir")
+            throw (New-TriggerException 'TRIGGER_STATE_DIR_UNWRITABLE' "state ledger directory is not writable: $stateDir")
         }
         $actionSpec = Get-FileWatchActionSpec -Spec $Spec `
             -PadTriggerPath (Join-Path $moduleHere 'pad-trigger.ps1') `
@@ -735,7 +735,7 @@ function Register-FileTrigger {
                 dir = $dir; pattern = $Spec.filePattern; description = $description
                 exe = $actionSpec.exe; args = $actionSpec.args
                 stateDir = $stateDir
-                evidence = @('DryRun：未写计划任务、未建状态目录')
+                evidence = @('DryRun: scheduled task not written, state directory not created')
             }
         }
 
@@ -748,7 +748,7 @@ function Register-FileTrigger {
             return [ordered]@{
                 ok = $true; action = 'register'; kind = 'file'; flow = $Spec.flowName
                 taskName = $Spec.taskName; specHash = $hash; changed = 'unchanged'; dryRun = $false
-                evidence = @('已注册且 specHash 一致，未写系统')
+                evidence = @('already registered with a matching specHash; nothing written')
             }
         }
         $changed = $(if ($existing) { 'updated' } else { 'created' })
@@ -767,13 +767,13 @@ function Register-FileTrigger {
         Assert-TriggerReadback -Task $task -ActionSpec $actionSpec -SpecHash $hash -TaskName $Spec.taskName
         $info = Get-ScheduledTaskInfo -TaskName $Spec.taskName
         if (-not $info.NextRunTime) {
-            throw (New-TriggerException 'TRIGGER_DRIFT' "任务已注册但没有下次触发时间（$($Spec.taskName)）")
+            throw (New-TriggerException 'TRIGGER_DRIFT' "task is registered but has no next run time ($($Spec.taskName))")
         }
         return [ordered]@{
             ok = $true; action = 'register'; kind = 'file'; flow = $Spec.flowName
             taskName = $Spec.taskName; specHash = $hash; changed = $changed; dryRun = $false
             dir = $dir; pattern = $Spec.filePattern; stateDir = $stateDir
-            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('回读校验通过')
+            nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed')
         }
     } catch {
         if (-not $_.Exception.Data.Contains('code')) {
@@ -802,16 +802,16 @@ function Test-FileTrigger {
     }
     if ($candidates.Count -ge 2) {
         $base.ok = $false; $base.status = 'ambiguous'; $base.code = 'TRIGGER_FILE_AMBIGUOUS'
-        $base.message = "监听目录有 $($candidates.Count) 个候选文件（$($candidateNames -join '、')），不做'取最新'的猜测"
+        $base.message = "watch directory has $($candidates.Count) candidate files ($($candidateNames -join ', ')); this will not guess 'latest'"
         return $base
     }
     if (-not (Test-TriggerDirWritable $stateDir)) {
         $base.ok = $false; $base.status = 'state-unwritable'; $base.code = 'TRIGGER_STATE_DIR_UNWRITABLE'
-        $base.message = "状态账本目录不可写：$stateDir"
+        $base.message = "state ledger directory is not writable: $stateDir"
         return $base
     }
     $base.ok = $true; $base.status = 'ready'
-    $base.message = "监听目录可读，候选 $($candidates.Count) 个；状态账本目录可写"
+    $base.message = "watch directory is readable with $($candidates.Count) candidate(s); the state ledger directory is writable"
     return $base
 }
 
@@ -831,7 +831,7 @@ function Invoke-TriggerWatch {
     )
     $spec = Get-TriggerSpec -FlowFile $FlowFile -ConfigFile $ConfigFile
     if ($spec.kind -ne 'file') {
-        throw (New-TriggerException 'TRIGGER_INVALID' "-Watch 只适用于 file 触发（当前 kind=$($spec.kind)）")
+        throw (New-TriggerException 'TRIGGER_INVALID' "-Watch only applies to file triggers (current kind=$($spec.kind))")
     }
     $runtime = Resolve-TriggerRuntimeConfig -RuntimeConfigPath $RuntimeConfigPath
     $dir = Resolve-TriggerConfigRef -Token $spec.fileDir -ConfigFile $ConfigFile
@@ -840,7 +840,7 @@ function Invoke-TriggerWatch {
         Write-RunAlert -FlowName $spec.flowName -ExitCode 1 -Stage 'trigger' -Status 'failed' `
             -Kind 'trigger-failed' `
             -Note ("状态账本目录不可写：$stateDir。下一步：修正目录权限或配置后人工重跑。") | Out-Null
-        throw (New-TriggerException 'TRIGGER_STATE_DIR_UNWRITABLE' "状态账本目录不可写：$stateDir")
+        throw (New-TriggerException 'TRIGGER_STATE_DIR_UNWRITABLE' "state ledger directory is not writable: $stateDir")
     }
     $ledger = Get-TriggerLedgerPath -Spec $spec -Runtime $runtime
     $padSyncPath = [string]$runtime.PadSyncPath
@@ -861,17 +861,17 @@ function Invoke-TriggerWatch {
         # 到点静默退出 0：没等到文件不算失败
         if ($elapsed -ge $spec.fileMaxWaitSec) {
             $base.ok = $true; $base.status = 'timeout'
-            $base.evidence = @("超过 max_wait_sec=$($spec.fileMaxWaitSec)，静默退出 0")
+            $base.evidence = @("exceeded max_wait_sec=$($spec.fileMaxWaitSec); exiting silently with 0")
             return $base
         }
         $files = @(Get-TriggerFileCandidates -Dir $dir -Pattern $spec.filePattern)
         if ($files.Count -ge 2) {
-            $names = (@($files | ForEach-Object { $_.Name }) -join '、')
+            $names = (@($files | ForEach-Object { $_.Name }) -join ', ')
             Write-RunAlert -FlowName $spec.flowName -ExitCode 1 -Stage 'trigger' -Status 'failed' `
                 -Kind 'trigger-failed' `
                 -Note ("监听目录出现 $($files.Count) 个候选文件（$names），不做取最新猜测，本次未触发。下一步：清理目录后人工重跑。") | Out-Null
             throw (New-TriggerException 'TRIGGER_FILE_AMBIGUOUS' `
-                "监听目录有 $($files.Count) 个候选文件（$names），不做'取最新'的猜测")
+                "watch directory has $($files.Count) candidate files ($names); this will not guess 'latest'")
         }
 
         if ($files.Count -eq 1) {
@@ -902,14 +902,14 @@ function Invoke-TriggerWatch {
                                 -Kind 'trigger-failed' `
                                 -Note ("file 触发后 pad-sync 退出码 $LASTEXITCODE。下一步：查看 PAD 控制台与运行日志后人工重跑，未自动重试。") | Out-Null
                             throw (New-TriggerException 'TRIGGER_WATCH_RUN_FAILED' `
-                                "pad-sync 退出码 $LASTEXITCODE（文件 $($f.Name)）")
+                                "pad-sync exit code $LASTEXITCODE (file $($f.Name))")
                         }
                         $base.ok = $true; $base.status = 'triggered'; $base.triggeredFileName = $f.Name
-                        $base.evidence = @("已触发：$($f.Name)（大小 $($f.Length)）", "账本：$ledger")
+                        $base.evidence = @("triggered: $($f.Name) (size $($f.Length))", "ledger: $ledger")
                         return $base
                     }
                     # 同一文件已触发过：不重复触发，继续等其它文件
-                    $note = "同一文件已触发过，跳过：$($f.Name)"
+                    $note = "this file was already triggered earlier; skipping: $($f.Name)"
                     if ($base.evidence -notcontains $note) { $base.evidence += $note }
                 }
             } else {
@@ -946,12 +946,12 @@ function Register-Trigger {
                 ok = $true; action = 'register'; kind = 'manual'; flow = $spec.flowName
                 taskName = $null; specHash = (Get-TriggerFingerprint -Spec $spec)
                 changed = 'unchanged'; dryRun = [bool]$DryRun
-                evidence = @('manual 触发无需注册')
+                evidence = @('manual triggers need no registration')
             }
         }
         'schedule' { return (Register-ScheduleTrigger -Spec $spec -RuntimeConfigPath $RuntimeConfigPath -DryRun:$DryRun -AllowProd:$AllowProd) }
         'file'     { return (Register-FileTrigger -Spec $spec -RuntimeConfigPath $RuntimeConfigPath -DryRun:$DryRun -AllowProd:$AllowProd) }
-        default    { throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$($spec.kind) 不在 manual/schedule/file") }
+        default    { throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$($spec.kind) is not one of manual/schedule/file") }
     }
 }
 
@@ -967,12 +967,12 @@ function Test-Trigger {
             return [ordered]@{
                 ok = $true; action = 'test'; kind = 'manual'; flow = $spec.flowName
                 taskName = $null; specHash = (Get-TriggerFingerprint -Spec $spec)
-                status = 'manual'; message = 'manual 触发无需注册'
+                status = 'manual'; message = 'manual triggers need no registration'
             }
         }
         'schedule' { return (Test-ScheduleTrigger -Spec $spec -RuntimeConfigPath $RuntimeConfigPath) }
         'file'     { return (Test-FileTrigger -Spec $spec -RuntimeConfigPath $RuntimeConfigPath) }
-        default    { throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$($spec.kind) 不在 manual/schedule/file") }
+        default    { throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$($spec.kind) is not one of manual/schedule/file") }
     }
 }
 
@@ -988,12 +988,12 @@ function Unregister-Trigger {
             return [ordered]@{
                 ok = $true; action = 'unregister'; kind = 'manual'; flow = $spec.flowName
                 taskName = $null; changed = 'absent'; dryRun = [bool]$DryRun
-                evidence = @('manual 触发无需注销')
+                evidence = @('manual triggers need no unregistration')
             }
         }
         'schedule' { return (Unregister-ScheduleTrigger -Spec $spec -DryRun:$DryRun) }
         'file'     { return (Unregister-FileTrigger -Spec $spec -DryRun:$DryRun) }
-        default    { throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$($spec.kind) 不在 manual/schedule/file") }
+        default    { throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$($spec.kind) is not one of manual/schedule/file") }
     }
 }
 

@@ -19,7 +19,7 @@ function Get-AcceptanceConfig {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) { throw "找不到 config 文件：$Path" }
+    if (-not (Test-Path -LiteralPath $Path)) { throw "config file not found: $Path" }
     $text = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $Path).Path, [Text.Encoding]::UTF8)
     $text = $text -replace "^\uFEFF", ''
     $obj = $text | ConvertFrom-Json
@@ -49,7 +49,7 @@ function Test-AcceptanceFile {
         [datetime]$Since = (Get-Date).AddHours(-6)
     )
 
-    if (-not (Test-Path -LiteralPath $Path)) { throw "找不到验收判据文件：$Path" }
+    if (-not (Test-Path -LiteralPath $Path)) { throw "acceptance spec not found: $Path" }
     $specText = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $Path).Path, [Text.Encoding]::UTF8)
     $specText = $specText -replace "^\uFEFF", ''
     $spec = $specText | ConvertFrom-Json
@@ -63,21 +63,21 @@ function Test-AcceptanceFile {
             if ($c.type -eq 'fileExists') {
                 $p = Resolve-AcceptancePath ([string]$c.path) $Config
                 if (-not (Test-Path -LiteralPath $p)) {
-                    if ($optional) { $item.skipped = $true; $item.detail = '文件不存在（可选项）' }
-                    else { $item.detail = "文件不存在：$p" }
+                    if ($optional) { $item.skipped = $true; $item.detail = 'file not found (optional)' }
+                    else { $item.detail = "file not found: $p" }
                 } else {
                     $file = Get-Item -LiteralPath $p
                     $min = 0
                     if ($null -ne $c.minBytes) { $min = [int]$c.minBytes }
                     if ($file.Length -lt $min) {
-                        $item.detail = "文件过小：$($file.Length) < $min 字节"
+                        $item.detail = "file too small: $($file.Length) < $min bytes"
                     } elseif ($c.match) {
                         $text = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
-                        if ($text -match [string]$c.match) { $item.ok = $true; $item.detail = "内容匹配 $($c.match)" }
-                        else { $item.detail = "内容不匹配 $($c.match)" }
+                        if ($text -match [string]$c.match) { $item.ok = $true; $item.detail = "content matches $($c.match)" }
+                        else { $item.detail = "content does not match $($c.match)" }
                     } else {
                         $item.ok = $true
-                        $item.detail = "存在（$($file.Length) 字节）"
+                        $item.detail = "present ($($file.Length) bytes)"
                     }
                 }
             }
@@ -91,12 +91,12 @@ function Test-AcceptanceFile {
                 if ($fresh.Count -gt 0) {
                     $newest = $fresh | Sort-Object LastWriteTime -Descending | Select-Object -First 1
                     $item.ok = $true
-                    $item.detail = "最新文件：$($newest.Name)（$($newest.LastWriteTime.ToString('HH:mm:ss'))）"
+                    $item.detail = "newest file: $($newest.Name) at $($newest.LastWriteTime.ToString('HH:mm:ss'))"
                 } elseif ($optional) {
                     $item.skipped = $true
-                    $item.detail = '本次运行未产生该文件（可选项）'
+                    $item.detail = 'this run produced no such file (optional)'
                 } else {
-                    $item.detail = "没有晚于 $($Since.ToString('HH:mm:ss')) 的文件：$dir\$($c.pattern)"
+                    $item.detail = "no file newer than $($Since.ToString('HH:mm:ss')): $dir\$($c.pattern)"
                 }
             }
             elseif ($c.type -eq 'pair') {
@@ -104,32 +104,32 @@ function Test-AcceptanceFile {
                 $exists = @($paths | Where-Object { Test-Path -LiteralPath $_ })
                 if ($exists.Count -eq $paths.Count) {
                     $item.ok = $true
-                    $item.detail = '两个文件同时存在'
+                    $item.detail = 'both files exist'
                 } elseif ($exists.Count -eq 0) {
-                    if ($optional) { $item.skipped = $true; $item.detail = '两个文件都不存在（可选项）' }
-                    else { $item.detail = '两个文件都不存在' }
+                    if ($optional) { $item.skipped = $true; $item.detail = 'neither file exists (optional)' }
+                    else { $item.detail = 'neither file exists' }
                 } else {
-                    $item.detail = "只存在 $($exists.Count)/$($paths.Count) 个文件"
+                    $item.detail = "only $($exists.Count)/$($paths.Count) files exist"
                 }
             }
             elseif ($c.type -eq 'json') {
                 $p = Resolve-AcceptancePath ([string]$c.path) $Config
                 if (-not (Test-Path -LiteralPath $p)) {
-                    if ($optional) { $item.skipped = $true; $item.detail = '文件不存在（可选项）' }
-                    else { $item.detail = "文件不存在：$p" }
+                    if ($optional) { $item.skipped = $true; $item.detail = 'file not found (optional)' }
+                    else { $item.detail = "file not found: $p" }
                 } else {
                     $obj = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8) | ConvertFrom-Json
                     $names = @($obj.PSObject.Properties.Name)
                     $missing = @($c.requiredKeys | Where-Object { $names -notcontains $_ })
-                    if ($missing.Count -eq 0) { $item.ok = $true; $item.detail = 'JSON 合法且键齐全' }
-                    else { $item.detail = "缺少键：$($missing -join ', ')" }
+                    if ($missing.Count -eq 0) { $item.ok = $true; $item.detail = 'valid JSON with all required keys' }
+                    else { $item.detail = "missing keys: $($missing -join ', ')" }
                 }
             }
             elseif ($c.type -eq 'jsonl') {
                 $p = Resolve-AcceptancePath ([string]$c.path) $Config
                 if (-not (Test-Path -LiteralPath $p)) {
-                    if ($optional) { $item.skipped = $true; $item.detail = '文件不存在（可选项）' }
-                    else { $item.detail = "文件不存在：$p" }
+                    if ($optional) { $item.skipped = $true; $item.detail = 'file not found (optional)' }
+                    else { $item.detail = "file not found: $p" }
                 } else {
                     $badLine = 0
                     $lineNo = 0
@@ -138,42 +138,42 @@ function Test-AcceptanceFile {
                         if (-not $line.Trim()) { continue }
                         try { [void]($line | ConvertFrom-Json) } catch { $badLine = $lineNo; break }
                     }
-                    if ($badLine -gt 0) { $item.detail = "第 $badLine 行不是合法 JSON" }
-                    else { $item.ok = $true; $item.detail = "共 $lineNo 行，全部合法" }
+                    if ($badLine -gt 0) { $item.detail = "line $badLine is not valid JSON" }
+                    else { $item.ok = $true; $item.detail = "all $lineNo lines are valid" }
                 }
             }
             elseif ($c.type -eq 'logState') {
                 # 读现成的 VBS 日志：按 firstLine / lastLine 取一行，先看 skip，再看 fail，最后看 pass
                 $p = Resolve-AcceptancePath ([string]$c.path) $Config
                 if (-not (Test-Path -LiteralPath $p)) {
-                    if ($optional) { $item.skipped = $true; $item.detail = '日志不存在（可选项）' }
-                    else { $item.detail = "日志不存在：$p" }
+                    if ($optional) { $item.skipped = $true; $item.detail = 'log not found (optional)' }
+                    else { $item.detail = "log not found: $p" }
                 } else {
                     $text = (Read-TextFileAuto $p).text
                     $lines = @($text -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
                     if ($lines.Count -eq 0) {
-                        $item.detail = '日志为空'
+                        $item.detail = 'log is empty'
                     } else {
                         $line = $(if ([string]$c.mode -eq 'lastLine') { $lines[-1] } else { $lines[0] })
                         if ($c.skip -and $line -match [string]$c.skip) {
                             $item.skipped = $true
-                            $item.detail = "状态为 $($c.skip)，不适用"
+                            $item.detail = "state is $($c.skip); not applicable"
                         } elseif ($c.fail -and $line -match [string]$c.fail) {
-                            $item.detail = "命中失败标记：$line"
+                            $item.detail = "failure marker hit: $line"
                         } elseif ($c.pass -and $line -match [string]$c.pass) {
                             $item.ok = $true
-                            $item.detail = "命中成功标记：$line"
+                            $item.detail = "success marker hit: $line"
                         } else {
-                            $item.detail = "日志行不匹配预期：$line"
+                            $item.detail = "log line does not match expectations: $line"
                         }
                     }
                 }
             }
             else {
-                $item.detail = "未知检查类型：$($c.type)"
+                $item.detail = "unknown check type: $($c.type)"
             }
         } catch {
-            $item.detail = "检查异常：$($_.Exception.Message)"
+            $item.detail = "check threw: $($_.Exception.Message)"
         }
 
         $checks += [pscustomobject]$item

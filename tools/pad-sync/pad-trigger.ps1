@@ -53,18 +53,18 @@ try {
     if ($Unregister) { $actions += 'unregister' }
     if ($Watch) { $actions += 'watch' }
     if ($actions.Count -ne 1) {
-        $ex = New-Object System.Exception('必须且只能指定一个动作：-Register / -Test / -Unregister / -Watch')
+        $ex = New-Object System.Exception('specify exactly one action: -Register / -Test / -Unregister / -Watch')
         $ex.Data['code'] = 'TRIGGER_INPUT_ACTION'
         throw $ex
     }
     # 守望是实时轮询，没有“演练”形态；要演练请用 -Register -DryRun
     if ($Watch -and $DryRun) {
-        $ex = New-Object System.Exception('-Watch 不能与 -DryRun 同时使用')
+        $ex = New-Object System.Exception('-Watch cannot be combined with -DryRun')
         $ex.Data['code'] = 'TRIGGER_INPUT_ACTION'
         throw $ex
     }
     if (-not $FlowFile) {
-        $ex = New-Object System.Exception('未提供 -FlowFile')
+        $ex = New-Object System.Exception('missing -FlowFile')
         $ex.Data['code'] = 'TRIGGER_INPUT_MISSING'
         throw $ex
     }
@@ -90,8 +90,8 @@ try {
     }
     foreach ($k in @($r.Keys)) { $result[$k] = $r[$k] }
     $exitCode = $(if ($r.ok) { 0 } else { 1 })
-    if (-not $r.ok) { Write-Host ("[trigger] {0} 未通过：{1} {2}" -f $action, $r.code, $r.message) }
-    else { Write-Host ("[trigger] {0} 成功：{1} {2}" -f $action, $result.kind, $result.taskName) }
+    if (-not $r.ok) { Write-Host ("[trigger] {0} failed: {1} {2}" -f $action, $r.code, $r.message) }
+    else { Write-Host ("[trigger] {0} succeeded: {1} {2}" -f $action, $result.kind, $result.taskName) }
 } catch {
     $code = 'TRIGGER_ERROR'
     if ($_.Exception.Data.Contains('code')) { $code = [string]$_.Exception.Data['code'] }
@@ -99,7 +99,7 @@ try {
     $result.code = $code
     $result.error = $_.Exception.Message
     $exitCode = $(if (Test-TriggerInputCode $code) { 2 } else { 1 })
-    Write-Host ("[trigger] 失败（{0}）：{1}" -f $code, $_.Exception.Message)
+    Write-Host ("[trigger] failed ({0}): {1}" -f $code, $_.Exception.Message)
 }
 
 # 末行必须是结果 JSON，便于调用方逐行解析

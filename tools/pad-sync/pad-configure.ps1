@@ -50,10 +50,10 @@ if (-not $NoMain) {
         if ($cfgCands.Count -eq 1) {
             $ConfigPath = $cfgCands[0].FullName
         } elseif ($cfgCands.Count -eq 0) {
-            throw "未提供 -ConfigPath，business\config 目录里也没有带 schema 的配置；请用 -ConfigPath 指定"
+            throw "missing -ConfigPath and business\config has no config with a matching schema; pass -ConfigPath"
         } else {
-            throw ("未提供 -ConfigPath，找到 $($cfgCands.Count) 个候选，请用 -ConfigPath 指定：" +
-                (($cfgCands | ForEach-Object { $_.Name }) -join '、'))
+            throw ("missing -ConfigPath; $($cfgCands.Count) candidates found, pass -ConfigPath explicitly: " +
+                (($cfgCands | ForEach-Object { $_.Name }) -join ', '))
         }
     }
     $stem = [IO.Path]::GetFileNameWithoutExtension([IO.Path]::GetFileNameWithoutExtension($ConfigPath))
@@ -70,11 +70,11 @@ Import-Module (Join-Path $here 'PadPreflight.psm1') -Force
 
 function Write-ProbeTable($checks) {
     Write-Host ''
-    Write-Host '[configure] 前置探查'
+    Write-Host '[configure] preflight probes'
     foreach ($c in $checks) {
-        $flag = if ($c.Ok) { 'OK  ' } else { '缺失' }
-        Write-Host ("  [{0}] {1}：{2}" -f $flag, $c.Name, $c.Detail)
-        if (-not $c.Ok -and $c.Hint) { Write-Host ("         → " + $c.Hint) }
+        $flag = if ($c.Ok) { 'OK  ' } else { 'MISSING' }
+        Write-Host ("  [{0}] {1}: {2}" -f $flag, $c.Name, $c.Detail)
+        if (-not $c.Ok -and $c.Hint) { Write-Host ("         -> " + $c.Hint) }
     }
     Write-Host ''
 }
@@ -137,25 +137,25 @@ function Invoke-ConfigureMain {
             $PadRoot = Join-Path $repoRoot 'pad'
         }
         if (-not $PadRoot) { $PadRoot = 'C:\PAD' }
-        Write-Host "[configure] PAD 根目录解析为：$PadRoot"
+        Write-Host "[configure] PAD root resolved to: $PadRoot"
     }
 
     if (-not $PythonExe) {
         $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
         if ($cmd) { $PythonExe = $cmd.Source }
     }
-    if (-not (Test-Path $ExamplePath)) { throw "E_EXAMPLE_CONFIG_MISSING: 找不到示例配置：$ExamplePath" }
-    if (-not (Test-Path $SchemaFile)) { throw "E_SCHEMA_MISSING: 找不到 schema：$SchemaFile" }
+    if (-not (Test-Path $ExamplePath)) { throw "E_EXAMPLE_CONFIG_MISSING: example config not found: $ExamplePath" }
+    if (-not (Test-Path $SchemaFile)) { throw "E_SCHEMA_MISSING: schema not found: $SchemaFile" }
 
     $checks = @()
     if ($SkipProbe -and -not $ProbeOnly) {
-        Write-Host '[configure] 已跳过前置探查（-SkipProbe），直接生成配置'
+        Write-Host '[configure] preflight probes skipped (-SkipProbe); generating the config directly'
     } else {
         if (-not $RequirementsFile) {
             # 需求声明按配置名派生（business\flows\<stem>.requirements.json），不再写死某个业务流程
             $RequirementsFile = Join-Path $repoRoot ("business\flows\{0}.requirements.json" -f $stem)
         }
-        if (-not (Test-Path $RequirementsFile)) { throw "找不到需求声明：$RequirementsFile" }
+        if (-not (Test-Path $RequirementsFile)) { throw "requirements declaration not found: $RequirementsFile" }
         $req = [IO.File]::ReadAllText($RequirementsFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $vars = @{ PAD_ROOT = $PadRoot; PYTHON_EXE = $PythonExe }
         $checks = Invoke-PreflightChecks -Requirements $req -Variables $vars
@@ -164,24 +164,24 @@ function Invoke-ConfigureMain {
 
     $missing = @($checks | Where-Object { -not $_.Ok })
     if ($ProbeOnly) {
-        if ($missing.Count -eq 0) { Write-Host '[configure] 前置检查全部通过'; return 0 }
-        Write-Host "[configure] 有 $($missing.Count) 项缺失，按上面的建议修复后重跑"
+        if ($missing.Count -eq 0) { Write-Host '[configure] all preflight checks passed'; return 0 }
+        Write-Host "[configure] $($missing.Count) item(s) missing; fix them as suggested above and rerun"
         return 1
     }
     if ($missing.Count -gt 0 -and -not $SkipProbe) {
-        Write-Host '[configure] 前置缺失，已中止生成配置（确认可离线填写时加 -SkipProbe）'
+        Write-Host '[configure] preflight failures; config generation aborted (add -SkipProbe to fill it in offline)'
         return 1
     }
 
     $defaults = [IO.File]::ReadAllText($ExamplePath, [Text.Encoding]::UTF8) | ConvertFrom-Json
     $answers = @{}
     if ($AnswersFile) {
-        if (-not (Test-Path $AnswersFile)) { throw "找不到答案文件：$AnswersFile" }
+        if (-not (Test-Path $AnswersFile)) { throw "answers file not found: $AnswersFile" }
         $obj = [IO.File]::ReadAllText($AnswersFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $obj.PSObject.Properties | ForEach-Object { $answers[$_.Name] = $_.Value }
     } elseif (-not $ProbeOnly) {
         # 交互模式：逐项给出默认值，回车即采用默认
-        Write-Host '[configure] INTERACTIVE_CONFIRM 逐项确认配置（直接回车 = 采用方括号内的默认值）'
+        Write-Host '[configure] INTERACTIVE_CONFIRM confirm each setting (press Enter to accept the value in brackets)'
         foreach ($p in $defaults.PSObject.Properties) {
             $def = [string]$p.Value
             if ($p.Name -eq 'PAD_ROOT' -and $PadRoot) { $def = $PadRoot }
@@ -197,8 +197,8 @@ function Invoke-ConfigureMain {
     $cfg = New-ConfiguredConfig -Defaults $defaults -Answers $answers -Discovered $discovered
 
     if ((Test-Path $ConfigPath) -and -not $Force) {
-        $ok = Read-Host "  $ConfigPath 已存在，覆盖吗？(y/N)"
-        if ($ok -notmatch '^(?i)y') { Write-Host '[configure] 已取消'; return 3 }
+        $ok = Read-Host "  $ConfigPath already exists; overwrite? (y/N)"
+        if ($ok -notmatch '^(?i)y') { Write-Host '[configure] cancelled'; return 3 }
     }
 
     $tmp = Join-Path $env:TEMP ('cfg_' + [guid]::NewGuid().ToString('N') + '.json')
@@ -206,13 +206,13 @@ function Invoke-ConfigureMain {
     $code = Invoke-ConfigValidation -ConfigFile $tmp -SchemaFile $SchemaFile
     if ($code -ne 0) {
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-        Write-Host '[configure] 配置未通过校验，未写入；请按上面的字段问题修正后重跑'
+        Write-Host '[configure] the config failed validation and was not written; fix the field problems above and rerun'
         return 2
     }
     Copy-Item $tmp $ConfigPath -Force
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    Write-Host "[configure] CONFIG_WRITTEN 配置已写入：$ConfigPath"
-    Write-Host '[configure] 下一步：.\pad-deploy.ps1 -DryRun 预览替换结果'
+    Write-Host "[configure] CONFIG_WRITTEN config written: $ConfigPath"
+    Write-Host '[configure] next: .\pad-deploy.ps1 -DryRun to preview the substitutions'
     return 0
 }
 

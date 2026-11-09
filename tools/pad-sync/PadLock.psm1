@@ -87,18 +87,18 @@ function Enter-PadRunLock {
             if ($script:Mutex.WaitOne(1000)) { break }
         } catch [System.Threading.AbandonedMutexException] {
             # 上一个持有者异常退出：锁已归本次所有，直接接管而不是当成残留死等
-            & $log '检测到上一次运行异常中断，已接管锁'
+            & $log 'detected an abnormal end of the previous run; lock taken over'
             break
         }
         $script:WaitedSec++
         if ($script:WaitedSec % 15 -eq 0) {
             $info = Get-PadLockInfo
             if ($info) {
-                $alive = if (Test-LockHolderAlive $info) { '仍存活' } else { '已退出（锁文件为残留）' }
-                & $log ("等待 PAD 空闲：已等 {0} 秒，持有者 {1}（pid {2}，{3}）" -f `
+                $alive = if (Test-LockHolderAlive $info) { 'still alive' } else { 'already exited (stale lock file)' }
+                & $log ("waiting for PAD: {0}s elapsed; held by {1} (pid {2}, {3})" -f `
                     $script:WaitedSec, $info.flow, $info.pid, $alive)
             } else {
-                & $log "等待 PAD 空闲：已等 $($script:WaitedSec) 秒"
+                & $log "waiting for PAD: $($script:WaitedSec)s elapsed"
             }
         }
         if ((Get-Date) -ge $deadline) {

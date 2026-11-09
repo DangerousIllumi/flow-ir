@@ -162,12 +162,12 @@ function Read-ChildResult {
         if ($line.StartsWith($prefix)) { $payload = $line.Substring($prefix.Length) }
     }
     if (-not $payload) {
-        & $log "未找到以 $prefix 开头的结果行"
+        & $log "no result line starting with $prefix found"
         return $null
     }
     try { return ($payload | ConvertFrom-Json) }
     catch {
-        & $log "结果 JSON 解析失败：$($_.Exception.Message)"
+        & $log "failed to parse the result JSON: $($_.Exception.Message)"
         return $null
     }
 }
@@ -256,7 +256,7 @@ function Get-PadConsoleRunOutcome {
     # 无任何证据且日志读不出来：留一条可读说明，供 pad-sync 写进 warning
     $note = $null
     if ($outcome -eq 'Unknown' -and $unreadableFile) {
-        $note = "Console 日志暂不可读（$unreadableFile），本次取证为 Unknown"
+        $note = "Console log is not readable yet ($unreadableFile); this run is recorded as Unknown"
     }
     return [ordered]@{
         outcome    = $outcome
@@ -285,7 +285,7 @@ function Get-AdmitGateDecision {
     if ($ScriptPath -and -not (Test-Path -LiteralPath $ScriptPath)) {
         return [ordered]@{
             allow = $false; reason = 'script-missing'
-            message = "准入脚本不存在：$ScriptPath"; summary = $null
+            message = "admit script not found: $ScriptPath"; summary = $null
         }
     }
 
@@ -298,12 +298,12 @@ function Get-AdmitGateDecision {
         if ($ExitCode -ne 0) {
             return [ordered]@{
                 allow = $false; reason = 'execution-failed'
-                message = "准入脚本执行失败（退出码 $ExitCode），未输出 PAD_ADMIT_RESULT"; summary = $null
+                message = "admit script failed (exit code $ExitCode) and printed no PAD_ADMIT_RESULT"; summary = $null
             }
         }
         return [ordered]@{
             allow = $false; reason = 'unparsable'
-            message = '准入脚本没有输出 PAD_ADMIT_RESULT，无法确认是否通过'; summary = $null
+            message = 'the admit script printed no PAD_ADMIT_RESULT; cannot confirm whether it passed'; summary = $null
         }
     }
 
@@ -312,7 +312,7 @@ function Get-AdmitGateDecision {
     if (-not $admit -or -not $admit.summary) {
         return [ordered]@{
             allow = $false; reason = 'unparsable'
-            message = '准入结果 JSON 无法解析或缺少 summary'; summary = $null
+            message = 'the admit result JSON cannot be parsed or lacks summary'; summary = $null
         }
     }
 
@@ -324,27 +324,27 @@ function Get-AdmitGateDecision {
     if ($ExitCode -ne 0) {
         return [ordered]@{
             allow = $false; reason = 'execution-failed'
-            message = "准入脚本退出码 $ExitCode（fail=$fail / ask=$ask / pass=$pass）"
+            message = "admit script exit code $ExitCode (fail=$fail / ask=$ask / pass=$pass)"
             summary = $summary
         }
     }
     if ($fail -gt 0 -or $ask -gt 0) {
         return [ordered]@{
             allow = $false; reason = 'checks-failed'
-            message = "准入未通过：失败 $fail / 待批 $ask"
+            message = "admit check failed: fail $fail / ask $ask"
             summary = $summary
         }
     }
     if ($pass -le 0) {
         return [ordered]@{
             allow = $false; reason = 'no-pass'
-            message = '准入没有任何通过项（pass=0），不能视为放行'
+            message = 'the admit check has no passing items (pass=0); it cannot be treated as a pass'
             summary = $summary
         }
     }
     return [ordered]@{
         allow = $true; reason = 'passed'
-        message = "准入通过：通过 $pass / 警告 $([int]$summary.warn)"
+        message = "admit check passed: pass $pass / warn $([int]$summary.warn)"
         summary = $summary
     }
 }

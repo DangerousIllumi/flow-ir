@@ -25,31 +25,31 @@ function Test-PadInstalled {
         if (-not (Test-Path (Join-Path $PadRoot $d))) { $missing += $d }
     }
     if ($missing.Count -eq 0) {
-        return New-Probe 'PAD 根目录' $true "$PadRoot（子目录齐全）"
+        return New-Probe 'PAD root' $true "$PadRoot (all required subdirectories present)"
     }
-    return New-Probe 'PAD 根目录' $false "$PadRoot 缺少：$($missing -join ', ')" `
-        "先安装/拷贝 PAD 部署包，或用 -PadRoot 指向正确的根目录"
+    return New-Probe 'PAD root' $false "$PadRoot is missing: $($missing -join ', ')" `
+        "Install or copy the PAD deployment package first, or point -PadRoot at the correct root directory"
 }
 
 # Python：可执行文件存在 + 能正常输出版本 + 能导入 openpyxl
 function Get-PythonProbe {
     param([Parameter(Mandatory = $true)][string]$PythonExe)
     if (-not (Test-Path $PythonExe)) {
-        return New-Probe 'Python' $false "找不到 $PythonExe" `
-            '安装 Python 3.x，或在 config 里把 PYTHON_EXE 指向 python.exe'
+        return New-Probe 'Python' $false "cannot find $PythonExe" `
+            'Install Python 3.x, or point PYTHON_EXE in the config at python.exe'
     }
     # 2>&1 把版本号（新版 Python 打到 stdout，旧版可能到 stderr）统一收进来
     $ver = (& $PythonExe --version 2>&1 | Out-String).Trim()
     if (-not $ver) {
-        return New-Probe 'Python' $false "$PythonExe 无法输出版本" `
-            '确认该路径是可执行的 python.exe（不是快捷方式或损坏文件）'
+        return New-Probe 'Python' $false "$PythonExe produced no version output" `
+            'Check that the path is an executable python.exe (not a shortcut or a corrupt file)'
     }
     $mod = (& $PythonExe -c 'import openpyxl; print(openpyxl.__version__)' 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
-        return New-Probe 'Python' $false "$ver，但缺少 openpyxl" `
-            "执行 `"$PythonExe`" -m pip install openpyxl pytest"
+        return New-Probe 'Python' $false "$ver, but openpyxl is missing" `
+            "Run `"$PythonExe`" -m pip install openpyxl pytest"
     }
-    return New-Probe 'Python' $true "$ver，openpyxl $mod"
+    return New-Probe 'Python' $true "$ver, openpyxl $mod"
 }
 
 # SAP GUI：SAP Logon 可执行文件是否存在（脚本开关无法从外部可靠读取，只做文件级检查）
@@ -58,18 +58,18 @@ function Get-SapGuiProbe {
     if (Test-Path $SapLogonPath) {
         return New-Probe 'SAP GUI' $true $SapLogonPath
     }
-    return New-Probe 'SAP GUI' $false "找不到 $SapLogonPath" `
-        '安装 SAP GUI；并在 SAP Logon 选项里启用「脚本」后重新登录'
+    return New-Probe 'SAP GUI' $false "cannot find $SapLogonPath" `
+        'Install SAP GUI, enable scripting in the SAP Logon options, then log in again'
 }
 
 # Outlook：按 Office 版本的注册表位置判断是否安装
 function Get-OutlookProbe {
     param([string[]]$OfficeKeys)
     foreach ($k in $OfficeKeys) {
-        if (Test-Path $k) { return New-Probe 'Outlook' $true "检测到 Office 注册表项：$k" }
+        if (Test-Path $k) { return New-Probe 'Outlook' $true "Office registry key found: $k" }
     }
-    return New-Probe 'Outlook' $false '未检测到 Outlook 安装' `
-        '安装 Office/Outlook，并先在 Outlook 里登录一次收发件邮箱'
+    return New-Probe 'Outlook' $false 'no Outlook installation detected' `
+        'Install Office/Outlook and sign in to the mailbox in Outlook once'
 }
 
 # 汇总探查：返回数组，调用方负责打印与退出码
@@ -130,7 +130,7 @@ function Invoke-PreflightChecks {
                 $baseName = [string]$c.base
                 if ($baseName -and $Variables.ContainsKey($baseName)) { $root = [string]$Variables[$baseName] }
                 if (-not $root) {
-                    $results += New-Probe $name $false "未指定 $baseName" $hint
+                    $results += New-Probe $name $false "$baseName is not specified" $hint
                     break
                 }
                 $results += Test-PadInstalled -PadRoot $root -RequiredDirs @($c.paths)
@@ -141,7 +141,7 @@ function Invoke-PreflightChecks {
                 $baseName = [string]$c.base
                 if ($baseName -and $Variables.ContainsKey($baseName)) { $root = [string]$Variables[$baseName] }
                 if (-not $root) {
-                    $results += New-Probe $name $false "未指定 $baseName" $hint
+                    $results += New-Probe $name $false "$baseName is not specified" $hint
                     break
                 }
                 $missing = @()
@@ -150,9 +150,9 @@ function Invoke-PreflightChecks {
                     if (-not (Test-Path -LiteralPath $full)) { $missing += $full }
                 }
                 if ($missing.Count -eq 0) {
-                    $results += New-Probe $name $true "文件齐全：$root"
+                    $results += New-Probe $name $true "all files present: $root"
                 } else {
-                    $results += New-Probe $name $false ('缺少文件：' + ($missing -join ' | ')) $hint
+                    $results += New-Probe $name $false ('missing files: ' + ($missing -join ' | ')) $hint
                 }
                 break
             }
@@ -171,8 +171,8 @@ function Invoke-PreflightChecks {
                         if ($LASTEXITCODE -ne 0) { $missingMods += $m }
                     }
                     if ($missingMods.Count -gt 0) {
-                        $probe = New-Probe $name $false "$($probe.Detail)，缺少模块：$($missingMods -join ', ')" `
-                            "执行 `"$exe`" -m pip install $($missingMods -join ' ')"
+                        $probe = New-Probe $name $false "$($probe.Detail), missing modules: $($missingMods -join ', ')" `
+                            "Run `"$exe`" -m pip install $($missingMods -join ' ')"
                     }
                 }
                 $results += $probe
@@ -185,19 +185,19 @@ function Invoke-PreflightChecks {
                     if (Test-Path $expanded) { $hits += $expanded }
                 }
                 if ($hits.Count -gt 0) { $results += New-Probe $name $true $hits[0] }
-                else { $results += New-Probe $name $false ('候选路径都不存在：' + (@($c.paths) -join ' | ')) $hint }
+                else { $results += New-Probe $name $false ('none of the candidate paths exist: ' + (@($c.paths) -join ' | ')) $hint }
                 break
             }
             'registry' {
                 $found = $null
                 foreach ($k in @($c.keys)) { if (Test-Path $k) { $found = $k; break } }
-                if ($found) { $results += New-Probe $name $true "检测到注册表项：$found" }
-                else { $results += New-Probe $name $false '未检测到对应注册表项' $hint }
+                if ($found) { $results += New-Probe $name $true "registry key found: $found" }
+                else { $results += New-Probe $name $false 'no matching registry key found' $hint }
                 break
             }
             default {
-                $results += New-Probe $name $false "未知检查类型：$($c.type)" `
-                    'requirements 声明里 type 只能是 dirs / files / python / exe / registry'
+                $results += New-Probe $name $false "unknown check type: $($c.type)" `
+                    'in a requirements declaration, type must be dirs / files / python / exe / registry'
             }
         }
     }

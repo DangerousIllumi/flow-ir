@@ -36,7 +36,7 @@ Describe 'PadPreflight 前置探查' {
     It 'Python 路径不存在时判定为缺失' {
         $r = Get-PythonProbe -PythonExe (Join-Path $TestDrive 'nope\python.exe')
         $r.Ok | Should Be $false
-        $r.Hint | Should Match 'PYTHON_EXE|安装 Python'
+        $r.Hint | Should Match 'PYTHON_EXE'
     }
 
     It '真实 Python 能输出版本并通过探测' {

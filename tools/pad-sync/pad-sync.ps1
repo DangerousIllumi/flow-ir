@@ -93,12 +93,12 @@ $ErrorActionPreference = 'Stop'
 
 # 只发布模式与“不注入/不发布”的选项互斥，避免出现没发布却报 Published
 if ($PublishOnly -and ($RunOnly -or $LocalRun -or $InjectOnly -or $NoPublish)) {
-    throw '-PublishOnly 不能与 -RunOnly / -LocalRun / -InjectOnly / -NoPublish 同时使用'
+    throw '-PublishOnly cannot be combined with -RunOnly / -LocalRun / -InjectOnly / -NoPublish'
 }
 
 # 生产流程安全熔断：默认只允许操作 PAD_SYNC_TEST 测试流程
 if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
-    throw '安全熔断：pad-sync 默认只允许操作 PAD_SYNC_TEST。生产流程请显式加 -AllowProd。'
+    throw 'safety fuse: pad-sync only operates on PAD_SYNC_TEST by default. For a production flow, add -AllowProd explicitly.'
 }
 
 # 设计器交互唯一实现 + 遥测解析
@@ -157,7 +157,7 @@ function Write-Log([string]$msg) {
 # 没有 flow.json 属于“准入未启用”，会显式记 warning，避免被误会成已通过
 function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]$AcceptanceFileArg) {
     if ($AdmitMode -eq 'off') {
-        Write-Log '准入网关已显式关闭（-AdmitMode off），本次未校验'
+        Write-Log 'admit gate explicitly disabled (-AdmitMode off); nothing was checked'
         return $true
     }
     $flowPath = $FlowFileArg
@@ -166,7 +166,7 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
         if (Test-Path -LiteralPath $guess) { $flowPath = $guess }
     }
     if (-not $flowPath -and -not $DeriveFlow) {
-        Write-Log '未提供 flow.json，准入网关本次不适用（未做校验）'
+        Write-Log 'no flow.json provided; the admit gate did not apply (nothing was checked)'
         $script:Result.warnings += '准入网关未适用：缺少 flow.json'
         return $true
     }
@@ -174,7 +174,7 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
     $script:Result.stage = 'admit'
     $admitScript = Join-Path $PSScriptRoot 'pad-admit.ps1'
     if (-not (Test-Path -LiteralPath $admitScript)) {
-        throw '准入网关拒绝运行：准入脚本不存在（pad-admit.ps1 缺失）'
+        throw 'admit gate refused to run: the admit script is missing (pad-admit.ps1)'
     }
     $admitArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         $admitScript, '-Unattended')
@@ -191,9 +191,9 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
 
     $decision = Get-AdmitGateDecision -ExitCode $admitExit -Output $admitOut -ScriptPath $admitScript
     if (-not $decision.allow) {
-        $msg = "准入网关拒绝运行（$($decision.reason)）：$($decision.message)"
-        if ($AdmitMode -eq 'enforce') { throw "$msg（enforce 模式，fail-closed）" }
-        Write-Log "$msg（report 模式，仅提示后继续）"
+        $msg = "admit gate refused to run ($($decision.reason)): $($decision.message)"
+        if ($AdmitMode -eq 'enforce') { throw "$msg (enforce mode, fail-closed)" }
+        Write-Log "$msg (report mode; continuing after this notice)"
         $script:Result.warnings += $msg
         return $true
     }
@@ -256,7 +256,7 @@ function Get-PadRunResult([string]$rid, [string]$RunDir) {
         try {
             $rdText = Read-TextShared $rdPath
             $status = ($rdText | ConvertFrom-Json).status
-        } catch { Write-Log "RunDefinition.json 解析失败：$($_.Exception.Message)" }
+        } catch { Write-Log "failed to parse RunDefinition.json: $($_.Exception.Message)" }
     }
 
     $actions = @()
@@ -267,7 +267,7 @@ function Get-PadRunResult([string]$rid, [string]$RunDir) {
         # PAD 运行期间会独占写句柄，必须共享读，否则 ReadAllLines 直接抛“文件正由另一进程使用”
         $logText = ''
         try { $logText = Read-TextShared $logPath } catch {
-            Write-Log "Actions.log 暂不可读：$($_.Exception.Message)"
+            Write-Log "Actions.log is not readable yet: $($_.Exception.Message)"
         }
         foreach ($line in ($logText -split "`r?`n")) {
             if (-not $line.Trim()) { continue }
@@ -315,43 +315,43 @@ try {
         if (-not $lock.ok) {
             $script:LockTimedOut = $true
             $info = Get-PadLockInfo
-            $holder = if ($info) { "$($info.flow)（pid $($info.pid)）" } else { '未知' }
-            throw "等待 PAD 空闲超时（${LockWaitSec} 秒），当前持有者：$holder。本次未执行，稍后可重跑。"
+            $holder = if ($info) { "$($info.flow) (pid $($info.pid))" } else { 'unknown' }
+            throw "timed out waiting for PAD to become free (${LockWaitSec}s); current holder: $holder. This run did not execute; retry later."
         }
-        if ($waited -gt 0) { Write-Log "已等到 PAD 空闲（等待 $waited 秒）" }
+        if ($waited -gt 0) { Write-Log "PAD is now free (waited $waited s)" }
     }
 
     # 准入网关：RunOnly（定时任务）也跑，避免夜间运行绕过门禁
     [void](Invoke-AdmitGate $FlowFile $ConfigFile $AcceptanceFile)
 
     if (-not $RunOnly) {
-        if (-not $RobinFile -or -not (Test-Path $RobinFile)) { throw "找不到 .robin 文件：$RobinFile" }
+        if (-not $RobinFile -or -not (Test-Path $RobinFile)) { throw ".robin file not found: $RobinFile" }
         $text = [IO.File]::ReadAllText((Resolve-Path $RobinFile), [Text.Encoding]::UTF8)
-        if (-not $text.Trim()) { throw '.robin 文件内容为空' }
+        if (-not $text.Trim()) { throw '.robin file is empty' }
 
         # 准入网关已在主流程开头跑过（RunOnly 也覆盖），这里只做静态校验
         # V 模型 G2：静态校验不通过就不进设计器，避免坏脚本污染画布
         if (-not $SkipStaticCheck) {
             $script:Result.stage = 'static-check'
             $checkJs = Join-Path (Split-Path -Parent $PSScriptRoot) 'pad-robin\check.js'
-            if (-not (Test-Path $checkJs)) { throw "找不到静态校验器：$checkJs" }
+            if (-not (Test-Path $checkJs)) { throw "static checker not found: $checkJs" }
             $checkOut = & node $checkJs (Resolve-Path $RobinFile).Path 2>&1
             if ($LASTEXITCODE -ne 0) {
-                throw ("静态校验未通过（check.js 退出码 $LASTEXITCODE）：" + (($checkOut | Out-String).Trim()))
+                throw ("static check failed (check.js exit code $LASTEXITCODE): " + (($checkOut | Out-String).Trim()))
             }
-            Write-Log '静态校验通过（check.js 0 errors）'
+            Write-Log 'static check passed (check.js 0 errors)'
         }
 
         $script:Result.stage = 'find-designer'
         $win = Get-DesignerWindow -FlowName $FlowName
-        if (-not $win) { throw "找不到已打开 '$FlowName' 的 PAD 设计器窗口，请先在 PAD 中打开该流程" }
+        if (-not $win) { throw "no PAD designer window is open for '$FlowName'; open that flow in PAD first" }
 
         $script:Result.stage = 'inject'
         $inj = Invoke-PadInject -Window $win -Text $text -Replace:$Replace -VerifyCanvas:$VerifyCanvas
         $afterCount = [int]$inj.actions
         if ($VerifyCanvas) { $script:Result.canvasVerified = [bool]$inj.verified }
-        if ($afterCount -le 0) { throw '注入后画布为空，注入失败' }
-        Write-Log "注入完成：画布 $afterCount 个动作"
+        if ($afterCount -le 0) { throw 'canvas is empty after injection; injection failed' }
+        Write-Log "injection done: $afterCount actions on the canvas"
 
         # 只验证注入、不发布不运行：用于确认画布真的被更新
         if (-not $InjectOnly -and -not $NoPublish -and -not $LocalRun) {
@@ -361,21 +361,21 @@ try {
             [void](Click-ToolButton $win 'PublishFlowButton')
             $published = Wait-PublishDone $win 300
             if (-not $published) {
-                throw '发布超时：300 秒内未完成。常见原因是该流在别处被修改导致版本冲突，请关闭并重新打开该流后重试。'
+                throw 'publish timed out: not finished within 300s. A common cause is a version conflict from the flow being edited elsewhere; close and reopen the flow, then retry.'
             }
-            Write-Log '发布完成'
+            Write-Log 'publish done'
         }
     }
 
     if ($InjectOnly) {
-        Write-Log '已注入，跳过运行（-InjectOnly）'
+        Write-Log 'injected; skipping the run (-InjectOnly)'
         $script:Result.ok = $true
         $script:Result.status = 'Injected'
         $script:Result.actions = $afterCount
         $script:Result.stage = 'done'
     } elseif ($PublishOnly) {
         # 只保存到云端：发布完成后直接结束，不触发 URL 运行
-        Write-Log '已发布，跳过运行（-PublishOnly）'
+        Write-Log 'published; skipping the run (-PublishOnly)'
         $script:Result.ok = $true
         $script:Result.status = 'Published'
         $script:Result.actions = $afterCount
@@ -403,7 +403,7 @@ try {
             $script:Result.triggerReason = 'no-evidence'
             $script:Result.error = [ordered]@{
                 code = 'TRIGGER_NO_EVIDENCE'
-                message = '触发后没有出现本次运行的日志（协议处理器无响应 / 流程名或 flowId 不符 / PAD 报错）'
+                message = 'no log appeared for this run after triggering (protocol handler did not respond / flow name or flowId mismatch / PAD error)'
             }
             throw $script:Result.error.message
         }
@@ -420,7 +420,7 @@ try {
             $script:Result.evidence = 'human-confirm'
             $script:Result.logPath = $runHint.logPath
             $script:Result.warnings += "非交互运行停在人工确认弹窗「$($runHint.dialogTitle)」，流程保持等待人工点击"
-            Write-Log "运行停在人工确认弹窗「$($runHint.dialogTitle)」：不自动点击，请人工处理后重跑"
+            Write-Log "run stopped at a manual-confirmation dialog `"$($runHint.dialogTitle)`": not clicking automatically; handle it manually and rerun"
         } elseif ($runHint.startupTimedOut -and -not $runHint.status) {
             # 运行目录已出现但机器人始终没启动：以前会落到 Unknown→退出码 0，静默无告警，
             # 现在按 trigger-failed（reason=no-robot）收尾，只告警不重试
@@ -432,7 +432,7 @@ try {
             $script:Result.logPath = $runHint.logPath
             $script:Result.error = [ordered]@{
                 code = 'TRIGGER_NO_ROBOT'
-                message = '触发已被接受并出现运行目录，但判定窗口内机器人没有启动（可能停在 PAD 错误框或被取消）'
+                message = 'the trigger was accepted and a run directory appeared, but the robot did not start within the watch window (it may be stuck on a PAD error dialog or was cancelled)'
             }
         } elseif ($runHint.timedOut -and -not $runHint.status) {
             # 等满 RunTimeoutSec 仍未拿到终止状态：按运行超时告警，不静默按 Unknown 退出
@@ -443,7 +443,7 @@ try {
             $script:Result.logPath = $runHint.logPath
             $script:Result.error = [ordered]@{
                 code = 'RUN_TIMEOUT'
-                message = "等待运行结束超过 $RunTimeoutSec 秒，仍未拿到终止状态"
+                message = "waited more than $RunTimeoutSec s for the run to end and never got a terminal status"
             }
         } else {
         $script:Result.stage = 'collect'
@@ -458,7 +458,7 @@ try {
                 $script:Result.evidence = 'unknown'
                 $script:Result.logPath = $runHint.logPath
                 $script:Result.warnings += 'RobinRobot.log 暂不可读或不存在，本次取证为 Unknown（不判失败）'
-                Write-Log 'RobinRobot.log 暂不可读或不存在，结果记为 Unknown（未知不等于失败）'
+                Write-Log 'RobinRobot.log is unreadable or missing; outcome recorded as Unknown (unknown is not failure)'
             } else {
                 $script:Result.status = $res.status
                 $script:Result.actions = $res.actions
@@ -485,15 +485,15 @@ try {
                 if ($console -and $console.outcome -eq 'Succeeded') {
                     $res = [ordered]@{ status = 'Succeeded'; actions = @(); failed = $null; logPath = $console.logPath }
                     $script:Result.evidence = 'console'
-                    Write-Log 'Actions.log 不可用：按 PadConsole 遥测判定本次运行成功'
+                    Write-Log 'Actions.log unavailable: PadConsole telemetry says this run succeeded'
                 } elseif ($console -and $console.outcome -eq 'Failed') {
                     $res = [ordered]@{
                         status = 'Failed'; actions = @(); logPath = $console.logPath
                         failed = [ordered]@{ name = $null; error = [ordered]@{
-                            code = 'CONSOLE_RUN_FAILED'; message = "PadConsole 记录本次运行失败（$($console.event)）" } }
+                            code = 'CONSOLE_RUN_FAILED'; message = "PadConsole recorded this run as failed ($($console.event))" } }
                     }
                     $script:Result.evidence = 'console'
-                    Write-Log 'Actions.log 不可用：按 PadConsole 遥测判定本次运行失败'
+                    Write-Log 'Actions.log unavailable: PadConsole telemetry says this run failed'
                 } else {
                     $script:Result.status = 'Unknown'
                     $script:Result.ok = $null
@@ -505,7 +505,7 @@ try {
                         Write-Log $console.note
                     } else {
                         $script:Result.warnings += 'Actions.log 与 PadConsole 均无本次运行证据，结果未知（不判失败、不发 run-failed）'
-                        Write-Log '没有可用的运行证据，结果记为 Unknown（未知不等于失败）'
+                        Write-Log 'no usable run evidence; outcome recorded as Unknown (unknown is not failure)'
                     }
                     # 必须清空，否则下面 if ($res) 会用 $res.status（可能为 $null）覆盖 'Unknown'
                     $res = $null
@@ -532,16 +532,16 @@ try {
         # V 模型 G6：运行成功不等于业务正确，按判据检查产物
         if ($AcceptanceFile) {
             $script:Result.stage = 'acceptance'
-            if (-not $ConfigFile) { throw '使用 -AcceptanceFile 时必须同时提供 -ConfigFile' }
-            if (-not (Test-Path $AcceptanceFile)) { throw "找不到验收判据文件：$AcceptanceFile" }
+            if (-not $ConfigFile) { throw '-AcceptanceFile requires -ConfigFile' }
+            if (-not (Test-Path $AcceptanceFile)) { throw "acceptance spec not found: $AcceptanceFile" }
             $configMap = Get-AcceptanceConfig -Path $ConfigFile
             $acc = Test-AcceptanceFile -Path $AcceptanceFile -Config $configMap -Since $runStart
             $script:Result.acceptance = $acc
-            Write-Log ("验收：通过 {0} / 失败 {1} / 跳过 {2}" -f $acc.passed, $acc.failed, $acc.skipped)
+            Write-Log ("acceptance: pass {0} / fail {1} / skip {2}" -f $acc.passed, $acc.failed, $acc.skipped)
             if (-not $acc.ok) {
                 $script:Result.ok = $false
                 if (-not $script:Result.error) {
-                    $script:Result.error = [ordered]@{ code = 'ACCEPTANCE_FAILED'; message = "验收未通过：$($acc.failed) 项" }
+                    $script:Result.error = [ordered]@{ code = 'ACCEPTANCE_FAILED'; message = "acceptance failed: $($acc.failed) item(s)" }
                 }
             }
         }
@@ -563,7 +563,7 @@ catch {
     } else {
         $script:Result.error = [ordered]@{ message = $_.Exception.Message }
     }
-    Write-Log "失败于 [$($script:Result.stage)]：$($_.Exception.Message)"
+    Write-Log "failed at [$($script:Result.stage)]: $($_.Exception.Message)"
 }
 
 # ── 编排层记录：每次运行追加一行 manifest ──────────────────────
@@ -590,14 +590,14 @@ if (-not $NoManifest -and $ManifestPath) {
             -LogPath $script:Result.logPath -CanvasVerified $script:Result.canvasVerified `
             -Acceptance $script:Result.acceptance -Warnings $script:Result.warnings
         Add-ManifestEntry $ManifestPath $entry
-        Write-Log "manifest 已追加：$ManifestPath"
+        Write-Log "manifest appended: $ManifestPath"
         # run 记录只留 90 天；release / rollback 永久保留。清理失败不影响运行结果
         try {
             $dropped = Remove-OldManifestEntries $ManifestPath -KeepDays 90
-            if ($dropped -gt 0) { Write-Log "manifest 已清理 $dropped 条 90 天前的运行记录" }
-        } catch { Write-Log "manifest 清理失败（不影响运行结果）：$($_.Exception.Message)" }
+            if ($dropped -gt 0) { Write-Log "manifest pruned $dropped run record(s) older than 90 days" }
+        } catch { Write-Log "manifest prune failed (does not affect the run result): $($_.Exception.Message)" }
     } catch {
-        Write-Log "manifest 写入失败（不影响运行结果）：$($_.Exception.Message)"
+        Write-Log "manifest write failed (does not affect the run result): $($_.Exception.Message)"
     }
 }
 
@@ -619,10 +619,10 @@ if ($alertDir) {
         $alert = Write-RunAlert -FlowName $FlowName -ExitCode $alertExit -Stage $script:Result.stage `
             -Status $script:Result.status -SyncResult $script:Result -LogPath $script:Result.logPath `
             -RunId ([string]$script:Result.runId) -Dir $alertDir
-        if ($alert -and -not $alert.skipped) { Write-Log "失败告警已写入：$($alert.path)" }
+        if ($alert -and -not $alert.skipped) { Write-Log "failure alert written: $($alert.path)" }
     } catch {
         # 告警写入失败不能影响运行结果与退出码，只提示
-        Write-Log "告警写入失败（不影响运行结果）：$($_.Exception.Message)"
+        Write-Log "alert write failed (does not affect the run result): $($_.Exception.Message)"
     }
 }
 

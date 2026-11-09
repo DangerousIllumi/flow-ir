@@ -19,36 +19,36 @@ function Get-PadRuntimeConfig {
     )
 
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-        Throw-ConfigError 'CONFIG_PATH_NOT_FOUND' "配置文件不存在：$ConfigPath"
+        Throw-ConfigError 'CONFIG_PATH_NOT_FOUND' "config file not found: $ConfigPath"
     }
     try {
         $raw = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8)
         $cfg = $raw | ConvertFrom-Json
     } catch {
-        Throw-ConfigError 'CONFIG_INVALID_VALUE' "配置不是合法 JSON：$ConfigPath"
+        Throw-ConfigError 'CONFIG_INVALID_VALUE' "config is not valid JSON: $ConfigPath"
     }
 
     $required = @('PadSyncPath', 'PythonExe', 'CalendarPath', 'WorkdayScript', 'RunTimeoutSec', 'PadRoot')
     foreach ($name in $required) {
         if (-not ($cfg.PSObject.Properties.Name -contains $name) -or
             [string]::IsNullOrWhiteSpace([string]$cfg.$name)) {
-            Throw-ConfigError 'CONFIG_MISSING' "缺少必填字段：$name"
+            Throw-ConfigError 'CONFIG_MISSING' "missing required field: $name"
         }
     }
 
     foreach ($name in @('PadSyncPath', 'PythonExe', 'CalendarPath', 'WorkdayScript', 'PadRoot')) {
         if (-not (Test-Path -LiteralPath ([string]$cfg.$name))) {
-            Throw-ConfigError 'CONFIG_PATH_NOT_FOUND' "路径不存在：$name=$($cfg.$name)"
+            Throw-ConfigError 'CONFIG_PATH_NOT_FOUND' "path does not exist: $name=$($cfg.$name)"
         }
     }
 
     # 超时必须是正整数；JSON 里写成字符串或小数一律按类型错误处理
     $sec = $cfg.RunTimeoutSec
     if (-not ($sec -is [int] -or $sec -is [long])) {
-        Throw-ConfigError 'CONFIG_INVALID_VALUE' "RunTimeoutSec 必须是正整数：$sec"
+        Throw-ConfigError 'CONFIG_INVALID_VALUE' "RunTimeoutSec must be a positive integer: $sec"
     }
     if ([int64]$sec -le 0) {
-        Throw-ConfigError 'CONFIG_INVALID_VALUE' "RunTimeoutSec 必须大于 0：$sec"
+        Throw-ConfigError 'CONFIG_INVALID_VALUE' "RunTimeoutSec must be greater than 0: $sec"
     }
 
     return [pscustomobject]@{

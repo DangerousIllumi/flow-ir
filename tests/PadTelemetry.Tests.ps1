@@ -273,7 +273,7 @@ Describe 'Get-PadConsoleRunOutcome 共享读（真实文件句柄，不 mock）'
             $r = Get-PadConsoleRunOutcome -RunId $runId -DataCollectionDir $work
             $r.outcome | Should Be 'Unknown'
             $r.unreadable | Should Be $true
-            $r.note | Should Match 'Console 日志暂不可读'
+            $r.note | Should Match 'Console log is not readable'
         } finally {
             $h.Dispose()
         }

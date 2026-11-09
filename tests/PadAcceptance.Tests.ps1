@@ -41,7 +41,7 @@ Describe 'PadAcceptance' {
         })
         $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
         $r.ok | Should Be $false
-        $r.checks[0].detail | Should Match '不匹配'
+        $r.checks[0].detail | Should Match 'does not match'
     }
 
     It '可选项缺失时记 skipped 且整体通过' {
@@ -98,7 +98,7 @@ Describe 'PadAcceptance' {
         })
         $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
         $r.ok | Should Be $false
-        $r.checks[0].detail | Should Match '只存在 1/2'
+        $r.checks[0].detail | Should Match 'only 1/2'
     }
 
     It 'json 校验必需键' {
@@ -125,7 +125,7 @@ Describe 'PadAcceptance' {
         })
         $r = Test-AcceptanceFile -Path $spec -Config @{ ROOT = $d }
         $r.ok | Should Be $false
-        $r.checks[0].detail | Should Match '第 2 行'
+        $r.checks[0].detail | Should Match 'line 2'
     }
 
     It '未知占位符不会被静默替换成空路径' {
