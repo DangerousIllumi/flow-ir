@@ -306,7 +306,7 @@ The user chose **approach A (next-ai-draw-io)**. The matching deterministic tool
 | `node.pad_hint` | `padHint` |
 | `node.params` | `params` (JSON string) |
 | `node.outputs` | `outputs` (JSON array string) |
-| `node.next[]` / `node.branch` | Edges: `<object from=".." to=".." label="">`; branch edge labels are `是` / `否` |
+| `node.next[]` / `node.branch` | Edges: `<object from=".." to=".." label="">`; branch edge labels are `yes` / `no` |
 | `trigger` / `variables` | **Not written to the canvas**; flow.json is always authoritative |
 
 **Verified**: 11 nodes / 11 edges round-trip losslessly (0 changes on read-back); manual renaming, rewiring,
