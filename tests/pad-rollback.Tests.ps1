@@ -1,21 +1,21 @@
-﻿# pad-rollback.Tests.ps1 — 发布回滚的快照逻辑测试（Pester 3.4，PS 5.1 自带）
+﻿# pad-rollback.Tests.ps1 — tests for the snapshot logic behind release rollback (Pester 3.4, bundled with PowerShell 5.1)
 #
-# 覆盖：快照归档（目录 / 文件名 / 内容）、快照列举（时间升序、排除部署产物）、
-#       回滚目标选择（默认上一版、-Back 步数、-To 精确指定、越界与缺失报错）、
-#       流程名含非法字符时的目录名处理。
+# Covers: snapshot archiving (directory / file name / content), snapshot listing (ascending time, excluding deployment artifacts),
+#        rollback target selection (previous version by default, -Back steps, exact -To, out-of-range and missing errors),
+#        and directory-name handling when a flow name contains illegal characters.
 #
-# 通过 dot-source -NoMain 只加载函数，绝不触发真实发布。
+# Dot-source with -NoMain to load only the functions; a real release is never triggered.
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-rollback.ps1') -NoMain
 
-# 每个用例的独立工作目录（Pester 3.4 的 $TestDrive 整个 Describe 共享）
+# A separate working directory per test ($TestDrive is shared across a whole Describe in Pester 3.4)
 function New-Work {
     $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $d | Out-Null
     return $d
 }
 
-# 直接造一个快照文件（绕开 Save-ReleaseSnapshot，便于控制时间戳）
+# Create a snapshot file directly (bypassing Save-ReleaseSnapshot so the timestamp is controllable)
 function New-Snap([string]$Root, [string]$Flow, [string]$Stamp, [string]$Sha, [string]$Text = "SET A TO 'x'") {
     $dir = Get-ReleaseSnapshotDir $Root $Flow
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -41,7 +41,7 @@ Describe 'pad-rollback snapshot tests' {
         New-Snap $root 'F' '20261026-100000' 'aaaaaaaa' | Out-Null
         New-Snap $root 'F' '20261028-100000' 'cccccccc' | Out-Null
         New-Snap $root 'F' '20261027-100000' 'bbbbbbbb' | Out-Null
-        # 部署中间产物不能算作版本
+        # A deployment intermediate artifact must not count as a version
         [IO.File]::WriteAllText((Join-Path (Get-ReleaseSnapshotDir $root 'F') '20261028-110000-dddddddd.deployed.robin'), 'x', (New-Object Text.UTF8Encoding($false)))
         $list = @(Get-ReleaseSnapshots $root 'F')
         $list.Count | Should Be 3
@@ -121,7 +121,7 @@ Describe 'pad-rollback snapshot tests' {
         $root = Join-Path $work 'snapshots'
         $dir = Get-ReleaseSnapshotDir $root 'A/B:C*D?E"F<G>H|I'
         (Split-Path -Leaf $dir) | Should Be 'A_B_C_D_E_F_G_H_I'
-        # 正常中文流程名保持原样
+        # A normal Chinese flow name is kept as-is
         (Split-Path -Leaf (Get-ReleaseSnapshotDir $root '通用示例流程')) | Should Be '通用示例流程'
     }
 
@@ -146,7 +146,7 @@ Describe 'pad-rollback no longer defaults to a concrete business flow' {
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match 'E_CONFIG_REQUIRED'
         $out | Should Match '-ConfigFile'
-        # 不能走到快照定位/回滚发布
+        # It must never reach snapshot selection or the rollback publish
         $out | Should Not Match '"stage":"select"'
         $out | Should Not Match '"stage":"done"'
     }

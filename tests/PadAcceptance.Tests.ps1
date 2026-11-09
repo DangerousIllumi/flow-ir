@@ -1,4 +1,4 @@
-﻿# PadAcceptance.Tests.ps1 — V 模型验收判据模块（Pester 3.4）
+﻿# PadAcceptance.Tests.ps1 — V-model acceptance criteria module (Pester 3.4)
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $here '..\tools\pad-sync\PadAcceptance.psm1') -Force
 

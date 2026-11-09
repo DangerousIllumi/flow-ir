@@ -1,16 +1,16 @@
-﻿# PadConfigure.Tests.ps1 — 部署向导（Pester 3.4）
+﻿# PadConfigure.Tests.ps1 — deployment wizard (Pester 3.4)
 #
-# 前置探查按参数注入路径判定，所以没有 SAP/Outlook 的 CI 也能跑：
-#   - PAD 目录：临时目录造/不造子目录
-#   - Python：真实 python.exe 与不存在的路径
-#   - SAP GUI / Outlook：临时伪文件、空注册表键列表
-# 配置合成与写盘：dot-source pad-configure.ps1 -NoMain，只测函数
+# Preflight probes decide from injected argument paths, so CI without SAP/Outlook can still run them:
+#   - PAD root: temporary directories with or without the required subdirectories
+#   - Python: a real python.exe versus a nonexistent path
+#   - SAP GUI / Outlook: fake temporary files and an empty registry-key list
+# Config composition and writing: dot-source pad-configure.ps1 -NoMain and test functions only
 
 $here = Split-Path -Parent $PSScriptRoot
 $modulePath = Join-Path $here 'tools\pad-sync\PadPreflight.psm1'
 $cfgScript = Join-Path $here 'tools\pad-sync\pad-configure.ps1'
 Import-Module $modulePath -Force
-# Pester 3.4 没有 BeforeAll，脚本级 dot-source 只取函数、不跑主流程
+# Pester 3.4 has no BeforeAll; a script-level dot-source only pulls in functions and does not run the main flow
 . $cfgScript -NoMain
 
 Describe 'PadPreflight preflight probes' {
@@ -125,9 +125,9 @@ Describe 'pad-configure configuration generation' {
 Describe 'pad-configure no longer defaults to a specific business flow' {
     It 'A config name that derives no example exits non-zero and never enters per-item confirmation or writing' {
         $scriptPath = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-configure.ps1'
-        # 指定一个不存在的业务配置名 → 派生出的 <stem>.example.json 也必然不存在
+        # Point at a business config name that does not exist, so the derived <stem>.example.json cannot exist either
         $cfg = Join-Path $TestDrive 'no-such-flow.json'
-        # 子进程未捕获的 throw 会以错误记录形式回到父作用域，用 Start-Process 只取退出码与输出
+        # An uncaptured throw in a child process comes back as an error record; Start-Process grabs only the exit code and output
         $o = Join-Path $TestDrive ('cfg-out-' + [guid]::NewGuid().ToString('N') + '.txt')
         $e = Join-Path $TestDrive ('cfg-err-' + [guid]::NewGuid().ToString('N') + '.txt')
         $argList = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -ConfigPath "{1}" -SkipProbe' -f $scriptPath, $cfg
@@ -138,7 +138,7 @@ Describe 'pad-configure no longer defaults to a specific business flow' {
             [IO.File]::ReadAllText($e, [Text.Encoding]::UTF8))
         $out | Should Match 'E_EXAMPLE_CONFIG_MISSING'
         $out | Should Match 'no-such-flow\.example\.json'
-        # 不能进入逐项确认或写盘
+        # It must not reach per-item confirmation or writing
         $out | Should Not Match 'INTERACTIVE_CONFIRM'
         $out | Should Not Match 'CONFIG_WRITTEN'
         (Test-Path $cfg) | Should Be $false

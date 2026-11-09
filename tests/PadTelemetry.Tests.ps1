@@ -1,8 +1,8 @@
-﻿# PadTelemetry.Tests.ps1 — 遥测解析固定样本测试（Pester 3.4，PS 5.1 自带）
+﻿# PadTelemetry.Tests.ps1 — fixed-sample tests for telemetry parsing (Pester 3.4, bundled with PS 5.1)
 #
-# 样本是合成的 RobinRobot.log（JSON Lines），只保留解析器关心的字段：
+# The samples are synthetic RobinRobot.log files (JSON Lines) keeping only the fields the parser cares about:
 #   tests\fixtures\telemetry\robinrobot-success.log / robinrobot-failure.log
-# 不提交任何真实运行日志，避免把生产数据带进仓库。
+# No real run logs are committed, keeping production data out of the repository.
 
 $script:Module = Join-Path $PSScriptRoot '..\tools\pad-sync\PadTelemetry.psm1'
 Import-Module $script:Module -Force
@@ -33,7 +33,7 @@ Describe 'PadTelemetry telemetry parsing' {
         $r.error.type | Should Be 'SapGuiScripting'
         @($r.failedActions).Count | Should Be 1
         @($r.failedActions)[0].module | Should Be 'SAP'
-        # 没有成功事件时 totalMs 为空
+        # totalMs is null when there is no success event
         $r.totalMs | Should Be $null
     }
 
@@ -53,14 +53,14 @@ Describe 'PadTelemetry telemetry parsing' {
 
         (Find-RobinTelemetryLog $work ([datetime]'2026-01-01 00:00:00')).Name | Should Be $new.Split('\')[-1]
         (Find-RobinTelemetryLog $work ([datetime]'2026-01-02 00:00:00')).Name | Should Be $new.Split('\')[-1]
-        # 目录不存在时返回 null
+        # Return null when the directory does not exist
         (Find-RobinTelemetryLog (Join-Path $work 'nope') ([datetime]'2026-01-01')) | Should Be $null
     }
 }
 
 Describe 'Get-RobinTelemetryFromFile shared read (real file handles, no mocks)' {
 
-    # 写一份只含“开始 + 成功”两类 run 级事件的 RobinRobot.log
+    # Write a RobinRobot.log containing only the run-level "start + success" events
     function Write-RobotLog {
         param([string]$Dir, [string]$RunId)
         $p = Join-Path $Dir '2026-11-04-03-47-RobinRobot.log'
@@ -76,8 +76,8 @@ Describe 'Get-RobinTelemetryFromFile shared read (real file handles, no mocks)' 
         $work = New-Work
         $runId = 'ffffffff-1111-2222-3333-444444444444'
         $log = Write-RobotLog -Dir $work -RunId $runId
-        # 模拟机器人进程：持有读写句柄且允许共享读写。
-        # 旧实现（ReadAllLines 只请求 FileShare.Read）会抛 IOException，这里应正常读出
+        # Simulate the robot process: it holds a read-write handle and permits shared read/write.
+        # The old implementation (ReadAllLines requesting only FileShare.Read) would throw an IOException; this must read normally
         $h = New-Object IO.FileStream($log, [IO.FileMode]::Open,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
         try {
@@ -99,7 +99,7 @@ Describe 'Get-RobinTelemetryFromFile shared read (real file handles, no mocks)' 
             $r = $null
             try { $r = Get-RobinTelemetryFromFile $log } catch { $threw = $true }
             $threw | Should Be $false
-            # 读不到按未知处理：返回 $null，由调用方判定，绝不写成失败
+            # Unreadable is treated as unknown: return $null and let the caller decide; never record it as a failure
             $r | Should Be $null
         } finally { $h.Dispose() }
     }
@@ -244,8 +244,8 @@ Describe 'Get-PadConsoleRunOutcome shared read (real file handles, no mocks)' {
         $log = Join-Path $work '2026-11-04-03-47-PadConsole.log'
         [IO.File]::WriteAllText($log, ('{"event":"flow.run.success","runId":"' + $runId + '"}'),
             (New-Object Text.UTF8Encoding($false)))
-        # 模拟 PAD：持有读写句柄且允许共享读写。
-        # 这正是旧实现（ReadAllLines 只请求 FileShare.Read）会撞车、共享读不会的场景
+        # Simulate PAD: it holds read-write handles and permits shared read/write.
+        # This is exactly where the old implementation (ReadAllLines requesting only FileShare.Read) collided and shared reads did not
         $holders = @()
         try {
             foreach ($p in @($act, $log)) {
@@ -266,7 +266,7 @@ Describe 'Get-PadConsoleRunOutcome shared read (real file handles, no mocks)' {
         $log = Join-Path $work '2026-11-04-03-47-PadConsole.log'
         [IO.File]::WriteAllText($log, ('{"event":"flow.run.success","runId":"' + $runId + '"}'),
             (New-Object Text.UTF8Encoding($false)))
-        # 独占句柄（FileShare.None）：任何读都进不来，只能按 Unknown 收尾
+        # Exclusive handle (FileShare.None): no read can get through, so the outcome can only be Unknown
         $h = New-Object IO.FileStream($log, [IO.FileMode]::Open,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         try {

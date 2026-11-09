@@ -1,7 +1,7 @@
-﻿# pad-admit.Tests.ps1 — 准入网关纯函数与端到端测试（Pester 3.4）
+﻿# pad-admit.Tests.ps1 — unit and end-to-end tests for the admission gate (Pester 3.4)
 #
-# 覆盖：通配符匹配、策略 deny/ask/allow 三层顺序、无人值守 ask=deny、
-#       真实流程全部检查项可跑（子进程执行，避免 exit 影响测试会话）。
+# Covers: glob matching, the three-tier deny/ask/allow policy ordering, unattended ask=deny,
+#        and every admission check against a real flow (run in a child process so an exit cannot kill the test session).
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-admit.ps1') -NoMain
 
@@ -62,7 +62,7 @@ Describe 'pad-admit policy evaluation' {
         $r = @(Invoke-AdmitPolicy $flow $pol @{ env = 'prod'; dryRun = $true; registered = @{} })
         $r[0].code | Should Be 'POLICY_DENY'
 
-        # 同一条规则，参数里没有 %PostingVbsPath% 时不应命中
+        # The same rule must not match when %PostingVbsPath% is absent from the parameters
         $flow2 = New-FlowWith 'Scripting.RunDOSCommand.RunDOSCommand' ([pscustomobject]@{ DOSCommandOrApplication = 'cscript.exe //nologo "%VbsPath%"' })
         $r2 = @(Invoke-AdmitPolicy $flow2 $pol @{ env = 'prod'; dryRun = $true; registered = @{} })
         $r2[0].status | Should Be 'pass'
@@ -78,14 +78,14 @@ Describe 'pad-admit policy evaluation' {
             })
         }
         $ctx = @{ env = 'prod'; dryRun = $true; registered = @{} }
-        # 参数名随便改，只要 intent 还在就命中
+        # Rename the parameters freely; it still matches as long as intent is present
         $flow = [pscustomobject]@{ nodes = @([pscustomobject]@{
             id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-posting'
             params = [pscustomobject]@{ DOSCommandOrApplication = 'whatever.exe' }
         }) }
         (@(Invoke-AdmitPolicy $flow $pol $ctx))[0].code | Should Be 'POLICY_DENY'
 
-        # intent 改名后不再命中
+        # After intent is renamed it no longer matches
         $flow2 = [pscustomobject]@{ nodes = @([pscustomobject]@{
             id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'other'
             params = [pscustomobject]@{ DOSCommandOrApplication = 'whatever.exe' }
@@ -107,13 +107,13 @@ Describe 'pad-admit policy evaluation' {
             id = 'm'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; intent = 'sap-posting'
             params = [pscustomobject]@{ DOSCommandOrApplication = 'cscript' }
         }
-        # 守卫内：测试模式本来就不会执行，准入放行
+        # Inside the guard: test mode would never execute it anyway, so admission lets it through
         $guarded = [pscustomobject]@{ nodes = @(
             [pscustomobject]@{ id = 'g'; pad_hint = 'GUARD'; when = "DryRun <> $'''1'''"; body = @('m'); elseBody = @() },
             $posting
         ) }
         (@(Invoke-AdmitPolicy $guarded $pol $ctx))[0].status | Should Be 'pass'
-        # 守卫外：同样条件就应被拒
+        # Outside the guard: the same condition must be rejected
         $bare = [pscustomobject]@{ nodes = @($posting) }
         (@(Invoke-AdmitPolicy $bare $pol $ctx))[0].code | Should Be 'POLICY_DENY'
     }
@@ -131,14 +131,14 @@ Describe 'pad-admit policy evaluation' {
     }
 
     It 'general sample flow: admission passes end to end with exit code 0' {
-        # 用仓库自带的通用示例流程，不依赖任何具体业务流程文件；
-        # 指纹默认 fail 后，没有 .robin/基线的流程会被拦截，
-        # 所以先生成临时 .robin 并写一份批准记录，让本用例只验证准入链路本身
+        # Use the repository's generic example flow so no concrete business flow file is needed;
+        # with the fingerprint failing by default, a flow without a .robin/baseline gets blocked,
+        # so generate a temporary .robin and write an approval record to make this case verify only the admission chain itself
         $out = Join-Path $TestDrive ('admit-' + [guid]::NewGuid().ToString('N') + '.txt')
         $tmp = Join-Path $TestDrive ('e2e-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         $robin = Join-Path $tmp 'example-flow.robin'
-        # 生成器把"已生成"写 stderr；这里临时放宽 EAP，避免被当成终止错误
+        # The generator writes "already generated" to stderr; relax EAP here so it is not treated as a terminating error
         $eap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') `
@@ -161,8 +161,8 @@ Describe 'pad-admit policy evaluation' {
     }
 
     It 'missing baseline: report mode passes with a fix command while -Unattended still fails' {
-        # 用 examples 的中性流程，验证「未发布 = 没基线」的分级：
-        # 普通准入 exit 0（FINGERPRINT warn），发布/部署口径 -Unattended exit 1（FINGERPRINT fail）
+        # Use the neutral flow under examples to verify the "not published = no baseline" grading:
+        # plain admission exits 0 (FINGERPRINT warn), while the release/deploy mode -Unattended exits 1 (FINGERPRINT fail)
         $tmp = Join-Path $TestDrive ('nobl-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         $flowFile = Join-Path $repo 'examples\smoke-flow.json'
@@ -415,7 +415,7 @@ Describe 'pad-admit no longer defaults to a concrete business flow' {
         $text | Should Match 'ADMIT_ERROR'
         $text | Should Match 'E_FLOW_FILE_REQUIRED'
         $text | Should Match '-FlowFile'
-        # 必须在读取流程定义之前失败，不能输出 14 项准入检查的汇总
+        # It must fail before the flow definition is read, so the summary of 14 admission checks must not be printed
         $text | Should Not Match '"total":14'
         $text | Should Not Match 'POLICY_'
     }

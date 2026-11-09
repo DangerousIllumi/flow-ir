@@ -1,14 +1,14 @@
-﻿# trigger-file.Tests.ps1 — file（文件落地）触发分支测试（Pester 3.4）
+﻿# trigger-file.Tests.ps1 — file (file-arrival) trigger branch tests (Pester 3.4)
 #
-# 覆盖：字面路径拒绝、配置键只读解析、0/1/≥2 候选、poll_sec 下限、
-#       max_wait_sec 超时退出 0、账本同文件去重、-Test/Register -DryRun 不写文件。
-# 全程使用临时目录，不碰真实业务路径，不注册计划任务、不起后台守护。
+# Covers: literal path rejected, read-only config-key resolution, 0/1/2+ candidates, the poll_sec lower bound,
+#         max_wait_sec timeout exiting 0, ledger de-duplication of the same file, -Test/Register -DryRun writing nothing.
+# Everything runs in temp directories, never touching real business paths, registering no scheduled task and starting no daemon.
 
 Import-Module (Join-Path $PSScriptRoot '..\tools\pad-sync\TriggerRegistry.psm1') -Force
 $script:FileModule = Get-Module TriggerRegistry
 $script:FileCli = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-trigger.ps1'
 
-# 最小的 file 触发流程；dir 固定用配置引用
+# Smallest possible file trigger flow; dir always comes from a config reference
 function New-FileFlow {
     param(
         [Parameter(Mandatory)][string]$Dir,
@@ -42,7 +42,7 @@ function New-FileFlow {
 function New-FileConfig {
     param([Parameter(Mandatory)][string]$Dir, [Parameter(Mandatory)][string]$InboxPath)
     $path = Join-Path $Dir 'flow-config.json'
-    # 故意用 PadConfig 固定键集之外的键名，验证只读解析不依赖那 6 个键
+    # Deliberately uses a key outside the fixed PadConfig key set, to prove read-only resolution does not depend on those 6 keys
     $obj = [ordered]@{ INBOX_PATH = $InboxPath; ANY_OTHER_KEY = 'demo' }
     [IO.File]::WriteAllText($path, ($obj | ConvertTo-Json),
         (New-Object Text.UTF8Encoding($false)))
@@ -65,7 +65,7 @@ function New-FileRuntime {
     return $path
 }
 
-# 目录快照：目录 mtime + 文件名/大小/修改时间清单，用于证明 -Test 不写文件
+# Directory snapshot: directory mtime plus a name/size/last-write listing, used to prove -Test writes no file
 function Get-DirSnapshot([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return 'MISSING' }
     $dir = Get-Item -LiteralPath $Path

@@ -1,23 +1,23 @@
-﻿# TextEncoding.Tests.ps1 — 编码探测与安全写回测试（Pester 3.4，PS 5.1 自带）
+﻿# TextEncoding.Tests.ps1 — encoding detection and safe write-back tests (Pester 3.4, bundled with PS 5.1)
 #
-# 覆盖三种真实来源：
-#   UTF-16LE（VBS 的 OpenTextFile(..., True) 日志）
-#   ANSI（中文 Windows 代码页 936，记事本/旧工具保存）
-#   UTF-8-BOM（仓库脚本与 PAD 产物）
-# 每个用例断言：探测结果正确、内容可读、写回后编码与原文件一致（字节级）。
+# Three real-world sources are covered:
+#   UTF-16LE (VBS OpenTextFile(..., True) logs)
+#   ANSI (Chinese Windows code page 936, saved by Notepad or older tools)
+#   UTF-8-BOM (repository scripts and PAD artifacts)
+# Every case asserts: correct detection, readable text, and write-back byte-identical to the original file.
 
 $script:Module = Join-Path $PSScriptRoot '..\tools\pad-sync\TextEncoding.psm1'
 Import-Module $script:Module -Force
 
-# Pester 3.4 的 $TestDrive 整个 Describe 共享，每个用例用独立子目录
+# Pester 3.4 shares $TestDrive across the whole Describe, so each case gets its own subdirectory
 function New-Work {
     $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $d | Out-Null
     return $d
 }
 
-# ANSI 用例只对「ANSI 代码页能表示中文」的系统有意义（中文 Windows 为 cp936）；
-# 英文 Windows 的 cp1252 编不出中文（会静默变成 ?），此时该用例直接跳过
+# The ANSI case only matters on a system whose ANSI code page can represent Chinese (cp936 on Chinese Windows);
+# on an English Windows cp1252 cannot encode Chinese (it silently becomes ?), so the case is skipped there
 $script:AnsiCjk = $false
 try {
     $script:AnsiEnc = Get-AnsiEncoding

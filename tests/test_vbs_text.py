@@ -1,21 +1,23 @@
-# vbs_text 编码探测与安全写回测试（pytest）
+# Tests for vbs_text encoding detection and safe write-back (pytest)
 #
-# 与 tests/TextEncoding.Tests.ps1 覆盖同一组编码来源：
-# UTF-8-BOM / ANSI（本机代码页）/ UTF-16LE（VBS 日志），
-# 断言读出的内容正确、写回后字节级编码不变。
+# Covers the same encoding sources as tests/TextEncoding.Tests.ps1:
+# UTF-8-BOM / ANSI (machine code page) / UTF-16LE (VBS logs).
+# The assertions check that text reads back correctly and that write-back
+# preserves the encoding at byte level.
 
 import sys
 from pathlib import Path
 
 import pytest
 
-# 被测脚本在 tools/pad-sync 下，直接把该目录加入导入路径
+# The module under test lives in tools/pad-sync, so put that directory on the import path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "pad-sync"))
 
 import vbs_text  # noqa: E402
 
-# ANSI 场景只对「本机代码页能表示中文」的系统有意义（中文 Windows 的 cp936）；
-# 英文 Windows 的 cp1252 编不出中文，这两个用例在那种环境下跳过
+# The ANSI cases only make sense where the machine code page can represent Chinese
+# characters (cp936 on Chinese Windows); English Windows uses cp1252, which cannot
+# encode them, so those two cases are skipped there.
 _ANSI_CAN_ENCODE_CJK = True
 try:
     "中文".encode(vbs_text.ansi_codec())
@@ -84,8 +86,9 @@ def test_utf8_without_bom_not_misjudged_as_ansi(tmp_path):
 
 @needs_cjk_ansi
 def test_replace_keeps_original_encoding(tmp_path):
-    # 模拟把 VBS 里硬编码的路径替换成新值，写回后仍是 ANSI
-    # 内容必须带中文：纯 ASCII 的 ANSI 字节同时也是合法 UTF-8，按编码字节无法区分
+    # Simulate replacing a hard-coded path inside a VBS file; the file must still be
+    # ANSI after write-back. The content has to contain Chinese: pure-ASCII ANSI bytes
+    # are also valid UTF-8, so the two encodings are indistinguishable from bytes alone.
     p = tmp_path / "e.vbs"
     old_line = 'Const ROOT = "C:\\PAD\\Scripts"  \' 根目录'
     new_line = 'Const ROOT = "C:\\Temp\\PAD\\Scripts"  \' 根目录'
@@ -96,7 +99,7 @@ def test_replace_keeps_original_encoding(tmp_path):
     assert done == 1
     assert info["kind"] == "ansi"
     assert p.read_bytes() == new_line.encode(vbs_text.ansi_codec())
-    # 未命中时不写文件
+    # No match means the file is not written
     done2, _ = vbs_text.replace_text(p, "不存在的片段", "x")
     assert done2 == 0
     assert p.read_bytes() == new_line.encode(vbs_text.ansi_codec())

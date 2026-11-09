@@ -1,7 +1,7 @@
-﻿# pad-alerts.Tests.ps1 — 失败告警模块测试（Pester 3.4，PS 5.1 自带）
+﻿# pad-alerts.Tests.ps1 — tests for the failure alert module (Pester 3.4, bundled with PowerShell 5.1)
 #
-# 全部在 TestDrive 里造告警目录，不写真实 business\logs、不发任何外部消息、不启动 PAD。
-# 覆盖：失败写一条且字段齐全 / 同 runId 同 kind 去重 / 成功不写 / 发布类显式 kind。
+# Every test creates its alert directory under TestDrive: it never writes the real business\logs, sends no external message and starts no PAD.
+# Covers: a failure writes exactly one complete record / same runId + same kind dedupe / success writes nothing / release failures carry an explicit kind.
 
 $script:Module = Join-Path $PSScriptRoot '..\tools\pad-sync\PadAlerts.psm1'
 Import-Module $script:Module -Force
@@ -23,7 +23,7 @@ Describe 'PadAlerts failure alerts' {
 
     It 'failure branch writes one record with all fields and a next-step note' {
         $dir = New-AlertDir
-        # 模拟触发失败：流程名解析不出 flowId
+        # Simulate a trigger failure: the flow name cannot be resolved into a flowId
         $sync = [ordered]@{ triggerFailed = $true; triggerReason = 'identity-mismatch'; runId = 'run-001' }
         $r = Write-RunAlert -FlowName '示例流程' -ExitCode 1 -Stage 'trigger' -Status 'TriggerFailed' `
             -SyncResult $sync -LogPath 'C:\logs\run-001\Actions.log' -Dir $dir -RunId 'run-001'

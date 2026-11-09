@@ -1,25 +1,25 @@
-﻿# trigger-registry.Tests.ps1 — 触发注册器纯函数与只读性测试（Pester 3.4）
+﻿# trigger-registry.Tests.ps1 — trigger registry pure-function and read-only tests (Pester 3.4)
 #
-# 覆盖：spec 解析、幂等 hash 稳定性、动作构造复用 pad-schedule、
-#       任务匹配与回读校验、DryRun/Test 只读、file/未知 kind 拒绝、CLI 退出码。
-# 全程不注册、不删除任何真实计划任务。
+# Covers: spec parsing, idempotent hash stability, action construction reusing pad-schedule,
+#         task matching and read-back validation, read-only DryRun/Test, file/unknown kind rejection, CLI exit codes.
+# Never registers or deletes any real scheduled task.
 
 Import-Module (Join-Path $PSScriptRoot '..\tools\pad-sync\TriggerRegistry.psm1') -Force
 $script:TriggerModule = Get-Module TriggerRegistry
 $script:TriggerCli = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-trigger.ps1'
-# 只用于断言“不存在”的任务名，故意带 do-not-register 前缀
+# Only used to assert that a task is absent; deliberately carries a do-not-register prefix
 $script:UniqueTask = 'flow-ir-trigger-pester-do-not-register'
 
-# 写入一份最小流程；trigger 用传入的声明，节点只有一条占位
+# Writes a minimal flow; the trigger is the supplied declaration and the node list holds a single placeholder
 function New-TestFlow {
     param(
         [Parameter(Mandatory)][string]$Dir,
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)]$Trigger,
         [string]$NodeRunMode = 'auto',
-        # 追加到占位节点的声明字段（幂等/可逆性用例用）
+        # Declaration fields appended to the placeholder node (used by the idempotency/reversibility cases)
         [hashtable]$NodeProps = @{},
-        # PAD 显示名：与内部 name 不同，用于验证任务名/-FlowName 的派生口径
+        # PAD display name: differs from the internal name, used to verify how task names and -FlowName are derived
         [string]$PadFlowName
     )
     $node = [ordered]@{ id = '1'; pad_hint = 'Comment.Comment'; run_mode = $NodeRunMode }
@@ -36,7 +36,7 @@ function New-TestFlow {
     return $path
 }
 
-# 运行时配置：路径只需是字符串，DryRun 与 Test 都不会真的执行它们
+# Runtime config: the paths only need to be strings, since neither DryRun nor Test actually executes them
 function New-TestRuntime {
     param([Parameter(Mandatory)][string]$Dir)
     $cfg = [ordered]@{
@@ -52,7 +52,7 @@ function New-TestRuntime {
     return $path
 }
 
-# 取抛出的结果码；没抛异常返回 NO_ERROR
+# Returns the thrown result code; NO_ERROR when nothing was thrown
 function Get-TriggerErrorCode {
     param([scriptblock]$Action)
     try {
@@ -64,7 +64,7 @@ function Get-TriggerErrorCode {
     }
 }
 
-# 本机是否存在该计划任务（只读）
+# Whether this scheduled task exists on the machine (read-only)
 function Test-TaskAbsent([string]$TaskName) {
     return (@(Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue).Count -eq 0)
 }
@@ -198,7 +198,7 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
         $s2 = Get-TriggerSpec -FlowFile $f2
         $h1 = Get-TriggerFingerprint -Spec $s1
         (Get-TriggerFingerprint -Spec $s1) | Should Be $h1
-        # 流程名由 JSON 的 name 统一给出，字段顺序差异不影响规范哈希
+        # The flow name comes from the JSON name alone, so a differing field order does not change the canonical hash
         (Get-TriggerFingerprint -Spec $s2) | Should Be $h1
         $h1.Length | Should Be 64
     }
@@ -289,7 +289,7 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
         } $task $actionSpec $hash
         $hit | Should Be $true
 
-        # 动作被手改：描述 hash 没变也不能判定 unchanged
+        # The action was edited by hand: an unchanged description hash must not be enough to call it unchanged
         $task.Actions[0].Arguments = 'x y z'
         $miss = & $script:TriggerModule {
             param($Task, $ActionSpec, $Hash)
@@ -305,13 +305,13 @@ Describe 'TriggerRegistry fingerprint and idempotency' {
             Description = "flow-ir-spec:$hash；说明"
             Actions     = @([pscustomobject]@{ Execute = 'wscript.exe'; Arguments = 'flow watch -AllowProd' })
         }
-        # -Test 口径：忽略注册开关，声明本身一致
+        # -Test semantics: ignore the registration switch, since the declaration itself matches
         $ignore = & $script:TriggerModule {
             param($Task, $ActionSpec, $Hash)
             Test-TriggerTaskMatch $Task $ActionSpec $Hash -IgnoreAllowProd
         } $task $actionSpec $hash
         $ignore | Should Be $true
-        # 注册/回读口径：严格比较，带不带 -AllowProd 都算差异
+        # Register/read-back semantics: strict comparison, so with or without -AllowProd counts as a difference
         $strict = & $script:TriggerModule {
             param($Task, $ActionSpec, $Hash)
             Test-TriggerTaskMatch $Task $ActionSpec $Hash
@@ -347,7 +347,7 @@ Describe 'TriggerRegistry read-only behavior and kind boundaries' {
         $r.ok | Should Be $true
         $r.changed | Should Be 'planned'
         $r.specHash.Length | Should Be 64
-        # DryRun 之后任务仍不存在：前后两次只读断言
+        # The task still does not exist after DryRun: a read-only assertion on both sides
         (Test-TaskAbsent $script:UniqueTask) | Should Be $true
     }
 
@@ -377,7 +377,7 @@ Describe 'TriggerRegistry read-only behavior and kind boundaries' {
         $runtime = New-TestRuntime -Dir $TestDrive
         (Get-TriggerErrorCode { Test-Trigger -FlowFile $f -RuntimeConfigPath $runtime }) |
             Should Be 'TRIGGER_CONFIG_UNRESOLVED'
-        # 注销不需要解析配置：任务本来不存在时仍可只读返回 absent
+        # Unregister does not need config resolution: with no such task it still returns absent without writing anything
         $u = Unregister-Trigger -FlowFile $f -DryRun
         $u.ok | Should Be $true
         $u.changed | Should Be 'absent'
@@ -423,7 +423,7 @@ Describe 'TriggerRegistry flow name derivation (pad_flow_name wins)' {
         $t = [ordered]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = New-TestFlow -Dir $TestDrive -Name 'pad-name' -Trigger $t -PadFlowName 'PESTER_DISPLAY'
         $spec = Get-TriggerSpec -FlowFile $f
-        # 任务名取显示名，而不是内部 name
+        # The task name comes from the display name, not the internal name
         $spec.flowName | Should Be 'PESTER_DISPLAY'
         $spec.taskName | Should Be 'flow-ir-PESTER_DISPLAY'
         $runtime = New-TestRuntime -Dir $TestDrive
@@ -432,7 +432,7 @@ Describe 'TriggerRegistry flow name derivation (pad_flow_name wins)' {
             $rt = [IO.File]::ReadAllText($RuntimePath, [Text.Encoding]::UTF8) | ConvertFrom-Json
             Get-TriggerActionSpec -Spec $Spec -Runtime $rt
         } $spec $runtime
-        # -FlowName 必须与任务名同源，pad-sync 才能按显示名找到流程
+        # -FlowName must share its source with the task name, otherwise pad-sync cannot find the flow by display name
         $action.args | Should Match '-FlowName "PESTER_DISPLAY"'
     }
 
@@ -456,7 +456,7 @@ Describe 'TriggerRegistry days take effect as Weekly' {
         $trigger = & $script:TriggerModule { param($Spec) New-ScheduleTaskTrigger $Spec } $spec
         $trigger.CimClass.CimClassName | Should Be 'MSFT_TaskWeeklyTrigger'
         $trigger.DaysOfWeek | Should Be 62
-        # 门禁仍在：周末不唤醒，工作日再判法定节假日与调休
+        # The gate is still in place: no wake-up at weekends, while workdays still check legal holidays and shifted workdays
         $runtime = New-TestRuntime -Dir $TestDrive
         $action = & $script:TriggerModule {
             param($Spec, $RuntimePath)
@@ -490,7 +490,7 @@ Describe 'TriggerRegistry days take effect as Weekly' {
             New-ScheduleTaskSettings -ExecutionTimeLimitMinutes $Minutes
         } 180
         $settings.StartWhenAvailable | Should Be $false
-        # 其余设置保持既有形态，不因本项关闭而改变
+        # The other settings keep their existing shape and do not change because this one was turned off
         $settings.MultipleInstances | Should Be 'IgnoreNew'
     }
 

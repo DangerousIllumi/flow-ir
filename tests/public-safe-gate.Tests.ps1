@@ -1,21 +1,21 @@
-﻿# public-safe-gate.Tests.ps1 — 推送前内容门禁测试（Pester 3.4）
+﻿# public-safe-gate.Tests.ps1 — pre-push content gate tests (Pester 3.4)
 #
-# 覆盖：命中业务词（退出码/行号/输出格式）、全部干净、UTF-16LE 与二进制不误判、
-#       正则路径规则、默认词表分类、本地覆盖文件合并、清单文件缺失、自洽性检查。
+# Covers: business-term hits (exit code, line number, output format), all-clean files, no false positives on
+#         UTF-16LE or binary input, regex path rules, default categories, local override merge, missing manifest, self-check.
 
 $script:GateScript = (Resolve-Path (Join-Path $PSScriptRoot '..\tools\publish\check-public-safe.ps1')).Path
 . $script:GateScript -NoMain
 
 $script:Repo = Split-Path -Parent $PSScriptRoot
 
-# Pester 3.4 的 $TestDrive 在 Describe 内共享，每个用例用独立子目录
+# Pester 3.4 shares $TestDrive across a whole Describe, so each case gets its own subdirectory
 function New-Work {
     $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $d | Out-Null
     return $d
 }
 
-# 写词表：Categories 是「分类名 → 含 rules 的哈希表」
+# Writes a denylist: Categories maps a category name to a hashtable holding that category's rules
 function New-DenylistFile([string]$Dir, [hashtable]$Categories) {
     $doc = [ordered]@{ version = 1; categories = $Categories }
     $p = Join-Path $Dir 'denylist.json'
@@ -23,7 +23,7 @@ function New-DenylistFile([string]$Dir, [hashtable]$Categories) {
     return $p
 }
 
-# 写文本文件：默认 UTF-8 带 BOM，Kind=utf-16le 时写 UTF-16LE 带 BOM
+# Writes a text file: UTF-8 with BOM by default, UTF-16LE with BOM when Kind=utf-16le
 function New-TextFile([string]$Path, [string[]]$Lines, [string]$Kind = 'utf-8') {
     $text = ($Lines -join "`r`n") + "`r`n"
     if ($Kind -eq 'utf-16le') {
@@ -101,7 +101,7 @@ Describe 'Pre-push content gate' {
     It 'Binary files are scanned as Latin1 and produce no false positives from forced UTF-8 reads' {
         $work = New-Work
         $bin = Join-Path $work 'sample.bin'
-        # PNG 文件头 + 若干高位字节：按 UTF-8 硬读会解码失败或产生乱码
+        # PNG header plus a few high-bit bytes: reading them as UTF-8 either fails to decode or yields mojibake
         $bytes = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
             0x49, 0x48, 0x44, 0x52, 0xFF, 0xFE, 0xFD, 0xFC)
         [IO.File]::WriteAllBytes($bin, $bytes)
@@ -135,13 +135,13 @@ Describe 'Pre-push content gate' {
         $cfg = Join-Path $work 'tools\publish'
         New-Item -ItemType Directory -Path $cfg -Force | Out-Null
 
-        # 基础词表（入库版）：只有结构性规则
+        # Base denylist as committed: structural rules only
         $base = New-DenylistFile $cfg @{
             realPath = @{ rules = @(@{ id = 'base'; pattern = '(?i)[A-Za-z]:[\\]DEMO[\\]'; regex = $true }) }
         }
         Rename-Item -LiteralPath $base -NewName 'public-safe.denylist.json'
 
-        # 本地覆盖（不入库）：模拟真实业务词
+        # Local override, never committed: stands in for real business terms
         $local = Join-Path $cfg 'public-safe.denylist.local.json'
         $json = '{"version":1,"categories":{"businessName":{"rules":[{"id":"local","pattern":"示例业务词","regex":false}]}}}'
         [IO.File]::WriteAllText($local, $json, (New-Object Text.UTF8Encoding($false)))
@@ -149,7 +149,7 @@ Describe 'Pre-push content gate' {
         $f = Join-Path $work 'sample.txt'
         New-TextFile $f @('示例业务词')
 
-        # 不显式给词表：应自动找到 tools\publish 下的基础词表与本地覆盖
+        # No denylist passed explicitly: the base file and the local override under tools\publish must be discovered automatically
         $r = Invoke-PublicSafeScan -Files @($f) -RepoRoot $work
         $r.ExitCode | Should Be 1
         @($r.Hits).Count | Should Be 1
@@ -187,14 +187,14 @@ Describe 'Pre-push content gate' {
         $dl = Join-Path $script:Repo 'tools\publish\public-safe.denylist.json'
         (Test-Path -LiteralPath $dl) | Should Be $true
 
-        # 分类齐全（含只放占位示例的 flowName）
+        # Every category is present, including flowName, which only holds placeholder samples
         $doc = ConvertFrom-Json ([IO.File]::ReadAllText($dl, [Text.Encoding]::UTF8))
         @($doc.categories.PSObject.Properties).Count | Should Be 5
         foreach ($name in @('businessName', 'realPath', 'flowName', 'accountOrServer', 'privateIdentifier')) {
             ($doc.categories.PSObject.Properties.Name -contains $name) | Should Be $true
         }
 
-        # 自洽性：脚本、词表、文档本身不能命中词表，否则门禁自相矛盾
+        # Self-consistency: the script, the denylist and the docs must not hit the denylist themselves, or the gate contradicts itself
         $files = @(
             $script:GateScript,
             $dl,
@@ -209,13 +209,13 @@ Describe 'Pre-push content gate' {
 
 Describe 'UNC path rule boundaries' {
 
-    # 直接用仓库里的默认词表，保证测的是真实规则，而不是测试里另写一份
+    # Use the repository's default denylist so the test exercises the real rules, not a copy written here
     $dl = Join-Path $script:Repo 'tools\publish\public-safe.denylist.json'
 
     It 'A real UNC path still hits (server segment of at least 2 characters, share segment not starting with a dot)' {
         $work = New-Work
         $f = Join-Path $work 'real.txt'
-        # 拼接构造，避免测试文件本身出现 UNC 字面量而被门禁扫到
+        # Built from pieces so the UNC literal never appears in this test file and trips the gate itself
         $sep = [string][char]92
         $unc = ('{0}{0}demo-host{1}share01{1}backup' -f $sep, $sep)
         New-TextFile $f @("备份目录：$unc")
@@ -230,7 +230,7 @@ Describe 'UNC path rule boundaries' {
     It 'Regex literals and escape sequences no longer produce false hits' {
         $work = New-Work
         $f = Join-Path $work 'regex-literals.ps1'
-        # 双反斜杠 + 单字符（x / n / t）不是 UNC 路径，只是正则转义写法
+        # A double backslash followed by one character (x / n / t) is not a UNC path, just regex escaping
         New-TextFile $f @('$pattern = ''\\x\.json''', '换行转义：''\\n''', '制表转义：''\\t''')
 
         $r = Invoke-PublicSafeScan -Files @($f) -DenylistFile @($dl)
@@ -256,7 +256,7 @@ Describe 'Reserved domain allowlist' {
     It 'Non-reserved domains still hit' {
         $work = New-Work
         $f = Join-Path $work 'emails-real.txt'
-        # 假域是占位构造的，不对应任何真实客户；字符串拼接是为了测试文件自身也不带真实域名
+        # The fake domains are placeholders for no real customer; concatenation keeps the real domain out of this test file
         $fake1 = 'someone@' + 'acme-demo-corp.com'
         $fake2 = 'ops@' + 'internal-lab.example.net'
         New-TextFile $f @($fake1, $fake2)

@@ -1,24 +1,24 @@
-﻿# repair-executor.Tests.ps1 — 修复执行器规则测试（Pester 3.4，PS 5.1 自带）
+﻿# repair-executor.Tests.ps1 — repair executor rule tests (Pester 3.4, bundled with PS 5.1)
 #
-# 覆盖规则表：
-#   R1 唯一同名重定位 / 多缺失放弃 / 同名不唯一放弃 / 路径都存在时放弃
-#   R2 缺失目录直接创建
-#   R3 SAP 错误族提示 / 未识别错误码提示
-#   协议级：错误码两级兜底（run 级为空时取 failedAction 级）、输出 .robin 保留 BOM
+# Rules covered:
+#   R1 unique same-name relocation / give up when several are missing / give up when the name is not unique / give up when every path exists
+#   R2 a missing directory is created directly
+#   R3 SAP error-family hint / unrecognized error-code hint
+#   Protocol level: two-level error-code fallback (empty run level falls back to the failedAction level), output .robin keeps its BOM
 #
-# 注意：Pester 3.4 的 $TestDrive 是整个 Describe 共享的，用例之间不自动清理，
-# 因此每个 It 用 New-Work 建独立子目录，避免产物互相污染。
+# Note: Pester 3.4 shares $TestDrive across the whole Describe and does not clean up between cases,
+# so every It builds its own subdirectory with New-Work to keep artifacts from contaminating each other.
 
 $script:Executor = Join-Path $PSScriptRoot '..\tools\pad-sync\repair-executor.ps1'
 
-# 每个用例的独立工作目录
+# Per-case working directory
 function New-Work {
     $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $d | Out-Null
     return $d
 }
 
-# 写最小可用的修复上下文 JSON（run 级错误码可留空，走 failedAction 兜底）
+# Writes the minimal repair context JSON (the run-level error code may stay empty and fall back to failedAction)
 function Write-Ctx([string]$Path, [string]$Code, [string]$Msg = '', [string]$SysName = '', [string]$ActCode = '') {
     $ctx = [ordered]@{
         round   = 1
@@ -34,9 +34,9 @@ function Write-Ctx([string]$Path, [string]$Code, [string]$Msg = '', [string]$Sys
     [IO.File]::WriteAllText($Path, ($ctx | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
 }
 
-# 在子进程里跑执行器，返回真实退出码（脚本内部用 exit，不能在同进程调）
-# -PadRoot 为空时不传该参数：用于验证执行器自身的根目录解析优先级
-# -RulesFile 可选：用于验证「新增错误码只改 JSON、不改脚本」
+# Runs the executor in a child process and returns the real exit code (the script calls exit, so it cannot run in-process)
+# -PadRoot is omitted when empty: used to verify the executor's own root-resolution precedence
+# -RulesFile is optional: used to verify that a new error code only needs a JSON change, never a script change
 function Invoke-Executor([string]$CtxPath, [string]$InRobin, [string]$OutRobin, [string]$PadRoot = '', [string]$RulesFile = '') {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:Executor,
         '-ContextFile', $CtxPath, '-InputRobin', $InRobin, '-OutputRobin', $OutRobin)
@@ -46,13 +46,13 @@ function Invoke-Executor([string]$CtxPath, [string]$InRobin, [string]$OutRobin, 
     return $LASTEXITCODE
 }
 
-# 把真实路径写成 .robin 里的双反斜杠转义形式
+# Turns a real path into the double-backslash form used inside .robin
 function To-Raw([string]$p) { return $p.Replace('\', '\\') }
 
-# 提示文件路径：与 repair-executor 内部 ChangeExtension('.hint.md') 一致
+# Hint file path: matches ChangeExtension('.hint.md') inside repair-executor
 function Hint-Of([string]$outRobin) { return [IO.Path]::ChangeExtension($outRobin, '.hint.md') }
 
-# 写输入 .robin（默认无 BOM）
+# Writes the input .robin (no BOM by default)
 function Write-Robin([string]$Path, [string]$Text, [bool]$Bom = $false) {
     [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding($Bom)))
 }
@@ -64,7 +64,7 @@ Describe 'repair-executor rule tests' {
         $pad = Join-Path $work 'pad'
         $real = Join-Path $pad 'Scripts\target.py'
         New-Item -ItemType File -Path $real -Force | Out-Null
-        $missing = Join-Path $pad 'Old\target.py'   # 不存在的旧路径
+        $missing = Join-Path $pad 'Old\target.py'   # the stale path that does not exist
         $in = Join-Path $work 'in.robin'
         Write-Robin $in ("SET Target TO '{0}'" -f (To-Raw $missing))
         $out = Join-Path $work 'out.robin'
@@ -115,7 +115,7 @@ Describe 'repair-executor rule tests' {
         New-Item -ItemType Directory -Path $pad -Force | Out-Null
         $missingDir = Join-Path $pad 'NewSub'
         $in = Join-Path $work 'in.robin'
-        # 目录路径在 .robin 里以双反斜杠结尾
+        # Directory paths end with a double backslash inside .robin
         $robinText = "SET X TO '$(To-Raw $missingDir)\\'"
         Write-Robin $in $robinText
         $out = Join-Path $work 'out.robin'
@@ -240,7 +240,7 @@ Describe 'repair-executor rule tests' {
         Write-Robin $in ("SET Target TO '{0}'" -f (To-Raw $missing))
         $out = Join-Path $work 'out.robin'
         $ctx = Join-Path $work 'ctx.json'
-        # 错误码是执行器从没见过的新值，靠规则表命中路径修复
+        # The error code is a value the executor has never seen; the rule table is what routes it to path fixing
         Write-Ctx $ctx 'Custom.PathMissing'
         $rules = Join-Path $work 'rules.json'
         $custom = [ordered]@{
@@ -282,7 +282,7 @@ Describe 'repair-executor rule tests' {
         $work = New-Work
         $explicit = Join-Path $work 'explicit'
         $fromEnv = Join-Path $work 'from-env'
-        # 两侧都放同名文件，改到哪个根就说明哪个来源生效
+        # Place the same-named file on both sides, so whichever root gets rewritten reveals which source won
         $real = Join-Path $explicit 'Scripts\target.py'
         New-Item -ItemType File -Path $real -Force | Out-Null
         New-Item -ItemType File -Path (Join-Path $fromEnv 'Scripts\target.py') -Force | Out-Null

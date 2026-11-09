@@ -1,8 +1,8 @@
-﻿# pad-fingerprint.Tests.ps1 — 流程指纹模块测试（Pester 3.4，PS 5.1 自带）
+﻿# pad-fingerprint.Tests.ps1 — tests for the flow fingerprint module (Pester 3.4, bundled with PowerShell 5.1)
 #
-# 全部用 TestDrive 造合成 Workspace / Scripts 根目录，不硬编码 LOCALAPPDATA、
-# 不注册计划任务、不启动 PAD、不触发任何真实流程。
-# 覆盖：哈希一致 / 内容漂移 / 读不到、身份变化、基线缺失或损坏、播种需人工确认。
+# Every test builds synthetic Workspace / Scripts roots under TestDrive: it never hardcodes LOCALAPPDATA,
+# registers no scheduled task, starts no PAD and triggers no real flow.
+# Covers: identical hashes / content drift / unreadable definition, identity change, missing or corrupt baseline, seeding that needs a human confirmation.
 
 $script:Module = Join-Path $PSScriptRoot '..\tools\pad-sync\PadFingerprint.psm1'
 $script:Script = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-fingerprint.ps1'
@@ -20,7 +20,7 @@ function Write-RunDef([string]$Path, [string]$FlowGuid, [string]$FlowName, [stri
     [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
 }
 
-# 造一份最小的 Scripts + Workspace：runId 目录名即修订目录名
+# Build a minimal Scripts + Workspace pair: the runId directory name is also the revision directory name
 function New-FakePad([string]$Work, [string]$FlowName, [string]$FlowGuid, [string]$RunId, [string]$RobinText = "SET A TO 'x'") {
     $scripts = Join-Path $Work 'Scripts'
     $ws = Join-Path $Work 'Workspace'
@@ -29,7 +29,7 @@ function New-FakePad([string]$Work, [string]$FlowName, [string]$FlowGuid, [strin
     New-Item -ItemType Directory -Path $revDir -Force | Out-Null
     $robin = Join-Path $revDir 'script.robin'
     [IO.File]::WriteAllText($robin, $RobinText, (New-Object Text.UTF8Encoding($false)))
-    # 部署产物（占位符替换后的副本）与源同目录：指纹已发布侧只认它
+    # The deployment artifact (a copy with placeholders substituted) sits beside the source: the published side of the fingerprint only trusts it
     $deployed = Join-Path $revDir 'script.deployed.robin'
     [IO.File]::WriteAllText($deployed, $RobinText, (New-Object Text.UTF8Encoding($false)))
     return [ordered]@{ scripts = $scripts; workspace = $ws; robin = $robin; deployed = $deployed; runId = $RunId }
@@ -50,7 +50,7 @@ Describe 'PadFingerprint location and identity' {
         $g = '11111111-1111-1111-1111-111111111111'
         $runId = '22222222-2222-2222-2222-222222222222'
         $fake = New-FakePad $work 'F' $g $runId
-        # 另一个早于本次运行的修订：不在时间窗口内，不会成为候选
+        # Another revision written before this run: outside the time window, so it never becomes a candidate
         $other = Join-Path $fake.workspace "$g\OLD00001"
         New-Item -ItemType Directory -Path $other -Force | Out-Null
         $op = Join-Path $other 'script.robin'
@@ -113,7 +113,7 @@ Describe 'PadFingerprint comparison' {
             -EnvironmentId $null -SourceRobin $fake.robin -WorkspaceRobin $fake.robin `
             -ConfigPath $null -AcceptancePath $null `
             -ScriptPaths @('tools/workday/workday.py') -ExternalPaths @())
-        # 改了定义再比对
+        # Change the definition, then compare again
         [IO.File]::WriteAllText($fake.robin, "SET A TO 'changed'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'fail'
@@ -126,7 +126,7 @@ Describe 'PadFingerprint comparison' {
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
         $base = Join-Path $work 'baseline.json'
-        # 新格式（source/deployed 拆分）；源哈希故意写成错的，验证 Mode 只改级别不改判定
+        # New format (source/deployed split); the source hash is deliberately wrong to prove Mode only changes the level, not the verdict
         Write-FingerprintBaseline $base ([ordered]@{
             version = 2; flow = 'F'; flowGuid = $g; environmentId = $null; machine = $env:COMPUTERNAME
             source = [ordered]@{
@@ -245,7 +245,7 @@ Describe 'PadFingerprint comparison' {
 
 Describe 'PadFingerprint identity resolution and hash domain split' {
 
-    # 造一条新格式基线：源与已发布各自一份，避免任何跨域比较
+    # Build a new-format baseline: one copy for the source and one for the published artifact, so nothing is ever compared across domains
     function New-BaselineV2([string]$Work, [string]$SourceRobin, [string]$DeployedRobin, [string]$DisplayName, [string]$FlowGuid) {
         $base = Join-Path $Work 'baseline.json'
         $srcParts = Get-FingerprintParts $SourceRobin $null $null
@@ -274,7 +274,7 @@ Describe 'PadFingerprint identity resolution and hash domain split' {
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work '示例流程显示名' $g '22222222-2222-2222-2222-222222222222'
         $base = New-BaselineV2 $work $fake.robin $fake.robin '示例流程显示名' $g
-        # 入参是业务文件名，和 PAD 里的显示名完全不同
+        # The argument is the business file name, which is completely different from the PAD display name
         $r = Test-FlowFingerprint -FlowName 'demo-flow' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'pass'
         $r.code | Should Be 'OK'
@@ -320,7 +320,7 @@ Describe 'PadFingerprint identity resolution and hash domain split' {
     It 'shape two: raw bytes differ but normalized text matches -> still pass, noting the byte difference' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
-        # PAD 落盘会追加 @@ 元数据头；规范化后与源完全一致
+        # PAD appends @@ metadata headers when it writes the file; after normalization it matches the source exactly
         $txt = "SET A TO 'x'"
         $deployedTxt = "@@ConnectionString TO 'x'`r`n" + $txt
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222' -RobinText $deployedTxt
@@ -338,7 +338,7 @@ Describe 'PadFingerprint identity resolution and hash domain split' {
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
         $base = New-BaselineV2 $work $fake.robin $fake.robin 'F' $g
-        # 已发布副本被改成了别的动作：逻辑哈希不再等于基线
+        # The published copy was changed into different actions: its logic hash no longer equals the baseline
         $j = [IO.File]::ReadAllText($base, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $j.deployed.logicHash = 'deadbeef'
         [IO.File]::WriteAllText($base, ($j | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
@@ -350,7 +350,7 @@ Describe 'PadFingerprint identity resolution and hash domain split' {
 
 Describe 'PadFingerprint published side compares the deployment artifact' {
 
-    # 用模块自带的 v2 播种：deployed 段取自部署产物
+    # Seed with the module's own v2 routine: the deployed section comes from the deployment artifact
     function New-BaselineFromDeployed([string]$Work, $Fake, [string]$Guid) {
         $base = Join-Path $Work 'baseline-deployed.json'
         $null = Write-FingerprintBaseline $base (New-FingerprintBaseline -FlowName 'F' -FlowGuid $Guid `
@@ -368,7 +368,7 @@ Describe 'PadFingerprint published side compares the deployment artifact' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'pass'
         $r.code | Should Be 'OK'
-        # 整体通过时明确说明：源是模板，与部署产物不同属正常
+        # On overall success, say so explicitly: the source is a template, so differing from the deployment artifact is normal
         $r.message | Should Match 'source is a template'
     }
 
@@ -403,7 +403,7 @@ Describe 'PadFingerprint published side compares the deployment artifact' {
         $g = '11111111-1111-1111-1111-111111111111'
         $fake = New-FakePad $work 'F' $g '22222222-2222-2222-2222-222222222222'
         $base = New-BaselineFromDeployed $work $fake $g
-        # 只改源模板，部署产物不动：源对源比较必须先报出来
+        # Change only the source template and leave the deployment artifact alone: the source-to-source comparison must report it first
         [IO.File]::AppendAllText($fake.robin, "`r`nSET B TO 'y'", (New-Object Text.UTF8Encoding($false)))
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'fail'
@@ -416,10 +416,10 @@ Describe 'pad-fingerprint baseline naming uses the pad-admit convention' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
         $runId = '22222222-2222-2222-2222-222222222222'
-        # PAD 流程名与业务流文件名不同：这正是中文流程名的真实形态
+        # The PAD flow name differs from the business flow file name: this is exactly what a real Chinese flow name looks like
         $padName = '示例流程显示名'
         $bizName = 'demo-flow'
-        # 已发布副本必须与源同逻辑，否则拆分后的基线会判 DRIFT
+        # The published copy must be logically identical to the source, or the split baseline would report DRIFT
         $fake = New-FakePad $work $padName $g $runId -RobinText "SET A TO 'src'"
 
         $flows = Join-Path $work 'business\flows'
@@ -430,7 +430,7 @@ Describe 'pad-fingerprint baseline naming uses the pad-admit convention' {
             (New-Object Text.UTF8Encoding($false)))
         $srcRobin = Join-Path $flows "$bizName.robin"
         [IO.File]::WriteAllText($srcRobin, "SET A TO 'src'", (New-Object Text.UTF8Encoding($false)))
-        # 部署产物：已发布侧只跟它比，缺失会被判 UNKNOWN
+        # Deployment artifact: the published side compares only against it, and a missing one is reported as UNKNOWN
         [IO.File]::WriteAllText((Join-Path $flows "$bizName.deployed.robin"), "SET A TO 'src'",
             (New-Object Text.UTF8Encoding($false)))
         $cfgDir = Join-Path $work 'business\config'
@@ -445,12 +445,12 @@ Describe 'pad-fingerprint baseline naming uses the pad-admit convention' {
             -ConsoleConfigPath (Join-Path $work 'none.config') -Set -Confirm -ScriptPaths @('tools/workday/workday.py') 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
 
-        # 关键断言：基线用的是 flow.json 文件名，不是 PAD 流程名
+        # Key assertion: the baseline uses the flow.json file name, not the PAD flow name
         $baseline = Join-Path $work "business\fingerprints\$bizName.json"
         (Test-Path -LiteralPath $baseline) | Should Be $true
         (Test-Path -LiteralPath (Join-Path $work "business\fingerprints\$padName.json")) | Should Be $false
 
-        # 与 pad-admit 同一口径（不传 ScriptsRoot）读取：应能命中，且哈希一致
+        # Read it exactly the way pad-admit does (without ScriptsRoot): it must hit and the hashes must match
         $r = Test-FlowFingerprint -FlowName $bizName -RobinPath $srcRobin -ConfigPath $cfg `
             -AcceptancePath $acc -BaselinePath $baseline
         $r.status | Should Be 'pass'
@@ -492,7 +492,7 @@ Describe 'pad-fingerprint seeding requires human confirmation' {
     It 'multiple candidate revisions: stops as AMBIGUOUS with exit code 2 and writes no baseline' {
         $work = New-Work
         $g = '11111111-1111-1111-1111-111111111111'
-        # runId 精确命中不到同名修订目录，时间窗口内两个候选
+        # The runId does not exactly hit a revision directory of the same name; two candidates fall inside the time window
         foreach ($rev in 'AAAA0001', 'BBBB0002') {
             $d = Join-Path $work "Workspace\$g\$rev"
             New-Item -ItemType Directory -Path $d -Force | Out-Null
@@ -513,7 +513,7 @@ Describe 'pad-fingerprint seeding requires human confirmation' {
 
 Describe 'PadFingerprint scripts section (v3)' {
 
-    # 造一个最小仓库：两个仓库内脚本 + 两个仓库外（绝对路径）旧拷贝
+    # Build a minimal repository: two in-repo scripts + two out-of-repo (absolute path) old copies
     function New-ScriptRepo([string]$Work) {
         $rels = @('scripts/a.vbs', 'tools/b.py')
         foreach ($rel in $rels) {
@@ -536,7 +536,7 @@ Describe 'PadFingerprint scripts section (v3)' {
         Write-FingerprintBaseline $base ([ordered]@{
             version = 3; flow = 'F'; flowGuid = $null; environmentId = $null; machine = $env:COMPUTERNAME
             hashes = [ordered]@{ robin = 'x'; config = $null; acceptance = $null }
-            # 用模块自带的计算函数生成两段，避免测试自己写一份哈希规则
+            # Use the module's own calculation functions for both sections, so the test never duplicates the hash rules
             scripts = (Get-ScriptFingerprintParts -RepoRoot $work -Paths $paths.repo)
             external = (Get-ExternalScriptFingerprintParts -Paths $paths.external)
             seededAt = '2026-11-06T00:00:00Z'
@@ -588,7 +588,7 @@ Describe 'PadFingerprint scripts section (v3)' {
             external = (Get-ExternalScriptFingerprintParts -Paths $paths.external)
             seededAt = '2026-11-06T00:00:00Z'
         })
-        # 只改仓库外的第二份拷贝，仓库内脚本与另一份外部拷贝保持不动
+        # Change only the second out-of-repo copy; the in-repo scripts and the other external copy stay untouched
         [IO.File]::AppendAllText($paths.external[1], "`r`nchanged", (New-Object Text.UTF8Encoding($false)))
         $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
         $r.status | Should Be 'warn'
@@ -609,7 +609,7 @@ Describe 'PadFingerprint scripts section (v3)' {
             external = (Get-ExternalScriptFingerprintParts -Paths $paths.external)
             seededAt = '2026-11-06T00:00:00Z'
         })
-        # 只改其中一个脚本，另一个保持不动
+        # Change only one of the scripts and leave the other untouched
         [IO.File]::AppendAllText((Join-Path $work 'scripts\a.vbs'), "`r`nchanged", (New-Object Text.UTF8Encoding($false)))
         $r = Test-ScriptFingerprint -BaselinePath $base -RepoRoot $work
         $r.status | Should Be 'warn'

@@ -1,10 +1,10 @@
-﻿# PadDesigner.Tests.ps1 — 设计器模块（Pester 3.4，PS 5.1 自带）
+﻿# PadDesigner.Tests.ps1 — designer module (Pester 3.4, bundled with PS 5.1)
 #
-# 设计器交互本身需要真实窗口，无法在 CI/单测里跑；这里覆盖可离线验证的部分：
-#   1) 模块可导入且导出编排层依赖的函数
-#   2) 窗口越界判定（修复位置逻辑的纯函数部分）
-#   3) 画布回读比对（-VerifyCanvas 的核心）：完全一致 / 只粘进去一部分
-#   4) pad-sync 已退化为薄封装：不再自带 Win32 声明与 UI 函数
+# The designer interaction itself needs a real window, so it cannot run in CI or unit tests; this covers what can be verified offline:
+#   1) The module imports and exports the functions the orchestration layer depends on
+#   2) Off-screen window detection (the pure-function part of the repair-position logic)
+#   3) Canvas read-back comparison (the core of -VerifyCanvas): exact match / only partially pasted
+#   4) pad-sync has degenerated into a thin wrapper: it no longer carries Win32 declarations or UI functions
 
 $script:Module = Join-Path $PSScriptRoot '..\tools\pad-sync\PadDesigner.psm1'
 Import-Module $script:Module -Force
@@ -24,10 +24,10 @@ Describe 'PadDesigner module extraction and canvas comparison' {
     It 'A log locked by PAD (read allowed, write denied) can still be read' {
         $f = Join-Path $TestDrive 'locked.log'
         [IO.File]::WriteAllText($f, '{"index":1}', (New-Object Text.UTF8Encoding($false)))
-        # 模拟 PAD 运行期间持有的句柄：别人只能读，不能写
+        # Simulate the handle PAD holds while running: others may read but not write
         $fs = [IO.File]::Open($f, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
         try {
-            # 默认的 ReadAllLines（自己只授予 Read）在这种占用下会失败，正是线上报错的成因
+            # The default ReadAllLines (which grants itself only Read) fails under this sharing mode — exactly the production error
             { [IO.File]::ReadAllLines($f) } | Should Throw
             (Read-TextShared $f) | Should Be '{"index":1}'
         } finally {
@@ -37,7 +37,7 @@ Describe 'PadDesigner module extraction and canvas comparison' {
 
     It 'Window off-screen detection: on-screen is inside, right overflow and minimized count as outside' {
         (Test-WindowOutside -Left 0 -Top 0 -Right 1200 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080) | Should Be $false
-        # 实测出现过的越界窗口：L=878 R=2078，超出 1920 屏宽
+        # A real off-screen window observed in practice: L=878 R=2078, beyond the 1920 screen width
         (Test-WindowOutside -Left 878 -Top 0 -Right 2078 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080) | Should Be $true
         (Test-WindowOutside -Left -10 -Top 0 -Right 1000 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080) | Should Be $true
         (Test-WindowOutside -Left 0 -Top 0 -Right 1000 -Bottom 900 -ScreenWidth 1920 -ScreenHeight 1080 -Minimized) | Should Be $true
@@ -68,7 +68,7 @@ SET B TO 2
 SET C TO 3
 File.WriteToFile File: F1
 "@
-        # 模拟粘贴被截断：后两行没进画布
+        # Simulate a truncated paste: the last two lines never reached the canvas
         $canvas = @"
 SET A TO 1
 SET B TO 2
@@ -81,7 +81,7 @@ SET B TO 2
     }
 
     It 'Run log verdict: per-action lines do not end the run, only the final summary line returns a terminal status' {
-        # 逐动作行带 index；整次运行的汇总行没有 index（PAD 的 Actions.log 约定）
+        # Per-action lines carry an index; the run summary line has none (PAD's Actions.log convention)
         $log = Join-Path $TestDrive 'Actions.log'
         @(
             '{"index":1,"name":"设置变量","status":"Succeeded"}',
@@ -114,7 +114,7 @@ SET B TO 2
         $root = Join-Path $TestDrive 'ResolveRun'
         $rid = 'c7483d18-9667-4ba8-b8ad-ec1dc5d1470b'
         New-Item -ItemType Directory -Path (Join-Path $root "flowA\Runs\$rid") -Force | Out-Null
-        # 另一个流的目录更晚创建、且名字与本次 runId 前缀相似，必须不被误选
+        # The other flow's directory is created later and its name resembles this runId's prefix, yet it must not be picked
         Start-Sleep -Milliseconds 30
         New-Item -ItemType Directory -Path (Join-Path $root 'flowB\Runs\1f286090-d61e-488c-8e95-7751d4477b13') -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $root "flowB\Runs\$rid-x") -Force | Out-Null
@@ -123,10 +123,10 @@ SET B TO 2
         $hit.Name | Should Be $rid
         $hit.FullName | Should Match 'flowA'
 
-        # 只存在别人的 runId 时必须返回 $null；若退化成“取最新”，这里会拿到别人的目录而变红
+        # When only another flow's runId exists the result must be $null; a "take the latest" fallback would grab that directory and turn this red
         (Resolve-PadRunDir -ScriptsRoot $root -RunId 'ffffffff-0000-0000-0000-000000000000') | Should Be $null
 
-        # pad-sync 不得再自带第二套目录搜索，必须走同一个函数
+        # pad-sync must not carry a second directory search implementation; it has to call the same function
         $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\tools\pad-sync\pad-sync.ps1'), [Text.Encoding]::UTF8)
         ($src -match 'Resolve-PadRunDir') | Should Be $true
         ($src -match 'Get-ChildItem -LiteralPath \$base -Recurse') | Should Be $false
@@ -220,7 +220,7 @@ Describe 'Pre-trigger validation: the flow name must resolve to a flowId' {
             diagnosticInfo = @{ runId = $runId }
         } | ConvertTo-Json -Depth 5
         [IO.File]::WriteAllText((Join-Path $dir 'RunDefinition.json'), $json, (New-Object Text.UTF8Encoding($false)))
-        # 再删掉流程目录，模拟“记录里存在但实际流程已删除”
+        # Then delete the flow directory to simulate "the record exists but the actual flow was deleted"
         Remove-Item -LiteralPath (Join-Path $root $flowId) -Recurse -Force
         (Resolve-PadFlowIdentity -WorkflowName 'PAD_SYNC_TEST' -ScriptsRoot $root) | Should Be $null
     }

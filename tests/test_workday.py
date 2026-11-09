@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""工作日历判定测试：is_workday / load_workdays / --is-workday 命令行
+"""Workday calendar tests: is_workday / load_workdays / the --is-workday CLI
 
-覆盖定时任务关心的三点：
-  1. 日历标"否"的日期（法定节假日）判定为非工作日；
-  2. 日历标"是"的日期（含调休上班的周末）判定为工作日；
-  3. 日历缺失时按周一至周五兜底，并明确报告日历不可用（不让定时任务静默停摆）。
+Covers the three points scheduled jobs care about:
+  1. dates the calendar marks as non-working (public holidays) are judged non-working;
+  2. dates the calendar marks as working (including make-up working weekends) are judged working;
+  3. when the calendar is missing, fall back to Monday-Friday and explicitly report that the calendar
+     is unavailable, so scheduled jobs never silently stop running.
 """
 import subprocess
 import sys
@@ -15,16 +16,17 @@ from openpyxl import Workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "workday"))
-import workday as reconcile  # 保留别名，测试体不用改；被测模块是通用件 # noqa: E402
+import workday as reconcile  # keep the alias so test bodies stay untouched; the module under test is general-purpose  # noqa: E402
 
 RECONCILE = ROOT / "tools" / "workday" / "workday.py"
 
 
 def _write_calendar(path, rows, base=None, sheet="工作日", decoy=None):
-    """rows: [(相对 base 的天数, 是否工作日)]；base 缺省为今天
+    """rows: [(day offset from base, working flag)]; base defaults to today
 
-    base 可指定绝对日期，用于构造“某个月的月末”这类与当前日期无关的场景。
-    sheet 可改页签名；decoy 会先建一个空页签，用于验证「不是按第一个表选」。
+    base may be an absolute date, which builds scenarios independent of the current date,
+    such as "the last day of a given month". sheet overrides the sheet name; decoy first
+    creates an empty sheet with that name, proving the reader does not simply take the first sheet.
     """
     wb = Workbook()
     ws = wb.active
@@ -47,21 +49,22 @@ def test_workday_true_for_marked_day(tmp_path):
 
 
 def test_holiday_marked_no_is_not_workday(tmp_path):
-    """法定节假日：日历标"否"，即使今天是周一到周五也不该跑"""
+    """Public holiday: the calendar marks it non-working, so it must not run even on a Monday-Friday"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "否"), (-1, "是")])
     assert reconcile.is_workday(str(cal), date.today()) == (False, True)
 
 
 def test_single_holiday_row_counts_as_available_calendar(tmp_path):
-    """只有一行且标"否"：日历有效、当天不是工作日，不能当成"日历不可用"走兜底"""
+    """Single row marked non-working: the calendar is valid and today is just not a working day, so this
+    must not be mistaken for "calendar unavailable" and take the fallback path"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "否")])
     assert reconcile.is_workday(str(cal), date.today()) == (False, True)
 
 
 def test_calendar_in_range_reports_min_max(tmp_path):
-    """今天在覆盖范围内：WORKDAY 按标记判断，并给出 CALENDAR_MIN / MAX"""
+    """Today is within the covered range: WORKDAY follows the markers and CALENDAR_MIN / MAX are reported"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(-1, "是"), (0, "是")])
     ok, has_cal, stale, dmin, dmax = reconcile.is_workday_detail(str(cal), date.today())
@@ -71,18 +74,18 @@ def test_calendar_in_range_reports_min_max(tmp_path):
 
 
 def test_calendar_out_of_range_is_stale_not_rest(tmp_path):
-    """日历最后一天早于今天：判定为过期，WORKDAY 不能表达成 0（休息）"""
+    """The calendar's last day is before today: report it as stale, and WORKDAY must not collapse to 0 (rest)"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(-30, "是"), (-5, "否")])
     detail = reconcile.is_workday_detail(str(cal), date.today())
     assert detail[2] is True, "今天超出日历范围必须标记 stale"
     assert detail[0] is True, "过期不能返回 WORKDAY=0"
-    # 保留旧签名也不得把过期读成休息
+    # The legacy signature must not report a stale calendar as rest either
     assert reconcile.is_workday(str(cal), date.today()) == (True, True)
 
 
 def test_empty_calendar_is_available_but_not_workday(tmp_path):
-    """只有表头、没有任何日期行：日历有效但今天不在表里，不判过期"""
+    """Header only, no date rows: the calendar is valid, today is simply absent from it, and it is not stale"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [])
     detail = reconcile.is_workday_detail(str(cal), date.today())
@@ -90,21 +93,21 @@ def test_empty_calendar_is_available_but_not_workday(tmp_path):
 
 
 def test_weekend_marked_yes_is_workday(tmp_path):
-    """调休上班：日历标"是"，即使今天是周末也要跑"""
+    """Make-up working day: the calendar marks it working, so it must run even on a weekend"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "是")])
     assert reconcile.is_workday(str(cal), date.today())[0] is True
 
 
 def test_chinese_sheet_still_recognized_with_english_decoy_first(tmp_path):
-    """中文页签仍可识别，且优先于排在前面的英文页签"""
+    """A Chinese sheet name is still recognized, and it wins over an English sheet listed before it"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "是")], decoy="Workday")
     assert reconcile.is_workday(str(cal), date.today()) == (True, True)
 
 
 def test_english_sheet_alias_recognized(tmp_path):
-    """英文页签 Workday 作为别名同样可读"""
+    """An English sheet named Workday is accepted as an alias"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "是")], sheet="Workday")
     assert reconcile.is_workday(str(cal), date.today()) == (True, True)
@@ -117,7 +120,7 @@ def test_missing_calendar_falls_back_to_weekday(tmp_path):
 
 
 def test_load_prev_workday_skips_holiday(tmp_path):
-    """上一个工作日要跳过标"否"的日期"""
+    """The previous workday must skip dates marked non-working"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(-1, "否"), (-2, "是"), (-3, "是")])
     assert reconcile.load_prev_workday(str(cal), date.today()) == date.today() - timedelta(days=2)
@@ -142,47 +145,49 @@ def test_cli_is_workday_reports_missing_calendar(tmp_path):
     assert "WORKDAY=" in proc.stdout
 
 
-# ── 月末工作日判定：对应 pad-schedule 的 -RunIfLastWorkday ──────
-# 两条路径（有日历 / 无日历）各自的真、假两侧都要覆盖：
-# 只测“月末返回真”，漏写“今天本身必须是工作日”这个前提也照样能过。
-# 用固定的 2026-10 构造场景，避免用例结果随运行日期漂移。
+# ── Month-end workday check: mirrors -RunIfLastWorkday in pad-schedule ──────
+# Both paths (calendar present / calendar absent) need coverage on their true and false side:
+# testing only "the last day of the month returns true" would still pass if the precondition
+# "today itself must be a working day" were missing.
+# Scenarios use fixed dates in October 2026 so results do not drift with the run date.
 
-OCT_29 = date(2026, 10, 29)   # 周四
-OCT_30 = date(2026, 10, 30)   # 周五，本月最后一个工作日
-OCT_31 = date(2026, 10, 31)   # 周六，本月最后一天
+OCT_29 = date(2026, 10, 29)   # Thursday
+OCT_30 = date(2026, 10, 30)   # Friday, the month's last working day
+OCT_31 = date(2026, 10, 31)   # Saturday, the month's last day
 
 
 def test_last_workday_true_for_month_end(tmp_path):
-    """日历可用：今天是本月最后一个工作日 → 真"""
+    """Calendar available: today is the month's last working day -> true"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "是"), (-1, "是")], base=OCT_30)
     assert reconcile.is_last_workday(str(cal), OCT_30) is True
 
 
 def test_last_workday_false_in_middle_of_month(tmp_path):
-    """日历可用：今天是工作日但本月还有更晚的工作日 → 假"""
+    """Calendar available: today is a working day but a later working day remains in the month -> false"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "是"), (1, "是")], base=OCT_29)
     assert reconcile.is_last_workday(str(cal), OCT_29) is False
 
 
 def test_last_workday_false_when_today_not_workday(tmp_path):
-    """日历可用：今天不在工作日集合里（周末） → 假，即使本月已无更晚的工作日"""
+    """Calendar available: today is not in the working set (weekend) -> false, even though no later
+    working day remains in the month"""
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(-1, "是")], base=OCT_31)
     assert reconcile.is_last_workday(str(cal), OCT_31) is False
 
 
 def test_last_workday_true_without_calendar(tmp_path):
-    """日历不可用：月末周五 → 按周一到周五兜底判真"""
+    """Calendar unavailable: month-end Friday -> the Monday-Friday fallback returns true"""
     assert reconcile.is_last_workday(str(tmp_path / "nope.xlsx"), OCT_30) is True
 
 
 def test_last_workday_false_without_calendar_in_middle(tmp_path):
-    """日历不可用：周四，本月剩余还有周五 → 兜底判假"""
+    """Calendar unavailable: Thursday with Friday still left in the month -> the fallback returns false"""
     assert reconcile.is_last_workday(str(tmp_path / "nope.xlsx"), OCT_29) is False
 
 
 def test_last_workday_false_without_calendar_on_weekend(tmp_path):
-    """日历不可用：周六 → 兜底判假"""
+    """Calendar unavailable: Saturday -> the fallback returns false"""
     assert reconcile.is_last_workday(str(tmp_path / "nope.xlsx"), OCT_31) is False

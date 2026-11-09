@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Excel 只读读取层测试：表头定位 / 日期与数值转换 / 整表读取 / 规则表 / 表头探查
+"""Tests for the read-only Excel layer: header lookup / date and number conversion /
+whole-sheet reading / rule tables / header inspection
 
-重点覆盖历史口径与新增语义：
-  1. 表头按名称定位（精确优先、前缀兜底、缺列返回 None）；
-  2. 日期转换保持既有格式与 Excel 序列号口径，解析失败返回 None；
-  3. 数值转换区分「空」与「非法」，旧口径 to_number 仍统一返回 None；
-  4. 规则页签读成字典是纯函数：空表返回 {}、缺列报错、重复键报错；
-  5. --dump 只读排障入口：打印列名与推断类型，且不改动文件。
+Covers both the legacy contract and the newer semantics:
+  1. headers are located by name (exact match first, prefix fallback, None when absent);
+  2. date conversion keeps the existing formats and the Excel serial-number convention,
+     and returns None when parsing fails;
+  3. number conversion separates "empty" from "invalid", while the legacy to_number
+     still returns None for both;
+  4. reading a rule sheet into a dict is a pure function: an empty sheet returns {}, a
+     missing key column raises, and duplicate keys raise;
+  5. --dump is a read-only diagnostic entry point: it prints column names and inferred
+     types without touching the file.
 """
 import hashlib
 import subprocess
@@ -25,9 +30,9 @@ import xlsx_io  # noqa: E402
 MODULE = ROOT / "tools" / "xlsx" / "xlsx_io.py"
 
 
-# ── 表头定位 ──────────────────────────────────────────────────
+# ── Header lookup ─────────────────────────────────────────────
 def test_find_col_exact_case_and_space_insensitive():
-    """表头匹配忽略大小写与首尾空格，并按 names 的顺序优先精确命中"""
+    """Header matching ignores case and surrounding spaces, and tries exact hits in the order of names first"""
     hdr = [" 物料号 ", "PO 号", "数量"]
     assert xlsx_io.find_col(hdr, ["物料号"]) == 1
     assert xlsx_io.find_col(hdr, ["po 号"]) == 2
@@ -35,45 +40,47 @@ def test_find_col_exact_case_and_space_insensitive():
 
 
 def test_find_col_prefers_first_exact_then_prefix():
-    """先按 names 顺序精确匹配，全部不中才用前缀兜底"""
+    """Exact matches are tried in the order of names; the prefix fallback only applies when none hits"""
     hdr = ["净重（kg）", "净重", "数量"]
     assert xlsx_io.find_col(hdr, ["净重"]) == 2, "精确命中应优先于前缀命中"
     assert xlsx_io.find_col(hdr, ["毛重"], prefix="净重") == 1, "没有精确命中时按前缀兜底"
 
 
 def test_find_col_missing_returns_none():
-    """列名缺失返回 None，由调用方决定硬失败还是可缺省"""
+    """A missing column name returns None, leaving it to the caller to fail hard or tolerate the absence"""
     assert xlsx_io.find_col(["物料号", "数量"], ["批号"]) is None
     assert xlsx_io.find_col(["物料号", "数量"], ["批号"], prefix="批") is None
 
 
-# ── 日期转换 ──────────────────────────────────────────────────
+# ── Date conversion ───────────────────────────────────────────
 @pytest.mark.parametrize("text", [
     "2026-10-26", "2026/10/26", "2026.10.26", "26.10.2026", "26/10/2026", "20261026",
 ])
 def test_to_date_supports_legacy_string_formats(text):
-    """六种历史字符串格式都必须继续可解析"""
+    """All six legacy string formats must stay parseable"""
     assert xlsx_io.to_date(text) == date(2026, 10, 26)
 
 
 def test_to_date_supports_datetime_date_and_serial():
-    """datetime / date / Excel 序列号三条路径保持一致"""
+    """The datetime, date and Excel serial-number paths must agree"""
     assert xlsx_io.to_date(datetime(2026, 10, 26, 15, 30)) == date(2026, 10, 26)
     assert xlsx_io.to_date(date(2026, 10, 26)) == date(2026, 10, 26)
-    # Excel 序列号原点 1899-12-30：序列号 1 即 1899-12-31
+    # Excel serial numbers start at 1899-12-30, so serial 1 is 1899-12-31
     assert xlsx_io.to_date(1) == date(1899, 12, 31)
 
 
 def test_to_date_invalid_returns_none():
-    """解析失败与空值都返回 None（调用方按「无法解析」处理，绝不猜日期）"""
+    """Parse failures and empty values both return None: the caller treats them as "unparseable"
+    and never guesses a date"""
     assert xlsx_io.to_date(None) is None
     assert xlsx_io.to_date("不是日期") is None
     assert xlsx_io.to_date("") is None
 
 
-# ── 数值转换 ──────────────────────────────────────────────────
+# ── Number conversion ─────────────────────────────────────────
 def test_parse_number_distinguishes_empty_and_invalid():
-    """空值、空白字符串是 empty；解析不成数值是 invalid；两者不得混为一谈"""
+    """Empty values and blank strings classify as empty; text that does not parse as a number is
+    invalid; the two must never be conflated"""
     assert xlsx_io.parse_number(None) == (None, "empty")
     assert xlsx_io.parse_number("") == (None, "empty")
     assert xlsx_io.parse_number("   ") == (None, "empty")
@@ -82,13 +89,13 @@ def test_parse_number_distinguishes_empty_and_invalid():
 
 
 def test_parse_number_strips_thousands_separator():
-    """带千分位的文本按历史口径去掉逗号后再解析"""
+    """Text with thousands separators has the commas stripped first, matching the legacy behaviour"""
     assert xlsx_io.parse_number("1,234.5") == (1234.5, "number")
     assert xlsx_io.parse_number(7) == (7.0, "number")
 
 
 def test_to_number_keeps_legacy_none_semantics():
-    """旧口径：空值与非法值都返回 None，现有调用方输出不变"""
+    """Legacy contract: empty and invalid values both return None, so existing callers see unchanged output"""
     assert xlsx_io.to_number(None) is None
     assert xlsx_io.to_number("") is None
     assert xlsx_io.to_number("abc") is None
@@ -96,7 +103,7 @@ def test_to_number_keeps_legacy_none_semantics():
 
 
 def test_infer_column_type_by_stored_type():
-    """列类型按单元格存储类型推断：日期 / 数值 / 文本 / 空 / 混合"""
+    """Column type is inferred from how the cells are stored: date / number / text / empty / mixed"""
     assert xlsx_io.infer_column_type([datetime(2026, 10, 26), None]) == "date"
     assert xlsx_io.infer_column_type([1, 2.5]) == "number"
     assert xlsx_io.infer_column_type(["甲", "乙"]) == "text"
@@ -104,9 +111,9 @@ def test_infer_column_type_by_stored_type():
     assert xlsx_io.infer_column_type([1, "甲"]) == "mixed"
 
 
-# ── 整表读取 ──────────────────────────────────────────────────
+# ── Whole-sheet reading ───────────────────────────────────────
 def test_load_grid_and_header_row(tmp_path):
-    """整表读取保留公式原文（只读模式），并可用 header_row_grid 取表头"""
+    """Whole-sheet reading keeps formula source text (read-only mode), and header_row_grid extracts the header"""
     path = tmp_path / "table.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -125,7 +132,7 @@ def test_load_grid_and_header_row(tmp_path):
 
 
 def test_load_grid_caps_columns(tmp_path):
-    """只读到 max_col 列，避免格式残留的上万空列占内存"""
+    """Only max_col columns are read, so tens of thousands of leftover formatted empty columns do not eat memory"""
     path = tmp_path / "wide.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -140,9 +147,9 @@ def test_load_grid_caps_columns(tmp_path):
     assert len(grid[0]) == 10
 
 
-# ── 规则页签 → 字典（纯函数）────────────────────────────────
+# ── Rule sheet -> dict (pure function) ────────────────────────
 def _rule_sheet(rows):
-    """造一张「项目 / 值 / 单位 / 说明」页签"""
+    """Build a sheet with the key / value / unit / note columns"""
     wb = Workbook()
     ws = wb.active
     ws.append(["项目", "值", "单位", "说明"])
@@ -152,7 +159,7 @@ def _rule_sheet(rows):
 
 
 def test_read_rule_table_returns_dict():
-    """正常页签读成 {项目: {value, unit, note}}，保留原始单元格值"""
+    """A normal sheet reads as {key: {value, unit, note}} and keeps the raw cell values"""
     wb, ws = _rule_sheet([
         ("阈值", 0.95, "%", "超过该值才算命中"),
         ("上限", "100", "件", ""),
@@ -166,14 +173,14 @@ def test_read_rule_table_returns_dict():
 
 
 def test_read_rule_table_empty_sheet_returns_empty_dict():
-    """空表（只有表头）返回 {}，不报错"""
+    """A sheet with nothing but a header returns {}, without raising"""
     wb, ws = _rule_sheet([])
     assert xlsx_io.read_rule_table(ws) == {}
     wb.close()
 
 
 def test_read_rule_table_blank_workbook_returns_empty_dict():
-    """工作表完全空白时同样返回 {}"""
+    """A completely blank worksheet also returns {}"""
     wb = Workbook()
     ws = wb.active
     assert xlsx_io.read_rule_table(ws) == {}
@@ -181,7 +188,7 @@ def test_read_rule_table_blank_workbook_returns_empty_dict():
 
 
 def test_read_rule_table_missing_key_column_raises():
-    """列名缺失直接报错，不能静默读成空字典（列漂移必须被人看到）"""
+    """A missing key column raises instead of silently yielding an empty dict: column drift must be noticed"""
     wb = Workbook()
     ws = wb.active
     ws.append(["名称", "值", "单位"])
@@ -192,7 +199,7 @@ def test_read_rule_table_missing_key_column_raises():
 
 
 def test_read_rule_table_duplicate_key_raises():
-    """项目值重复属于歧义，直接报错而不是静默取最后一行"""
+    """Duplicate keys are ambiguous, so raise rather than silently keep the last row"""
     wb, ws = _rule_sheet([("阈值", 1), ("阈值", 2)])
     with pytest.raises(ValueError, match="重复"):
         xlsx_io.read_rule_table(ws)
@@ -200,7 +207,7 @@ def test_read_rule_table_duplicate_key_raises():
 
 
 def test_read_rule_table_optional_columns_absent():
-    """单位 / 说明列不存在时对应字段记 None，不影响取值"""
+    """When the unit / note columns are absent their fields are None, which does not affect the value lookup"""
     wb = Workbook()
     ws = wb.active
     ws.append(["项目", "值"])
@@ -210,7 +217,7 @@ def test_read_rule_table_optional_columns_absent():
     wb.close()
 
 
-# ── 表头探查 CLI ─────────────────────────────────────────────
+# ── Header inspection CLI ─────────────────────────────────────
 def _dump(path, *extra):
     return subprocess.run(
         [sys.executable, str(MODULE), "--dump", str(path), *extra],
@@ -218,7 +225,7 @@ def _dump(path, *extra):
 
 
 def test_dump_prints_columns_and_types(tmp_path):
-    """--dump 打印每张工作表的列名与推断类型"""
+    """--dump prints each worksheet's column names and inferred types"""
     path = tmp_path / "dump.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -242,7 +249,7 @@ def test_dump_prints_columns_and_types(tmp_path):
 
 
 def test_dump_is_read_only(tmp_path):
-    """--dump 不得改动文件字节"""
+    """--dump must not change a single byte of the file"""
     path = tmp_path / "readonly.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -256,7 +263,7 @@ def test_dump_is_read_only(tmp_path):
 
 
 def test_dump_missing_file_fails(tmp_path):
-    """文件不存在：退出码 1，错误写 stderr"""
+    """Missing file: exit code 1 and the error goes to stderr"""
     proc = _dump(tmp_path / "nope.xlsx")
     assert proc.returncode == 1
     assert "workbook not found" in proc.stderr

@@ -1,11 +1,11 @@
-﻿# pad-verify.Tests.ps1 — 验收脚本「不再默认到具体业务流程」的回归测试（Pester 3.4）
+﻿# pad-verify.Tests.ps1 — regression tests proving the acceptance script no longer defaults to a concrete business flow (Pester 3.4)
 #
-# 为什么复制脚本到临时目录：flows 目录由脚本自身位置推导，
-# 只有在临时目录里才能造出「0 个 / 多个候选」两种失败场景。
+# Why the script is copied into a temporary directory: the flows directory is derived from the script's own location,
+# so only a temporary directory can produce the "0 / multiple candidates" failure scenarios.
 
 Describe 'pad-verify no longer defaults to a concrete business flow' {
 
-    # 把 tools\pad-sync 复制到独立目录，得到一个可控的 business\flows 目录
+    # Copy tools\pad-sync into an isolated directory to get a controllable business\flows directory
     function New-VerifySandbox {
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $tools = Join-Path $root 'tools\pad-sync'
@@ -18,7 +18,7 @@ Describe 'pad-verify no longer defaults to a concrete business flow' {
         }
     }
 
-    # 配置只用来满足 -ConfigFile 参数：两个用例都在解析 flow 之前就失败，不会读取配置内容
+    # The config only satisfies the -ConfigFile parameter: both cases fail before the flow is parsed and never read the config
     function New-EmptyConfig {
         $p = Join-Path $TestDrive ('cfg-' + [guid]::NewGuid().ToString('N') + '.json')
         [IO.File]::WriteAllText($p, '{}', (New-Object Text.UTF8Encoding($false)))
@@ -33,7 +33,7 @@ Describe 'pad-verify no longer defaults to a concrete business flow' {
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match 'E_FLOW_FILE_REQUIRED'
         $out | Should Match '-FlowFile'
-        # 不能进入验收检查阶段（成功路径才输出汇总行与 checks 字段）
+        # The acceptance-check stage must not be reached (only the success path prints the summary line and checks field)
         $out | Should Not Match 'VERIFY_SUMMARY'
         $out | Should Not Match '"checks"'
     }

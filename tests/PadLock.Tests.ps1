@@ -1,16 +1,16 @@
-﻿# PadLock.Tests.ps1 — 跨进程互斥测试
+﻿# PadLock.Tests.ps1 — cross-process mutual exclusion tests
 #
-# 覆盖三条真实路径：
-#   1) 持有锁时，另一个进程排队后超时返回失败（不硬闯）
-#   2) 持有者释放后，排队方立即拿到锁
-#   3) 残留的锁文件不会造成死等（互斥以 Mutex 为准，锁文件只做展示）
+# Covers three real paths:
+#   1) While the lock is held, another process queues and times out with failure (no barging in)
+#   2) After the holder releases, the queued side acquires the lock immediately
+#   3) A leftover lock file never causes a hang (the Mutex is authoritative; the file is display-only)
 #
-# 用真实子进程验证：同进程内 Mutex 可重入，测不出并发行为。
+# Verified with real child processes: a Mutex is reentrant inside one process, so concurrency cannot be observed there.
 
 $script:LockMod = (Resolve-Path (Join-Path $PSScriptRoot '..\tools\pad-sync\PadLock.psm1')).Path
 Import-Module $script:LockMod -Force
 
-# 在子进程里抢锁，只回一行结果
+# Grab the lock in a child process and return a single result line
 function Invoke-ChildLockAttempt([string]$FlowName, [int]$WaitSec) {
     $code = "Import-Module '$script:LockMod' -Force; " +
         "`$r = Enter-PadRunLock -FlowName '$FlowName' -WaitSec $WaitSec; " +
@@ -19,7 +19,7 @@ function Invoke-ChildLockAttempt([string]$FlowName, [int]$WaitSec) {
     return (($out -join '') -replace '\s', '')
 }
 
-# 在子进程里排队抢锁，回一行 'WAITED=<秒数>'（用于验证等待时长的真实值）
+# Queue for the lock in a child process and return one line, 'WAITED=<seconds>' (to verify the real wait duration)
 function Invoke-ChildLockWaited([string]$FlowName, [int]$WaitSec) {
     $code = "Import-Module '$script:LockMod' -Force; " +
         "`$r = Enter-PadRunLock -FlowName '$FlowName' -WaitSec $WaitSec; " +
@@ -48,7 +48,7 @@ Describe 'PadLock cross-process mutual exclusion' {
 
     It 'A stale lock file does not cause a hang (the Mutex is authoritative)' {
         $path = Get-PadLockFile
-        # 伪造一份“持有者早已不存在”的锁文件
+        # Forge a lock file whose "holder" has long gone
         [IO.File]::WriteAllText($path,
             '{"flow":"GONE","pid":999999,"processStart":"2020-01-01T00:00:00","startedAt":"2020-01-01T00:00:00"}',
             (New-Object Text.UTF8Encoding($false)))
@@ -56,7 +56,7 @@ Describe 'PadLock cross-process mutual exclusion' {
         try {
             $ok = Enter-PadRunLock -FlowName 'AFTER-CRASH' -WaitSec 10
             $ok.ok | Should Be $true
-            # 立刻拿到，不会等到超时
+            # Acquired at once, never waiting for the timeout
             $sw.Elapsed.TotalSeconds | Should BeLessThan 3
         } finally {
             Exit-PadRunLock
@@ -73,12 +73,12 @@ Describe 'PadLock cross-process mutual exclusion' {
         } finally {
             Exit-PadRunLock
         }
-        # 释放后锁文件应被清掉，避免下一轮误读
+        # The lock file should be removed on release so the next round cannot misread it
         (Get-PadLockInfo) | Should Be $null
     }
 
     It 'Logging does not rewrite the lock file: it is written once when the lock is acquired' {
-        # 静态断言：pad-sync 的 Write-Log 不得再刷新锁文件，避免每条日志一次整文件重写
+        # Static assertion: Write-Log in pad-sync must no longer refresh the lock file, avoiding a whole-file rewrite per log entry
         $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\tools\pad-sync\pad-sync.ps1'), [Text.Encoding]::UTF8)
         ([regex]::Matches($src, 'Write-PadLockInfo')).Count | Should Be 0
 
@@ -86,7 +86,7 @@ Describe 'PadLock cross-process mutual exclusion' {
         try {
             $info = Get-PadLockInfo
             $info.flow | Should Be 'STATIC'
-            # 心跳字段已移除：锁文件不承担“持有者还活着吗”的语义
+            # The heartbeat field is gone: the lock file no longer answers "is the holder still alive?"
             ($info.PSObject.Properties.Name -contains 'heartbeatAt') | Should Be $false
         } finally {
             Exit-PadRunLock
@@ -96,7 +96,7 @@ Describe 'PadLock cross-process mutual exclusion' {
     It 'waitedSec is 0 when no waiting occurred' {
         $r = Enter-PadRunLock -FlowName 'NO-WAIT' -WaitSec 5
         $r.ok | Should Be $true
-        # 直接拿到锁，没有排队，等待时长必须是 0（pad-sync 的 lockWaitSec 也据此为 0）
+        # The lock is taken immediately with no queueing, so the wait duration must be 0 (and pad-sync's lockWaitSec follows suit)
         $r.waitedSec | Should Be 0
         Exit-PadRunLock
     }
@@ -105,12 +105,12 @@ Describe 'PadLock cross-process mutual exclusion' {
         $hold = Enter-PadRunLock -FlowName 'HOLD-FOR-WAIT' -WaitSec 5
         $hold.ok | Should Be $true
         try {
-            # 子进程在父进程持锁期间排队，超时上限 4 秒；它回报自己真实等待了多少秒
+            # The child queues while the parent holds the lock, with a 4-second timeout; it reports how long it actually waited
             $out = Invoke-ChildLockWaited 'WAITER-WAIT' 4
             $m = [regex]::Match($out, 'WAITED=(\d+)')
             $m.Success | Should Be $true
             $w = [int]$m.Groups[1].Value
-            # 确实排了队（> 0），且不超过超时上限（放宽到 6 容纳进程启动与轮询开销）
+            # It really queued (> 0) and stayed under the timeout (widened to 6 to absorb process startup and polling overhead)
             $w | Should BeGreaterThan 0
             $w | Should BeLessThan 6
         } finally {
@@ -119,12 +119,12 @@ Describe 'PadLock cross-process mutual exclusion' {
     }
 
     It 'Get-PadLockState is no longer exported: callers do not need a second export surface' {
-        # 模块导出面收成一个入口：抢锁结果与等待时长都由 Enter-PadRunLock 带回
+        # The export surface is a single entry point: the acquire result and wait duration both travel on Enter-PadRunLock's return
         (Get-Command Get-PadLockState -ErrorAction SilentlyContinue) | Should Be $null
-        # pad-sync 里也不得再残留对它的调用
+        # pad-sync must not retain any call to it either
         $src = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\tools\pad-sync\pad-sync.ps1'), [Text.Encoding]::UTF8)
         ([regex]::Matches($src, 'Get-PadLockState')).Count | Should Be 0
-        # 且确实改为读取返回值上的 waitedSec
+        # And it really reads waitedSec off the return value now
         ([regex]::Matches($src, '\.waitedSec')).Count | Should BeGreaterThan 0
     }
 }

@@ -1,23 +1,23 @@
-﻿# pad-release.Tests.ps1 — release 流水线纯函数测试（Pester 3.4，PS 5.1 自带）
+﻿# pad-release.Tests.ps1 — pure-function tests for the release pipeline (Pester 3.4, bundled with PowerShell 5.1)
 #
-# 覆盖：
-#   规范化（去 @@/IMPORT/空行/行尾空白）、哈希一致性、逐行比对（首个差异定位）
-#   运行日志路径 GUID 解析、历史运行查找（按流程名过滤 + startTime 取最新）
-#   Workspace 已发布定义定位、manifest 追加
+# Covers:
+#   normalization (strip @@/IMPORT lines/blank lines/trailing whitespace), hash consistency, line-by-line comparison (locating the first difference)
+#   GUID parsing from a run log path, historical run lookup (filter by flow name + take the newest startTime)
+#   locating the published Workspace definition, manifest append
 #
-# 通过 dot-source -NoMain 只加载函数，不执行发布主流程（绝不能在这触发真实发布）。
+# Dot-source with -NoMain to load only the functions and never run the main publish flow (a real release must never be triggered here).
 
 $script:Release = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-release.ps1'
 . $script:Release -NoMain
 
-# 每个用例的独立工作目录（Pester 3.4 的 $TestDrive 整个 Describe 共享）
+# A separate working directory per test ($TestDrive is shared across a whole Describe in Pester 3.4)
 function New-Work {
     $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $d | Out-Null
     return $d
 }
 
-# 写最小可用的 RunDefinition.json
+# Write a minimal usable RunDefinition.json
 function Write-RunDef([string]$Path, [string]$FlowGuid, [string]$FlowName, [string]$StartTime, [string]$Status = 'Succeeded', [string]$FlowVersion = '') {
     $fv = ''
     if ($FlowVersion) { $fv = ',"diagnosticInfo":{"flowVersion":"' + $FlowVersion.Replace('"', '\"') + '"}' }
@@ -35,7 +35,7 @@ Describe 'pad-release pure function tests' {
     }
 
     It 'hash consistency: deployed (with comments) and workspace (with @ metadata) hash the same after normalization' {
-        # 源文件带中文注释；PAD 发布后注释整行丢弃，并追加 @SENSITIVE 等元数据行
+        # The source file carries Chinese comments; PAD drops whole comment lines on publish and appends metadata lines such as @SENSITIVE
         $deployed = "# 这是中文注释，发布后会被丢弃`r`nSET A TO 'x'`r`nSET B TO 'y'"
         $workspace = "@@ConnectionString: ''`r`n@@Type: 'Local'`r`n@SENSITIVE: []`r`nIMPORT 'controlRepo.appmask' AS appmask`r`n`r`nSET A TO 'x'  `r`nSET B TO 'y'`r`n"
         (Get-RobinHash $deployed) | Should Be (Get-RobinHash $workspace)
@@ -79,7 +79,7 @@ Describe 'pad-release pure function tests' {
         $root = Join-Path $work 'Scripts'
         $g1 = '11111111-1111-1111-1111-111111111111'
         $g2 = '22222222-2222-2222-2222-222222222222'
-        # 目标流程两次运行（旧 + 新），另一条流程一次运行（干扰项）
+        # Two runs of the target flow (older + newer) and a single run of another flow (noise)
         Write-RunDef (Join-Path $root "$g1\Runs\aaaaaaaa-0000-0000-0000-00000000000a\RunDefinition.json") $g1 '目标流程' '2026-10-20T01:00:00Z' 'Succeeded' 'W/"100"'
         Write-RunDef (Join-Path $root "$g1\Runs\aaaaaaaa-0000-0000-0000-00000000000b\RunDefinition.json") $g1 '目标流程' '2026-10-26T01:00:00Z' 'Succeeded' 'W/"200"'
         Write-RunDef (Join-Path $root "$g2\Runs\bbbbbbbb-0000-0000-0000-00000000000c\RunDefinition.json") $g2 '别的流程' '2026-10-27T01:00:00Z' 'Succeeded' 'W/"999"'
@@ -87,7 +87,7 @@ Describe 'pad-release pure function tests' {
         $r.flowGuid | Should Be $g1
         $r.flowVersion | Should Be 'W/"200"'
         $r.startTime | Should Be '2026-10-26T01:00:00Z'
-        # 找不到的流程名返回 null
+        # An unknown flow name returns null
         (Find-LatestFlowRun $root '不存在的流程') | Should Be $null
     }
 
@@ -106,14 +106,14 @@ Describe 'pad-release pure function tests' {
         $work = New-Work
         $g1 = '11111111-1111-1111-1111-111111111111'
         $runId = '22222222-2222-2222-2222-222222222222'
-        # 另一个修订目录的修改时间更“新”，若按最新取会选错
+        # Another revision directory has a "newer" modification time; picking the newest would select the wrong one
         $r1 = Join-Path $work "$g1\AAAA0001\script.robin"
         $r2 = Join-Path $work "$g1\$runId\script.robin"
         New-Item -ItemType File -Path $r1 -Force | Out-Null
         New-Item -ItemType File -Path $r2 -Force | Out-Null
         (Get-Item $r1).LastWriteTime = [datetime]'2026-09-30 08:00:00'
         (Get-Item $r2).LastWriteTime = [datetime]'2026-10-20 08:00:00'
-        # 本次发布 10-25：r1 早于发布（不该被“取最新”误选），r2 靠 runId 精确命中
+        # This release happened on 10-25: r1 predates it (so "take the newest" must not pick it), while r2 is hit exactly by runId
         (Find-WorkspaceRobin $work $g1 $runId ([datetime]'2026-10-25 09:00:00')) | Should Be $r2
         (Find-WorkspaceRobin $work '33333333-3333-3333-3333-333333333333' $runId ([datetime]::UtcNow)) | Should Be $null
     }
@@ -124,9 +124,9 @@ Describe 'pad-release pure function tests' {
         $r1 = Join-Path $work "$g1\AAAA0001\script.robin"
         New-Item -ItemType File -Path $r1 -Force | Out-Null
         (Get-Item $r1).LastWriteTime = [datetime]'2026-10-20 08:00:00'
-        # 本次发布发生在 10-26：旧修订不该被选中（旧实现会“取最新”拿到它）
+        # This release happened on 10-26: the old revision must not be selected (the old implementation would "take the newest" and grab it)
         (Find-WorkspaceRobin $work $g1 '' ([datetime]'2026-10-26 09:00:00')) | Should Be $null
-        # 发布发生在 10-19：该修订才是本次发布写入的
+        # The release happened on 10-19: this revision is the one written by this release
         (Find-WorkspaceRobin $work $g1 '' ([datetime]'2026-10-19 09:00:00')) | Should Be $r1
     }
 
@@ -222,7 +222,7 @@ Describe 'pad-release no longer defaults to a concrete business flow' {
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match 'E_SOURCE_ROBIN_REQUIRED'
         $out | Should Match '-SourceRobin'
-        # 必须在跑测试/发布之前就失败（不能走到执行阶段）
+        # It must fail before running tests or publishing (it must never reach the execution stage)
         $out | Should Not Match 'pytestPassed'
         $out | Should Not Match '"stage":"done"'
     }

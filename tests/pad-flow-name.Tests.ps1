@@ -1,14 +1,14 @@
-﻿# pad-flow-name.Tests.ps1 — 顶层可选字段 pad_flow_name 的派生与“接受但忽略”测试（Pester 3.4）
+﻿# pad-flow-name.Tests.ps1 — derivation of the optional top-level field pad_flow_name and tests for "accepted but ignored" (Pester 3.4)
 #
-# 覆盖三件事：
-#   1) 按 PAD 显示名派生 flow.json：优先 pad_flow_name，其次文件名 / name
-#   2) 多命中必须报 ADMIT_AMBIGUOUS_FLOW，不能退回“取第一个”
-#   3) 生成器 / check.js / eval-flow.js 接受该字段但不消费（不报未知字段，不进 .robin）
+# Covers three things:
+#   1) Derive flow.json from the PAD display name: pad_flow_name first, then the file name / name
+#   2) Multiple hits must report ADMIT_AMBIGUOUS_FLOW and must not fall back to "take the first"
+#   3) The generator / check.js / eval-flow.js accept the field but do not consume it (no unknown-field error, nothing written into .robin)
 
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repo 'tools\pad-sync\pad-admit.ps1') -NoMain
 
-# 造一个最小流程定义：有非空 nodes 才算候选
+# Build a minimal flow definition: it only counts as a candidate when nodes is non-empty
 function New-FlowFile([string]$Dir, [string]$FileName, [string]$InnerName, [string]$DisplayName) {
     $obj = [ordered]@{ name = $InnerName; nodes = @([ordered]@{ id = 'n1'; pad_hint = 'SET' }) }
     if ($DisplayName) { $obj.Add('pad_flow_name', $DisplayName) }
@@ -56,14 +56,14 @@ Describe 'pad_flow_name resolution order' {
         $err = $null
         try { Resolve-FlowFileByName $dir '同名-XYZ' } catch { $err = $_.Exception.Message }
         $err | Should Match 'ADMIT_AMBIGUOUS_FLOW'
-        # 不能静默返回第一个
+        # It must not silently return the first one
         $err | Should Match 'a\.json, b\.json'
     }
 }
 
 Describe 'pad_flow_name is accepted but not consumed by the generation chain' {
     It 'the generator and check.js accept the field without writing it into .robin' {
-        # pad-admit 被 dot-source 时设了 ErrorAction Stop，node 的 stderr 会被当成终止错误
+        # pad-admit sets ErrorAction Stop when dot-sourced, so node's stderr would be treated as a terminating error
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {

@@ -1,7 +1,7 @@
-﻿# PadConfig.Tests.ps1 — 集中运行时配置的单元测试
+﻿# PadConfig.Tests.ps1 — unit tests for the centralized runtime configuration
 #
-# 只断言错误码与字段结果，所有路径都用 TestDrive 临时目录，
-# 不把任何真实路径或业务名写进公开层测试。
+# Assertions cover error codes and returned fields only; every path lives under the TestDrive temporary
+# directory, so no real path or business name leaks into public-layer tests.
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $here '..\tools\pad-sync\PadConfig.psm1') -Force

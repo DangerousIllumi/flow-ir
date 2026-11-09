@@ -1,10 +1,10 @@
-﻿# pad-schedule.Tests.ps1 — 定时任务纯函数测试（Pester 3.4，PS 5.1 自带）
+﻿# pad-schedule.Tests.ps1 — pure-function tests for the scheduler (Pester 3.4, bundled with PS 5.1)
 #
-# 覆盖：任务名生成与非法字符替换、触发时刻解析与格式校验、
-#       任务动作命令构造（工作日历门禁 / 忽略日历 / -AllowProd 透传）、
-#       工作日判断脚本缺失时的报错。
+# Covers: task-name generation and illegal-character substitution, trigger-time parsing and
+#         format validation, action-command construction (workday calendar gate / ignore calendar /
+#         -AllowProd pass-through), and the error raised when the workday check script is missing.
 #
-# 只测纯函数，不注册/删除任何真实计划任务。
+# Pure functions only — no real scheduled task is registered or deleted.
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-schedule.ps1') -NoMain
 
@@ -45,7 +45,7 @@ Describe 'pad-schedule pure function tests' {
         $s.args | Should Not Match 'RunOnly'
     }
 
-    # 下面几条用子进程跑真实脚本，验证「日历缺省」时的退出码与文案
+    # The cases below run the real script in a child process, checking exit codes and messages when the calendar is omitted
     $scheduleScript = Join-Path $PSScriptRoot '..\tools\pad-sync\pad-schedule.ps1'
     $workdayScript = Join-Path $PSScriptRoot '..\tools\workday\workday.py'
 
@@ -54,10 +54,10 @@ Describe 'pad-schedule pure function tests' {
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -PythonExe 'python' `
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        # ASCII 锚点：CONFIG_MISSING + -CalendarPath 共同锁定「缺日历」这条报错
+        # ASCII anchor: CONFIG_MISSING plus -CalendarPath together pin down the "missing calendar" error
         $out | Should Match 'CONFIG_MISSING'
         $out | Should Match 'CalendarPath'
-        # 绝不能静默退化成「每个工作日都跑」
+        # A silent downgrade to "run on every workday" must never happen
         $out | Should Not Match 'RUN_START'
     }
 
@@ -68,9 +68,9 @@ Describe 'pad-schedule pure function tests' {
             -CalendarPath (Join-Path $TestDrive 'nope.xlsx') 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
         $out | Should Match 'CALENDAR_UNAVAILABLE'
-        # 绝不能静默退化成「每个工作日都跑」
+        # A silent downgrade to "run on every workday" must never happen
         $out | Should Not Match 'RUN_START'
-        # 告警分级要靠这个标记区分「日历不可用」与「运行失败」
+        # Alert severity relies on this marker to tell "calendar unavailable" from "run failed"
         $r = [regex]::Match($out, 'PAD_SCHEDULE_RESULT=(\{.*\})').Groups[1].Value | ConvertFrom-Json
         $r.calendarOk | Should Be $false
         $r.reason | Should Be 'calendar-unavailable'
@@ -118,14 +118,14 @@ Describe 'pad-schedule pure function tests' {
         if (-not $py) { $py = (Get-Command python3 -ErrorAction SilentlyContinue).Source }
         $probe = Join-Path $TestDrive 'probe_calendar.py'
         $probeLog = Join-Path $TestDrive 'probe_args.txt'
-        # 假判断脚本：把收到的参数落到文件（便于断言转发），并声明今天不是工作日
-        # （走跳过分支，不触发真实流程）
+        # Fake workday script: writes the arguments it received to a file (so forwarding can be asserted)
+        # and declares that today is not a workday (taking the skip branch, never running the real flow)
         $logArg = $probeLog.Replace('\', '/')
         [IO.File]::WriteAllText($probe,
             "import sys`nopen(r'$logArg','w',encoding='utf-8').write(' '.join(sys.argv[1:]))`nprint('WORKDAY=0')`nprint('CALENDAR_OK=1')`n",
             (New-Object Text.UTF8Encoding($false))
         )
-        # 日历只需存在（本用例的假脚本不解析内容），用占位文件即可
+        # The calendar only has to exist (the fake script here never parses it); a placeholder file will do
         $calendar = Join-Path $TestDrive 'workday-calendar.xlsx'
         [IO.File]::WriteAllBytes($calendar, [byte[]](1, 2, 3))
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
@@ -133,7 +133,7 @@ Describe 'pad-schedule pure function tests' {
             -PythonExe $py -WorkdayScript $probe -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
         $out | Should Match 'SKIP_NOT_WORKDAY'
-        # 参数确实原样传到了判断脚本，而不是被替换成内置默认值
+        # The arguments really reached the workday script verbatim instead of being replaced with built-in defaults
         (Test-Path $probeLog) | Should Be $true
         ([IO.File]::ReadAllText($probeLog, [Text.Encoding]::UTF8)) | Should Match 'workday-calendar\.xlsx'
     }
@@ -165,7 +165,7 @@ Describe 'pad-schedule pure function tests' {
             -RunTimeoutSec 4200
         $s.args | Should Match '-RunTimeoutSec'
         $s.args | Should Match '4200'
-        # 锁等待上限不写进任务命令：改了代码默认值后，任务无需重新注册也会跟着变
+        # The lock-wait cap is not baked into the task command: changing the code default applies without re-registering the task
         $s.args | Should Not Match '-LockWaitSec'
 
         $s2 = New-ScheduleActionSpec -ScriptPath 'C:\repo\pad-schedule.ps1' -FlowName 'PAD_SYNC_TEST' `
@@ -199,7 +199,7 @@ Describe 'pad-schedule pure function tests' {
     }
 
     It 'stale calendar: CALENDAR_STALE=1 is a hard failure, not a day off' {
-        # 用假的 python（cmd 脚本）回放 workday.py 的输出，不依赖真实日历
+        # Replay workday.py output with a fake python (a cmd shim) so the case does not depend on a real calendar
         $fake = Join-Path $TestDrive 'fake-python.cmd'
         Set-Content -LiteralPath $fake -Encoding ASCII -Value @(
             '@echo off',
@@ -222,7 +222,7 @@ Describe 'pad-schedule pure function tests' {
     }
 
     It 'calendar failure classification: stale is exit 5 / calendar-stale, unavailable stays exit 1' {
-        # 分类依据改为异常上的结果码，不再依赖中文消息内容
+        # Classification now keys off the result code carried on the exception, not the Chinese message text
         $staleEx = [System.Exception]::new('CALENDAR_STALE: calendar does not cover today: today 2026-11-05 (covered 2026-01-01 ~ 2026-10-31); treating the calendar as stale; this run did not execute')
         $staleEx.Data['code'] = 'CALENDAR_STALE'
         $stale = Get-CalendarFailure $staleEx
@@ -263,7 +263,7 @@ Describe 'pad-schedule pure function tests' {
         $a = Write-RunAlert -FlowName 'PAD_SYNC_TEST' -ExitCode 1 -Stage 'run' `
             -Status 'failed' -SyncResult $sync -LogPath 'C:\x\Actions.log' -Dir $dir
         $a.path | Should Be (Join-Path $dir 'alerts.jsonl')
-        # PS 5.1 的 Add-Content 会加 BOM，逐行解析会炸，这里钉死"无 BOM"
+        # PS 5.1's Add-Content emits a BOM, which breaks line-by-line parsing; this pins "no BOM"
         ([IO.File]::ReadAllBytes($a.path))[0] | Should Not Be 0xEF
         $rec = ([IO.File]::ReadAllText($a.path, [Text.Encoding]::UTF8)).Trim() | ConvertFrom-Json
         $rec.kind | Should Be 'run-failed'
@@ -276,9 +276,9 @@ Describe 'pad-schedule pure function tests' {
 
     It 'alert classification: exit 4 records run-lock-timeout (did not execute), 1 still records run-failed' {
         $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        # 4 = 等锁超时：流程根本没跑，告警要能一眼看出来
+        # 4 = lock wait timeout: the flow never ran, and the alert should make that obvious at a glance
         Write-RunAlert -FlowName 'F' -ExitCode 4 -Stage 'lock' -Dir $dir | Out-Null
-        # 1 = 跑了但失败
+        # 1 = ran but failed
         Write-RunAlert -FlowName 'F' -ExitCode 1 -Stage 'run' -Dir $dir | Out-Null
         $lines = @([IO.File]::ReadAllLines((Join-Path $dir 'alerts.jsonl'), [Text.Encoding]::UTF8) |
             Where-Object { $_.Trim() })
@@ -330,7 +330,7 @@ Describe 'pad-schedule pure function tests' {
             $g.reason | Should Be $reason
             $g.note | Should Match 'nothing was retried automatically'
         }
-        # 没带 reason 时兜底为 unknown，但仍然是 trigger-failed，不退回 run-failed
+        # Without a reason it falls back to unknown but stays trigger-failed, never degrading to run-failed
         $g2 = Get-RunAlertKind -ExitCode 1 -SyncResult ([pscustomobject]@{ triggerFailed = $true })
         $g2.kind | Should Be 'trigger-failed'
         $g2.reason | Should Be 'unknown'
@@ -355,7 +355,7 @@ Describe 'pad-schedule pure function tests' {
         $a.record.reason | Should Be 'no-robot'
         $a.record.errorCode | Should Be 'TRIGGER_NO_ROBOT'
         $a.record.note | Should Match 'nothing was retried automatically'
-        # 原有三类告警仍在，未被新分类挤掉
+        # The three existing alert kinds are still produced and not crowded out by the new classification
         (Write-RunAlert -FlowName 'F' -ExitCode 4 -Stage 'lock' -Dir $dir).record.kind |
             Should Be 'run-lock-timeout'
         (Write-RunAlert -FlowName 'F' -ExitCode 1 -Stage 'run' -Dir $dir).record.kind |

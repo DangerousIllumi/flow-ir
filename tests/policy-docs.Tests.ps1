@@ -1,6 +1,6 @@
-﻿# policy-docs.Tests.ps1 — 防止文档里的策略规则名与 business\policy.json 漂移
+﻿# policy-docs.Tests.ps1 — keeps the policy rule names quoted in the docs from drifting away from business\policy.json
 #
-# business\ 不入库：策略文件不存在时本用例明确输出 SKIP 并视为通过，公开库 CI 不会变红。
+# business\ is never committed: when the policy file is absent the case prints an explicit SKIP and counts as a pass, so public CI never turns red.
 
 $repo = Split-Path -Parent $PSScriptRoot
 $skill = Join-Path $repo 'skills\pad-flow-designer\SKILL.md'
@@ -13,7 +13,7 @@ Describe 'Policy rule documentation consistency' {
         $text = Get-Content -LiteralPath $skill -Raw -Encoding UTF8
         $text | Should Match 'business/policy\.json'
         $text | Should Match 'docs/admission-gate\.md'
-        # SKILL 里不应再出现「| `deny-xxx` |」这种规则表行，规则名只允许在 policy.json 里定义
+        # The SKILL must no longer carry rule-table rows like "| `deny-xxx` |"; rule names are defined only in policy.json
         ([regex]::Matches($text, '\| `(deny-[a-z-]+|ask-[a-z-]+)`')).Count | Should Be 0
     }
 
