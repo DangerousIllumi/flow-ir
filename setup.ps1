@@ -1,20 +1,20 @@
 ﻿<#
 .SYNOPSIS
-    flow-ir - 本地框架安装脚本
+    flow-ir - local framework installer.
 .DESCRIPTION
-    1. 检查 Node.js / Git 环境
-    2. 克隆 pad-robin-action-kb（Agent B 的知识库）
-    3. 验证 check-flows.js 自检可用
-    4. 创建工程目录结构
+    1. Check the Node.js / Git environment
+    2. Clone pad-robin-action-kb (the action knowledge base)
+    3. Verify that check-flows.js works as a self-check
+    4. Create the project directory layout
 .EXAMPLE
     .\setup.ps1
 .NOTES
-    运行前请先运行 .\tools\check-env.ps1 确认环境就绪
+    Run .\tools\check-env.ps1 first to confirm the environment is ready.
 #>
 
 param(
-    # 动作知识库的克隆地址；默认先试 HTTPS 再试 SSH，
-    # 受限网络或经由代理/防火墙访问时可能无法直连 GitHub，可指定镜像或本地路径
+    # Clone URL for the action knowledge base. HTTPS is tried before SSH by default;
+    # on restricted networks or behind a proxy/firewall GitHub may be unreachable, so a mirror or a local path can be given.
     [string]$KbRepo = ""
 )
 
@@ -30,64 +30,65 @@ function Write-Fail { param($msg) Write-Host "    [FAIL] $msg" -ForegroundColor 
 function Write-Info { param($msg) Write-Host "    [INFO] $msg" -ForegroundColor Gray }
 function Write-Warn { param($msg) Write-Host "    [WARN] $msg" -ForegroundColor Yellow }
 
-# ── 1. 环境预检 ──────────────────────────────────────────────
-Write-Step "1/4 检查运行环境"
+# ── 1. Environment preflight ──────────────────────────────────
+Write-Step "1/4 Checking the runtime environment"
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
-    Write-Fail "未检测到 Node.js，请先安装（https://nodejs.org/）"
+    Write-Fail "Node.js not detected; install it first (https://nodejs.org/)"
     exit 1
 }
 $nodeVer = & node -v
 $major = [int]($nodeVer -replace 'v','' -split '\.')[0]
 if ($major -lt 18) {
-    Write-Fail "Node.js 版本过低（$nodeVer < v18），请升级"
+    Write-Fail "Node.js version too old ($nodeVer < v18); upgrade it"
     exit 1
 }
 Write-Ok "Node.js $nodeVer"
 
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {
-    Write-Fail "未检测到 Git，请先安装（https://git-scm.com/download/win）"
+    Write-Fail "Git not detected; install it first (https://git-scm.com/download/win)"
     exit 1
 }
 Write-Ok "Git $(& git --version)"
 
-# 启用仓库内钩子（提交前公开库内容门禁）：新克隆无需手动配置
+# Enable the in-repo hook (public-content gate before each commit) so a fresh clone needs no manual setup
 & git -C $WorkDir config core.hooksPath .githooks
 if ($LASTEXITCODE -eq 0) {
-    Write-Ok "Git 钩子目录：.githooks"
+    Write-Ok "Git hook directory: .githooks"
 } else {
-    Write-Warn "core.hooksPath 设置失败，提交前内容门禁不会自动生效"
+    Write-Warn "core.hooksPath could not be set; the pre-commit content gate will not run automatically"
 }
 
-# 安装 Node 依赖（流程图 ELK 布局）
+# Install the Node dependencies (ELK layout for flow diagrams)
 if (Test-Path (Join-Path $WorkDir "package.json")) {
     $npm = Get-Command npm -ErrorAction SilentlyContinue
     if ($npm) {
-        Write-Info "安装 Node 依赖（elkjs）"
+        Write-Info "Installing Node dependencies (elkjs)"
         Push-Location $WorkDir
         & npm install --no-audit --no-fund
         $npmExit = $LASTEXITCODE
         Pop-Location
         if ($npmExit -eq 0) {
-            Write-Ok "Node 依赖安装完成"
+            Write-Ok "Node dependencies installed"
         } else {
-            Write-Warn "npm install 失败，流程图生成需手动执行 npm install"
+            Write-Warn "npm install failed; run npm install manually before generating flow diagrams"
         }
     } else {
-        Write-Warn "未检测到 npm，流程图 ELK 布局不可用；其余功能不受影响"
+        Write-Warn "npm not detected; the ELK layout for flow diagrams is unavailable (everything else still works)"
     }
 }
 
-# ── 2. 克隆 KB ───────────────────────────────────────────────
-Write-Step "2/4 克隆 pad-robin-action-kb（PAD 动作知识库）"
+# ── 2. Clone the knowledge base ──────────────────────────────
+Write-Step "2/4 Cloning pad-robin-action-kb (the PAD action knowledge base)"
 
-# 受限网络、代理或防火墙环境下，HTTPS 直连 GitHub 可能被重置（表现为 Recv failure: Connection was reset），
-# 所以 HTTPS 失败后自动改用 SSH 再试一次；两者都不通时给手动步骤，而不是只报“克隆失败”
+# On restricted networks or behind a proxy/firewall, HTTPS to GitHub may be reset (shown as
+# "Recv failure: Connection was reset"), so SSH is tried once after HTTPS fails. When neither works we print
+# manual steps instead of only reporting "clone failed".
 
-# 网络等待上限：HTTPS 低速 20 秒即放弃；SSH 连接 15 秒超时并禁用交互式提示，
-# 避免受限网络下 git 长时间无输出地卡住（进度统一由下面的 Invoke-GitNet 打印）
+# Network wait limits: give up on HTTPS after 20 s of low speed; time out the SSH connection after 15 s and
+# disable interactive prompts, so git cannot hang silently on a restricted network (progress is printed by Invoke-GitNet below).
 $gitNetArgs = @(
     '-c', 'http.lowSpeedLimit=1000',
     '-c', 'http.lowSpeedTime=20',
@@ -95,8 +96,8 @@ $gitNetArgs = @(
 )
 
 function Invoke-GitNet {
-    # git 的进度与报错都走 stderr，而脚本全局 ErrorActionPreference 是 Stop：
-    # 直接 2>&1 会被当成终止错误，所以这里临时降为 Continue，并逐行回显输出
+    # git writes both progress and errors to stderr, while the script-wide ErrorActionPreference is Stop:
+    # a plain 2>&1 would be treated as a terminating error, so lower it to Continue here and echo line by line
     param([string]$WorkDir, [string[]]$GitArgs)
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -113,36 +114,36 @@ function Invoke-GitNet {
 $candidates = @()
 if ($KbRepo) { $candidates += $KbRepo } else { $candidates += $KBRepoHttps, $KBRepoSsh }
 
-# 上一次克隆失败会留下空目录，先把这种半成品清掉，否则后面的 git pull 也会失败
+# A failed clone leaves an empty directory behind; clear that half-finished state first, otherwise the later git pull fails too
 if ((Test-Path $KBDir) -and -not (Test-Path (Join-Path $KBDir "PAD_Robin_ActionKB.json"))) {
-    Write-Warn "已有目录不完整（缺 PAD_Robin_ActionKB.json），删除后重新克隆"
+    Write-Warn "Existing directory is incomplete (no PAD_Robin_ActionKB.json); removing it and cloning again"
     Remove-Item $KBDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if (Test-Path $KBDir) {
-    Write-Info "目录已存在，执行 git pull 更新"
+    Write-Info "Directory already exists; running git pull to update"
     $pullExit = Invoke-GitNet -WorkDir $KBDir -GitArgs @($gitNetArgs + @('pull', '--ff-only'))
-    if ($pullExit -ne 0) { Write-Warn "更新失败（网络或远端已变），继续使用本地已有副本" }
+    if ($pullExit -ne 0) { Write-Warn "Update failed (network problem or the remote moved on); continuing with the local copy" }
 } else {
     $cloned = $false
     foreach ($repo in $candidates) {
-        Write-Info "正在克隆 $repo（网络超时上限约 20 秒，进度如下）"
+        Write-Info "Cloning $repo (roughly a 20 s network timeout; progress below)"
         $cloneExit = Invoke-GitNet -WorkDir $WorkDir -GitArgs @($gitNetArgs + @('clone', '--depth', '1', '--progress', $repo, $KBDir))
         if ($cloneExit -eq 0 -and (Test-Path (Join-Path $KBDir "PAD_Robin_ActionKB.json"))) { $cloned = $true; break }
-        Write-Warn "该地址不可用（上一条输出为 git 的原始报错），换下一个"
+        Write-Warn "That URL did not work (the line above is git's raw error); trying the next one"
         if (Test-Path $KBDir) { Remove-Item $KBDir -Recurse -Force -ErrorAction SilentlyContinue }
     }
     if (-not $cloned) {
-        Write-Fail "克隆失败：HTTPS 与 SSH 都不通"
-        Write-Info "手动方式（任选其一）："
+        Write-Fail "Clone failed: neither HTTPS nor SSH works"
+        Write-Info "Manual options (pick one):"
         Write-Info "  1) git clone git@github.com:JoeG592/pad-robin-action-kb.git `"$KBDir`""
-        Write-Info "  2) 浏览器下载 ZIP，解压到 `"$KBDir`""
-        Write-Info "  3) 换地址重跑：.\setup.ps1 -KbRepo <镜像或本地路径>"
+        Write-Info "  2) Download the ZIP in a browser and extract it to `"$KBDir`""
+        Write-Info "  3) Rerun with another URL: .\setup.ps1 -KbRepo <mirror or local path>"
         exit 1
     }
 }
 
-# 验证关键文件存在
+# Verify that the key files are present
 $kbFile     = Join-Path $KBDir "PAD_Robin_ActionKB.json"
 $typeFile   = Join-Path $KBDir "PAD_Robin_TypeReference.json"
 $promptFile = Join-Path $KBDir "PROMPT.md"
@@ -152,26 +153,26 @@ $checkFlows = Join-Path $KBDir "marketing\video\tools\check-flows.js"
 foreach ($f in @($kbFile, $typeFile, $promptFile, $rulesFile, $checkFlows)) {
     if (Test-Path $f) {
         $rel = $f.Replace("$KBDir\", "")
-        Write-Ok "已获取：$rel"
+        Write-Ok "Fetched: $rel"
     } else {
-        Write-Fail "缺少关键文件：$f"
+        Write-Fail "Missing key file: $f"
         exit 1
     }
 }
 
-# 打印 KB 统计信息（让用户知道这是什么版本）
+# Print knowledge-base statistics so the user can tell which version this is
 $kb = Get-Content $kbFile -Raw | ConvertFrom-Json
-# modules 在 KB 里是数组，用 Get-Member 数 NoteProperty 会得到 0，必须按数组计数
-Write-Info "KB 版本 $($kb.version)，PAD build $($kb.pad_build)，$(($kb.actions).Count) 个动作，$(@($kb.modules).Count) 个模块"
-Write-Info "规则文件：$((Get-Content $rulesFile -Raw | ConvertFrom-Json).rules.Count) 条，验证日期 $((Get-Content $rulesFile -Raw | ConvertFrom-Json).date)"
+# modules is an array in the knowledge base; counting NoteProperty via Get-Member yields 0, so count the array
+Write-Info "KB version $($kb.version), PAD build $($kb.pad_build), $(($kb.actions).Count) actions, $(@($kb.modules).Count) modules"
+Write-Info "Rules file: $((Get-Content $rulesFile -Raw | ConvertFrom-Json).rules.Count) rules, verified $(Get-Content $rulesFile -Raw | ConvertFrom-Json).date"
 
-# ── 3. 验证 check-flows.js ───────────────────────────────────
-Write-Step "3/4 验证 check-flows.js 自检器可用"
+# ── 3. Verify check-flows.js ─────────────────────────────────
+Write-Step "3/4 Verifying that the check-flows.js self-checker works"
 
 $okFlow   = Join-Path $env:TEMP "wfg-smoke-ok.robin"
 $badFlow  = Join-Path $env:TEMP "wfg-smoke-bad.robin"
 
-# 合法脚本（退出码应为 0）
+# Valid script (exit code should be 0)
 @'
 SET Counter TO 0
 LOOP WHILE (Counter) < (3)
@@ -179,7 +180,7 @@ LOOP WHILE (Counter) < (3)
 END
 '@ | Set-Content -Path $okFlow -Encoding UTF8
 
-# 非法脚本：用保留关键字 Mail.From 当变量名（check-flows 应报错）
+# Invalid script: uses the reserved keyword Mail.From as a variable name (check-flows should report an error)
 @'
 SET Mail.From TO "user@example.com"
 '@ | Set-Content -Path $badFlow -Encoding UTF8
@@ -194,53 +195,53 @@ Pop-Location
 Remove-Item $okFlow, $badFlow -ErrorAction SilentlyContinue
 
 if ($okExit -eq 0 -and $badExit -ne 0) {
-    Write-Ok "双重冒烟测试通过"
-    Write-Info "合法脚本：$okOutput"
-    Write-Info "非法脚本：$badOutput"
+    Write-Ok "Both smoke cases behaved as expected"
+    Write-Info "Valid script: $okOutput"
+    Write-Info "Invalid script: $badOutput"
 } else {
-    Write-Warn "check-flows.js 行为可疑（合法=$okExit / 非法=$badExit），但不影响安装"
-    Write-Info "合法脚本输出：$okOutput"
-    Write-Info "非法脚本输出：$badOutput"
+    Write-Warn "check-flows.js behaved suspiciously (valid=$okExit / invalid=$badExit), but the installation is unaffected"
+    Write-Info "Valid script output: $okOutput"
+    Write-Info "Invalid script output: $badOutput"
 }
 
-# ── 4. 创建工程目录结构 ──────────────────────────────────────
-Write-Step "4/4 创建工程目录结构"
+# ── 4. Create the project directory layout ───────────────────
+Write-Step "4/4 Creating the project directory layout"
 
-# business\flows\ 放你（或 AI 助手）写的 flow.json；生成的 .robin 默认写在仓库根目录
-# 业务层整体被 .gitignore 忽略：真实流程、配置、产物不会被误推到公开库
+# business\flows\ holds the flow.json files you (or an AI assistant) write; generated .robin files default to the repo root.
+# The whole business layer is ignored by .gitignore, so real flows, configuration and output never leak into the public repo.
 $dirs = @("business\flows")
 foreach ($d in $dirs) {
     $path = Join-Path $WorkDir $d
     if (-not (Test-Path $path)) {
         New-Item -ItemType Directory -Path $path | Out-Null
-        Write-Ok "创建目录：$d"
+        Write-Ok "Created directory: $d"
     } else {
-        Write-Info "目录已存在：$d"
+        Write-Info "Directory already exists: $d"
     }
 }
 
-# 说明：docs\ 下的框架文档随本包一起分发，安装脚本不再重复复制，
-# 避免根目录与 docs\ 出现两份同名文档（改一处读另一处的坑）。
+# Note: the framework docs under docs\ ship with this package, so the installer does not copy them again;
+# that avoids two same-named copies in the root and docs\ (change one, read the other).
 
-# ── 完成 ─────────────────────────────────────────────────────
+# ── Done ─────────────────────────────────────────────────────
 Write-Host "`n"
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  框架安装完成！" -ForegroundColor Green
+Write-Host "  Framework installation complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "目录结构：" -ForegroundColor Cyan
+Write-Host "Directory layout:" -ForegroundColor Cyan
 Write-Host "  $WorkDir\"
-Write-Host "  ├── pad-robin-action-kb\   动作知识库（1,086 个动作 + 类型 + 校验器）"
-Write-Host "  ├── AGENTS.md              AI 助手的入口手册"
-Write-Host "  ├── docs\                  文档层（含 prompts\ 与 skills\）"
-Write-Host "  ├── skills\                设计规则与脚本红线"
-Write-Host "  ├── tools\                 编译器 / 校验 / 准入 / 部署 / 定时"
-Write-Host "  └── business\flows\        你（或 AI）写的 flow.json（不入库）"
+Write-Host "  ├── pad-robin-action-kb\   action knowledge base (1,086 actions + types + checker)"
+Write-Host "  ├── AGENTS.md              entry manual for AI assistants"
+Write-Host "  ├── docs\                  documentation layer (including prompts\ and skills\)"
+Write-Host "  ├── skills\                design rules and script red lines"
+Write-Host "  ├── tools\                 compiler / checks / admission / deploy / scheduling"
+Write-Host "  └── business\flows\        flow.json files you (or an AI) write (never committed)"
 Write-Host ""
-Write-Host "下一步：" -ForegroundColor Yellow
-Write-Host "  1. 用任意 AI 编程助手打开本目录——它会先读到 AGENTS.md"
-Write-Host "  2. 把 docs\prompts\nl-to-flow.md 那段话粘给它，末尾写你的需求"
-Write-Host "  3. 它跑完 生成 → 静态校验 → 准入 后，把 out.robin 粘进 PAD 画布"
+Write-Host "Next steps:" -ForegroundColor Yellow
+Write-Host "  1. Open this directory with any AI coding assistant - it reads AGENTS.md first"
+Write-Host "  2. Paste the block from docs\prompts\nl-to-flow.md and append your requirement"
+Write-Host "  3. Once generate -> static checks -> admission have run, paste out.robin into the PAD canvas"
 Write-Host ""
-# 前面有可降级的失败（如 git pull 更新失败只告警），不把残留的 $LASTEXITCODE 带给调用方
+# Earlier steps may have failed degradably (e.g. a git pull update only warns), so do not leak a stale $LASTEXITCODE to the caller
 exit 0
