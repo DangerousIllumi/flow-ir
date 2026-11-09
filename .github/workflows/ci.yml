@@ -1,0 +1,205 @@
+# CI：Windows 虚拟机跑纯合成数据测试（不触碰 SAP / Outlook / Excel / PAD）
+# 真机用例统一打 @pytest.mark.integration 标记，这里用 -m "not integration" 排除
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # 公开库内容门禁需要完整历史才能覆盖所有已跟踪文件
+          fetch-depth: 0
+
+      - name: 公开库内容门禁（兜底，只拦结构化模式）
+        shell: powershell
+        run: |
+          # backstop for leaks that bypassed the pre-commit hook; default structural denylist only
+          $denylist = 'tools\publish\public-safe.denylist.json'
+          if (-not (Test-Path $denylist)) {
+            Write-Host "::warning::public-safe denylist not found; gate skipped (notice only, exit code unchanged)"
+            exit 0
+          }
+          $local = 'tools\publish\public-safe.denylist.local.json'
+          if (-not (Test-Path $local)) {
+            Write-Host "::notice::public-safe: only the default structural denylist is in use (5 rules: PAD/Robot root, UNC, internal host suffix, email, mobile). Business names, flow names and ordinary local paths are NOT covered."
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-public-safe.ps1' -Files (git ls-files) -DenylistFile 'tools\publish\public-safe.denylist.json'"
+          if ($LASTEXITCODE -ne 0) { throw "public-safe gate failed: $LASTEXITCODE" }
+
+      - name: 安装 Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装 Python 依赖
+        run: python -m pip install --upgrade pip pytest openpyxl
+
+      - name: pytest（排除真机 integration 用例）
+        run: python -m pytest tests -q -m "not integration"
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 拉取动作知识库（生成器与静态校验都依赖它）
+        shell: powershell
+        run: git clone --depth 1 https://github.com/JoeG592/pad-robin-action-kb.git pad-robin-action-kb
+
+      - name: 安装 Pester 3.4（与本地 PS 5.1 自带版本一致）
+        shell: powershell
+        run: |
+          # keep run bodies ASCII-only: GitHub writes them as ANSI .ps1 and CJK breaks parsing
+          $ErrorActionPreference = 'Stop'
+          # PSGallery needs TLS 1.2; Windows PowerShell 5.1 may still default to older protocols
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $lastError = ''
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+              }
+              Install-Module Pester -RequiredVersion 3.4.0 -Force -Scope CurrentUser -SkipPublisherCheck -Repository PSGallery
+              break
+            } catch {
+              $lastError = $_.Exception.Message
+              Write-Host "::warning::Pester install attempt $attempt failed: $lastError"
+              if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+            }
+          }
+          $installed = @(Get-Module -ListAvailable Pester | Where-Object { $_.Version -eq [version]'3.4.0' })
+          if (-not $installed) {
+            # surface the real error in the job annotation, since job logs need auth
+            Write-Host "::error::Pester 3.4.0 still unavailable; last error: $lastError"
+            throw "Pester 3.4.0 install failed: $lastError"
+          }
+
+      - name: Pester（逐个测试文件跑，任一失败即构建失败）
+        shell: powershell
+        run: |
+          # runner console may default to a non-UTF-8 OEM code page (e.g. 437);
+          # tests assert Chinese messages emitted by child powershell processes,
+          # which would decode as mojibake here. Decode captured output as UTF-8.
+          try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { Write-Host "::warning::console output encoding not adjustable: $($_.Exception.Message)" }
+          $OutputEncoding = [Text.Encoding]::UTF8
+          # runner ships Pester 5; lock to 3.4 because the tests use v3 syntax
+          Import-Module Pester -RequiredVersion 3.4.0 -Force
+          Write-Host "Pester version=$((Get-Module Pester).Version)"
+          $failed = 0
+          $threw = 0
+          $files = 0
+          $failedFiles = 0
+          $totalPassed = 0
+          $errorShown = 0
+          Get-ChildItem tests\*.Tests.ps1 | ForEach-Object {
+            $files++
+            $file = $_.FullName
+            $rel = 'tests/' + $_.Name
+            Write-Host "=== $($_.Name) ==="
+            # diagnostic: if a file makes Invoke-Pester throw, still locate it and continue
+            try {
+              $r = Invoke-Pester -Script $file -PassThru
+            } catch {
+              $first = (($_.Exception.Message -split '\r?\n' | Where-Object { $_.Trim() }) | Select-Object -First 1)
+              if (-not $first) { $first = 'unknown error' }
+              if ($first.Length -gt 300) { $first = $first.Substring(0, 300) }
+              Write-Host "::error file=$rel::Invoke-Pester threw: $($first.Replace('%','%25'))"
+              $last = (($Error[0].Exception.Message -split '\r?\n' | Where-Object { $_.Trim() }) | Select-Object -First 1)
+              Write-Host "::warning::LAST_ERROR=$last"
+              Write-Host "  PESTER_THREW_FILE $rel"
+              $threw++
+              return
+            }
+            Write-Host "passed=$($r.PassedCount) failed=$($r.FailedCount)"
+            $totalPassed += $r.PassedCount
+            # only files with failures get a warning line (save the annotation quota)
+            if ($r.FailedCount -gt 0) {
+              $failedFiles++
+              Write-Host "::warning file=$rel::passed=$($r.PassedCount) failed=$($r.FailedCount)"
+            }
+            # Pester 3.4 TestResult fields: Describe/Context/Name/Passed/FailureMessage/StackTrace
+            foreach ($t in @($r.TestResult | Where-Object { -not $_.Passed })) {
+              $line = ''
+              if ($t.StackTrace -match 'line:\s*(\d+)') { $line = $matches[1] }
+              $desc = (([string]$t.Describe) + ' > ' + ([string]$t.Name)) -replace '\r?\n', ' '
+              $msg = [string]$t.FailureMessage
+              $msg = (($msg -split '\r?\n' | Where-Object { $_.Trim() }) | Select-Object -First 1)
+              if (-not $msg) { $msg = 'assertion failed' }
+              if ($msg.Length -gt 300) { $msg = $msg.Substring(0, 300) }
+              $msg = $msg.Replace('%', '%25')
+              # annotation carries ASCII file/line properties, so a garbled message is still locatable.
+              # keep at most 3 error annotations globally; the rest only counted in FAILED_CASE_FILE lines
+              if ($errorShown -lt 3) {
+                $errorShown++
+                if ($line) { Write-Host "::error file=$rel,line=$line::$desc :: $msg (at $rel`:$line)" }
+                else { Write-Host "::error file=$rel::$desc :: $msg (at $rel)" }
+              }
+              Write-Host "  FAILED_CASE_FILE $rel LINE $line NAME $($t.Name)"
+            }
+            $failed += $r.FailedCount
+          }
+          Write-Host "::warning::PESTER_SUMMARY files=$files failed_files=$failedFiles passed=$totalPassed failed_cases=$failed threw=$threw"
+          if ($failed -gt 0 -or $threw -gt 0) { throw "Pester failed cases: $failed; threw: $threw" }
+          # tests spawn child powershell processes that exit 1/2 by design; the Actions wrapper
+          # ends with "exit $LASTEXITCODE", so clear it explicitly or a green run reports failure
+          exit 0
+
+      - name: flow.json edges 一致性校验（公开样例）
+        run: node tools\flow-drawio\check-flow.js tests\eval\fixtures\file-copy-text.json
+
+      - name: 设计质量评估集（公开样例的结构断言）
+        run: node tools\pad-robin\eval-flow.js tests\eval
+
+      - name: 准入网关（只读；公开样例，无真实业务配置）
+        shell: powershell
+        run: |
+          # keep run bodies ASCII-only: GitHub writes them as ANSI .ps1 and CJK breaks parsing
+          $ErrorActionPreference = 'Continue'
+          $flow = 'tests\eval\fixtures\file-copy-text.json'
+          $robin = Join-Path $env:RUNNER_TEMP 'file-copy-text.robin'
+          node tools\pad-robin\flow-to-robin.js $flow $robin
+          if ($LASTEXITCODE -ne 0) { throw "generate failed: $LASTEXITCODE" }
+          # no business fingerprint baseline on the public runner; bind a synthetic
+          # approve record to the generated robin hash (same as tests\pad-admit.Tests.ps1)
+          $approve = Join-Path $env:RUNNER_TEMP 'approve.jsonl'
+          $hash = (Get-FileHash -LiteralPath $robin -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText($approve, ('{"robin":"' + $hash + '"}'), (New-Object Text.UTF8Encoding($false)))
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\pad-sync\pad-admit.ps1 -FlowFile $flow -RobinFile $robin -ApproveFile $approve
+          if ($LASTEXITCODE -ne 0) { throw "admit gate failed: $LASTEXITCODE" }
+
+      - name: 生成器与对比器单元测试
+        run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js
+
+      - name: 生成引擎：公开样例生成 + 静态校验
+        shell: powershell
+        run: |
+          # public repo has no business flows; exercise the generator with a synthetic example
+          node tools\pad-robin\flow-to-robin.js tests\eval\fixtures\file-copy-text.json "$env:RUNNER_TEMP\gen.robin" --no-check
+          if ($LASTEXITCODE -ne 0) { throw "generate failed: $LASTEXITCODE" }
+          node tools\pad-robin\check.js "$env:RUNNER_TEMP\gen.robin"
+          if ($LASTEXITCODE -ne 0) { throw "check failed: $LASTEXITCODE" }
+
+      - name: 生成结果与仓库生产 .robin 一致（仅当 business 存在）
+        shell: powershell
+        run: |
+          # business/ is never committed; only the tool layer ships in this repo
+          $flows = @(Get-ChildItem 'business\flows\*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*.requirements.json' -and $_.Name -notlike '*.acceptance.json' })
+          if (-not $flows) { Write-Host 'skip: business layer not present'; exit 0 }
+          foreach ($f in $flows) {
+            $robin = Join-Path $f.DirectoryName ($f.BaseName + '.robin')
+            if (-not (Test-Path $robin)) { continue }
+            $out = Join-Path $env:RUNNER_TEMP ($f.BaseName + '.gen.robin')
+            node tools\pad-robin\flow-to-robin.js $f.FullName $out --no-check
+            if ($LASTEXITCODE -ne 0) { throw "generate failed: $($f.Name)" }
+            node tools\pad-robin\compare-robin.js $out $robin
+            if ($LASTEXITCODE -ne 0) { throw "generated robin differs: $($f.Name)" }
+          }

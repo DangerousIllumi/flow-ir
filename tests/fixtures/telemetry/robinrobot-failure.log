@@ -1,0 +1,3 @@
+{"event":"robin.execution.start","durationInMilliseconds":0,"eventData":{"padFlowInfo":{"runId":"bbbbbbbb-1111-2222-3333-444444444444"}}}
+{"event":"sap.actionexecution.exception","durationInMilliseconds":800,"eventData":{"robinActionInfo":{"module":"SAP","action":"ClickElement"}}}
+{"event":"robin.execution.failure","durationInMilliseconds":5000,"eventData":{"padExceptionInfo":{"errorCode":"SAP.ElementNotFound","errorType":"SapGuiScripting"}}}

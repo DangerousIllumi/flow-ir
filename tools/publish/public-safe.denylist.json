@@ -1,0 +1,99 @@
+{
+  "_warning": "【敏感文件】真实版本只保存在本地工作区、不入库，永远不得推送到公开仓库。",
+  "_note": "本文件只放占位与结构性规则；真实业务名、真实路径、真实流程名、账号请写入同目录的 public-safe.denylist.local.json（已被 .gitignore 忽略，脚本会自动合并）。分类键即规则分类：businessName / realPath / flowName / accountOrServer / privateIdentifier。regex=false 按字面量匹配并自动转义，regex=true 按正则匹配；caseSensitive 默认 false；enabled 默认 true。",
+  "version": 1,
+  "allowlist": {
+    "_note": "保留域白名单：命中文本里出现这些明确用于示例/工具的域名时不判违规；enabled=false 可整体关闭。真实域名、真实邮箱域仍按 categories 里的规则拦截。",
+    "enabled": true,
+    "domains": [
+      "example.com",
+      "example.org",
+      "company.com",
+      "github.com",
+      "localhost"
+    ]
+  },
+  "categories": {
+    "businessName": {
+      "_note": "业务名（客户、产品、报表等）。真实词只放本地覆盖文件，本文件保持为空或占位。",
+      "rules": [
+        {
+          "id": "placeholder-literal",
+          "pattern": "PLACEHOLDER_SAMPLE_TERM",
+          "regex": false,
+          "enabled": false,
+          "caseSensitive": false,
+          "reason": "占位示例：演示字面量规则格式，默认关闭"
+        }
+      ]
+    },
+    "realPath": {
+      "_note": "真实路径用正则表达，避免在词表里写出具体目录名。",
+      "rules": [
+        {
+          "id": "path-pad-root",
+          "pattern": "(?i)[A-Za-z]:[\\\\](PAD|Robot)[\\\\][^\\r\\n\"']*",
+          "regex": true,
+          "enabled": true,
+          "caseSensitive": false,
+          "reason": "PAD 部署/工作根目录下的真实路径"
+        },
+        {
+          "id": "path-unc",
+          "pattern": "(?i)[\\\\]{2}[A-Za-z0-9][A-Za-z0-9._-]{1,}[\\\\][A-Za-z0-9_][A-Za-z0-9._$-]*",
+          "regex": true,
+          "enabled": true,
+          "caseSensitive": false,
+          "reason": "UNC 网络共享路径：主机名至少 2 个字符、共享名不以点开头，避免把正则字面量（双反斜杠 + 单字符）当成路径"
+        }
+      ]
+    },
+    "flowName": {
+      "_note": "真实流程名无法结构化枚举，只能由本地覆盖文件逐条登记。",
+      "rules": [
+        {
+          "id": "placeholder-flow",
+          "pattern": "PLACEHOLDER_FLOW_NAME",
+          "regex": false,
+          "enabled": false,
+          "caseSensitive": false,
+          "reason": "占位示例：演示真实流程名登记格式，默认关闭"
+        }
+      ]
+    },
+    "accountOrServer": {
+      "_note": "账号与服务器：用结构化模式识别，不写具体主机名。",
+      "rules": [
+        {
+          "id": "host-internal-suffix",
+          "pattern": "(?i)\\b[A-Za-z0-9-]+[.](corp|intra|internal|lan)\\b",
+          "regex": true,
+          "enabled": true,
+          "caseSensitive": false,
+          "reason": "疑似内网主机名（内部域名后缀）"
+        }
+      ]
+    },
+    "privateIdentifier": {
+      "_note": "私人标识：邮箱、手机号。",
+      "rules": [
+        {
+          "id": "email-address",
+          "pattern": "(?i)\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.](com|cn|net|org)\\b",
+          "regex": true,
+          "enabled": true,
+          "caseSensitive": false,
+          "reason": "邮箱地址属于私人标识"
+        },
+        {
+          "id": "mobile-number",
+          "pattern": "(?<![0-9])[1][3-9][0-9]{9}(?![0-9])",
+          "regex": true,
+          "enabled": true,
+          "caseSensitive": false,
+          "reason": "疑似中国大陆手机号"
+        }
+      ]
+    }
+  }
+}

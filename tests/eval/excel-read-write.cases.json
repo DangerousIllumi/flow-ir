@@ -1,0 +1,23 @@
+{
+  "flow": "tests/eval/fixtures/excel-read-write.json",
+  "description": "需求：检查 Excel 有没有数据，有就写标记并保存",
+  "cases": [
+    {
+      "id": "open-read-close",
+      "requirement": "必须打开工作簿、读取数据、最后保存关闭",
+      "expect": [
+        { "op": "action", "id": "1", "padHint": "Excel.LaunchExcel.LaunchAndOpen" },
+        { "op": "action", "id": "2", "padHint": "Excel.ReadFromExcel.ReadAllCells" },
+        { "op": "action", "id": "5", "padHint": "Excel.CloseExcel.CloseAndSave" }
+      ]
+    },
+    {
+      "id": "write-only-when-data",
+      "requirement": "只有读到数据才写标记，空表不写",
+      "expect": [
+        { "op": "condition", "id": "3", "contains": "Rows.Count > 0" },
+        { "op": "edge", "from": "3", "to": "4" }
+      ]
+    }
+  ]
+}

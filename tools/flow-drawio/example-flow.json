@@ -1,0 +1,136 @@
+{
+  "name": "monthly-reconciliation",
+  "description": "示例对账：从邮箱读取附件，提取金额，跟导出数据核对，差异标红后发邮件给收件人",
+  "trigger": {
+    "type": "schedule",
+    "config": { "dayOfMonth": 3 }
+  },
+  "budget": { "maxLoop": 1, "note": "示例流程无轮询；仅演示结构" },
+  "variables": [
+    { "name": "ManagerEmail", "type": "string", "default": "user@example.com", "description": "收件人邮箱", "required": true },
+    { "name": "SenderFilter", "type": "string", "default": "sender@example.com", "description": "发件人过滤", "required": true },
+    { "name": "Month", "type": "string", "default": "2026-09", "description": "对账月份", "required": true },
+    { "name": "ExcelPath", "type": "string", "default": "<EXPORT_DIR>\\export.xlsx", "description": "SAP导出Excel路径", "required": true }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "type": "mail.launch",
+      "pad_hint": "Outlook.Launch",
+      "label": "启动 Outlook",
+      "params": {},
+      "outputs": ["OutlookInstance"],
+      "next": ["2"],
+      "branch": null
+    },
+    {
+      "id": "2",
+      "type": "mail.search",
+      "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments",
+      "label": "检索示例报表邮件并保存附件",
+      "params": {
+        "MarkAsRead": true,
+        "MailFolder": "收件箱",
+        "FromContains": "{{variables.SenderFilter}}",
+        "SubjectContains": "报表",
+        "SaveAttachmentsInto": "<PAD_ROOT>\\Attachments"
+      },
+      "output_skip": ["Messages"],
+      "next": ["3"],
+      "branch": null
+    },
+    {
+      "id": "3",
+      "type": "sap.export",
+      "pad_hint": "Scripting.RunVBScript.RunVBScript",
+      "intent": "sap-export",
+      "label": "运行导出事务脚本",
+      "params": {
+        "VBScriptCode": "WScript.Echo \"export done to {{variables.ExcelPath}}\""
+      },
+      "output_skip": ["ScriptError", "ScriptOutput"],
+      "next": ["4"],
+      "branch": null
+    },
+    {
+      "id": "4",
+      "type": "excel.launch",
+      "pad_hint": "Excel.LaunchExcel.LaunchAndOpen",
+      "label": "打开 SAP 导出的 Excel",
+      "params": {
+        "Path": "{{variables.ExcelPath}}",
+        "Visible": false
+      },
+      "outputs": ["ExcelInstance"],
+      "next": ["5"],
+      "branch": null
+    },
+    {
+      "id": "5",
+      "type": "excel.read",
+      "pad_hint": "Excel.ReadFromExcel.ReadAllCells",
+      "label": "读取 Excel 全部数据",
+      "params": {
+        "FirstLineIsHeader": true
+      },
+      "outputs": ["ExcelData"],
+      "next": ["6"],
+      "branch": null
+    },
+    {
+      "id": "6",
+      "type": "branch",
+      "pad_hint": "IF",
+      "label": "有差异吗",
+      "params": { "Condition": "ExcelData.Count > 0" },
+      "next": ["8"],
+      "branch": {
+        "condition": "ExcelData.Count > 0",
+        "true": "7",
+        "false": "8",
+        "body": ["7"]
+      }
+    },
+    {
+      "id": "7",
+      "type": "excel.color",
+      "pad_hint": "Excel.SetColor.SetColorRangePredefined",
+      "label": "差异行标红",
+      "params": {
+        "StartRow": 2,
+        "EndRow": "ExcelData.Count + 1",
+        "StartColumn": 1,
+        "EndColumn": 5,
+        "ColorName": "Red"
+      },
+      "outputs": [],
+      "next": ["8"],
+      "branch": null
+    },
+    {
+      "id": "8",
+      "type": "excel.close",
+      "pad_hint": "Excel.CloseExcel.CloseAndSave",
+      "label": "保存并关闭 Excel",
+      "params": {},
+      "outputs": [],
+      "next": ["9"],
+      "branch": null
+    },
+    {
+      "id": "9",
+      "type": "mail.send",
+      "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
+      "label": "发对账结果邮件给经理",
+      "params": {
+        "SendTo": "{{variables.ManagerEmail}}",
+        "Subject": "{{variables.Month}} 对账结果",
+        "Body": "{{variables.Month}} 对账已完成，详见附件。",
+        "IsBodyHtml": false
+      },
+      "outputs": [],
+      "next": [],
+      "branch": null
+    }
+  ]
+}

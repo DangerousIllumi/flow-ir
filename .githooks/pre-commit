@@ -1,0 +1,5 @@
+#!/bin/sh
+# pre-commit — 提交前公开库内容门禁入口（Git for Windows 用 sh 执行钩子）
+# 实际逻辑在 pre-commit.ps1：只扫描暂存区快照，命中即非零退出阻断提交。
+hook_dir=$(dirname "$0")
+exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$hook_dir/pre-commit.ps1"

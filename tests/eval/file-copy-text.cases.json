@@ -1,0 +1,22 @@
+{
+  "flow": "tests/eval/fixtures/file-copy-text.json",
+  "description": "需求：把一个文本文件原样复制到另一个位置",
+  "cases": [
+    {
+      "id": "read-then-write",
+      "requirement": "先读源文件，再写目标文件",
+      "expect": [
+        { "op": "action", "id": "1", "padHint": "File.ReadTextFromFile.ReadText" },
+        { "op": "action", "id": "2", "padHint": "File.WriteText" },
+        { "op": "edge", "from": "1", "to": "2" }
+      ]
+    },
+    {
+      "id": "content-passed-through",
+      "requirement": "写的内容来自上一步读取结果，不能是空串",
+      "expect": [
+        { "op": "param", "id": "2", "name": "TextToWrite", "equals": "{{1.FileContent}}" }
+      ]
+    }
+  ]
+}

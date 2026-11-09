@@ -1,0 +1,81 @@
+{
+  "name": "guard-notify",
+  "description": "发通知邮件，但 DRY_RUN=1 时跳过（合成样例）",
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-sample-guard-notify",
+    "time": "10:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday"
+  },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "DryRun", "type": "string", "deployKey": "DRY_RUN" },
+    { "name": "AlertTo", "type": "string", "default": "someone@example.com" },
+    { "name": "MailAccount", "type": "string", "default": "" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3", "label": "非测试模式" },
+    { "from": "2", "to": "4", "label": "DRY_RUN=1" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "启动 Outlook",
+      "type": "action",
+      "pad_hint": "Outlook.Launch",
+      "params": {},
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": true
+    },
+    {
+      "id": "2",
+      "label": "DRY_RUN 守卫：测试模式不发信",
+      "type": "guard",
+      "pad_hint": "GUARD",
+      "when": "DryRun <> $'''1'''",
+      "body": ["3"],
+      "elseBody": ["4"],
+      "run_mode": "auto",
+      "idempotent": true
+    },
+    {
+      "id": "3",
+      "label": "发通知邮件",
+      "type": "action",
+      "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
+      "params": {
+        "SendTo": "{{variables.AlertTo}}",
+        "Subject": "任务完成",
+        "Body": "任务已完成。",
+        "IsBodyHtml": false,
+        "IsDraft": false,
+        "Account": "{{variables.MailAccount}}"
+      },
+      "run_mode": "auto",
+      "idempotent": false,
+      "reversible": false,
+      "reversibility_note": "邮件发出后无法撤回，只能补发更正",
+      "idempotency_note": "同一轮重跑会重复发送同一封通知邮件；跳过发信请设 DRY_RUN=1"
+    },
+    {
+      "id": "4",
+      "label": "测试模式：提示已跳过发信",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "DRY_RUN=1：已跳过发信。",
+        "Title": "测试模式",
+        "Icon": "Information",
+        "Buttons": "OK",
+        "DefaultButton": "Button1",
+        "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "DryRunNoticeButton" },
+      "run_mode": "auto",
+      "idempotent": true
+    }
+  ]
+}

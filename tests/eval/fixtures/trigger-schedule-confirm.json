@@ -1,0 +1,26 @@
+{
+  "name": "<流程名>",
+  "description": "触发声明断言用：schedule 触发 + 一个需人工确认的节点（用于无人值守反例）",
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-trigger-fixture",
+    "time": "09:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday",
+    "timeout_sec": 4200
+  },
+  "nodes": [
+    {
+      "id": "1",
+      "type": "dialog.confirm",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "label": "人工确认",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null,
+      "run_mode": "confirm",
+      "idempotent": true
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "flow": "examples/smoke-flow.json",
+  "description": "冒烟流程的结构断言：两个动作、顺序连边、声明齐全",
+  "cases": [
+    {
+      "id": "two-actions",
+      "requirement": "只包含写入与读取两个动作",
+      "expect": [
+        { "op": "nodeCount", "equals": 2 },
+        { "op": "action", "id": "1", "padHint": "Clipboard.SetText" },
+        { "op": "action", "id": "2", "padHint": "Clipboard.GetText" }
+      ]
+    },
+    {
+      "id": "order-and-declarations",
+      "requirement": "先写后读，且触发与必答声明齐全",
+      "expect": [
+        { "op": "edge", "from": "1", "to": "2" },
+        { "op": "triggerComplete" },
+        { "op": "declarationsComplete" }
+      ]
+    }
+  ]
+}

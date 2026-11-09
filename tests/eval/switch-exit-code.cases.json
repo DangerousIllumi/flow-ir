@@ -1,0 +1,34 @@
+{
+  "flow": "tests/eval/fixtures/switch-exit-code.json",
+  "description": "需求：跑脚本并按退出码通知结果",
+  "cases": [
+    {
+      "id": "three-way-branch",
+      "requirement": "0=成功、2=有差异、其他=异常，三路都要有",
+      "expect": [
+        {
+          "op": "switchCases",
+          "id": "2",
+          "cases": [
+            { "case": "= 0", "body": ["3"] },
+            { "case": "= 2", "body": ["4"] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "intent-tagged",
+      "requirement": "脚本节点必须带语义标签，策略才能按 intent 识别",
+      "expect": [
+        { "op": "action", "id": "1", "padHint": "Scripting.RunDOSCommand.RunDOSCommand" }
+      ]
+    },
+    {
+      "id": "no-extra-branch",
+      "requirement": "不允许出现关闭 Outlook 这类越界动作",
+      "expect": [
+        { "op": "absentMatch", "pattern": "^Outlook\\.Close" }
+      ]
+    }
+  ]
+}

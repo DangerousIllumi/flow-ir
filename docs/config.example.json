@@ -1,0 +1,8 @@
+{
+  "PadSyncPath": "D:\\flow-ir\\tools\\pad-sync\\pad-sync.ps1",
+  "PythonExe": "D:\\Python\\python.exe",
+  "CalendarPath": "D:\\flow-ir\\business\\config\\calendar.json",
+  "WorkdayScript": "D:\\flow-ir\\tools\\workday\\Test-Workday.ps1",
+  "RunTimeoutSec": 3600,
+  "PadRoot": "D:\\PAD"
+}

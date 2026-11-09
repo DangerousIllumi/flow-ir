@@ -1,0 +1,26 @@
+{
+  "name": "<流程名>",
+  "description": "触发声明断言用：schedule 触发 + idempotent=false 但未声明 reversible（补声明反例）",
+  "trigger": {
+    "kind": "schedule",
+    "task_name": "flow-ir-trigger-fixture",
+    "time": "09:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "gate": "workday",
+    "timeout_sec": 4200
+  },
+  "nodes": [
+    {
+      "id": "29",
+      "type": "mail.send",
+      "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
+      "label": "发送提醒邮件",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": false
+    }
+  ]
+}

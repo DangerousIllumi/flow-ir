@@ -1,0 +1,29 @@
+{
+  "flow": "tests/eval/fixtures/no-match-early-exit.json",
+  "description": "需求：轮询收件箱，收到就停，没收到才提示",
+  "cases": [
+    {
+      "id": "bounded-polling",
+      "requirement": "轮询有明确上限，不能无限等",
+      "expect": [
+        { "op": "loop", "id": "2", "from": 1, "to": 3, "step": 1 }
+      ]
+    },
+    {
+      "id": "early-exit-on-match",
+      "requirement": "收到邮件就提前结束轮询，不是跑满次数",
+      "expect": [
+        { "op": "condition", "id": "4", "contains": "RetrievedEmails.Count > 0" },
+        { "op": "edge", "from": "4", "to": "5" }
+      ]
+    },
+    {
+      "id": "notify-only-when-empty",
+      "requirement": "只有在没收到时才提示，避免误报",
+      "expect": [
+        { "op": "condition", "id": "6", "contains": "RetrievedEmails.Count = 0" },
+        { "op": "edge", "from": "6", "to": "7" }
+      ]
+    }
+  ]
+}
