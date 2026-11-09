@@ -23,15 +23,15 @@ test("不一致时给出首个差异行号与分类", () => {
   const r = compareRobin(gen, prod);
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.diffs[0].index, 2);
-  assert.strictEqual(r.diffs[0].kind, "控制流");
+  assert.strictEqual(r.diffs[0].kind, "control-flow");
 });
 
 test("占位符缺失单独归类", () => {
-  assert.strictEqual(classify("SET PadRoot TO $'''{{PAD_ROOT}}'''", "SET PadRoot TO $'''C:\\\\PAD'''"), "占位符");
+  assert.strictEqual(classify("SET PadRoot TO $'''{{PAD_ROOT}}'''", "SET PadRoot TO $'''C:\\\\PAD'''"), "placeholder");
 });
 
 test("一侧行数不足时记为缺失", () => {
   const r = compareRobin("SET A TO $'''x'''", "SET A TO $'''x'''\nTest.Log Message: $'''m'''");
   assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.diffs[0].kind, "行数不一致");
+  assert.strictEqual(r.diffs[0].kind, "line-count-mismatch");
 });

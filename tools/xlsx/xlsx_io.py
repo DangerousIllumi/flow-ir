@@ -158,19 +158,19 @@ def infer_column_type(values, sample=20):
         if v is None:
             continue
         if isinstance(v, date):
-            kinds.add("日期")
+            kinds.add("date")
         elif isinstance(v, (int, float)):
-            kinds.add("数值")
+            kinds.add("number")
         else:
             s = str(v).strip()
             if not s:
                 continue
-            kinds.add("文本")
+            kinds.add("text")
     if not kinds:
-        return "空"
+        return "empty"
     if len(kinds) == 1:
         return kinds.pop()
-    return "混合"
+    return "mixed"
 
 
 def read_rule_table(ws, key_header="项目", value_header="值", unit_header="单位",
@@ -232,25 +232,25 @@ def dump_workbook(path, sheet=None, max_col=60):
     只打开 read_only 工作簿、只读不写，也不做任何文件挑选或排序。
     """
     if not os.path.isfile(path):
-        raise OSError("工作簿不存在：%s" % path)
+        raise OSError("workbook not found: %s" % path)
     wb = load_workbook(path, read_only=True, data_only=True)
     try:
         if sheet and sheet not in wb.sheetnames:
-            raise ValueError("工作簿里没有工作表：%s" % sheet)
+            raise ValueError("worksheet not found in workbook: %s" % sheet)
         targets = [sheet] if sheet else list(wb.sheetnames)
-        print("文件：%s" % os.path.abspath(path))
+        print("File: %s" % os.path.abspath(path))
         for name in targets:
             grid = load_grid(wb[name], max_col=max_col)
             hdr = _trim_trailing_empty(header_row_grid(grid))
-            print("[工作表] %s" % name)
+            print("[sheet] %s" % name)
             if not hdr:
-                print("  （空表或无表头）")
+                print("  (empty sheet or no header)")
                 continue
             for i, h in enumerate(hdr):
                 label = str(h).strip() if h is not None else ""
                 kind = infer_column_type(
                     [row[i] if i < len(row) else None for row in grid[1:]])
-                print("  列%d：%s（%s）" % (i + 1, label or "（空列名）", kind))
+                print("  column %d: %s (%s)" % (i + 1, label or "(empty column name)", kind))
     finally:
         wb.close()
 
@@ -275,7 +275,7 @@ def main(argv=None):
     try:
         dump_workbook(args.dump, args.sheet, args.max_col)
     except Exception as exc:
-        sys.stderr.write("[错误] %s\n" % exc)
+        sys.stderr.write("[error] %s\n" % exc)
         return 1
     return 0
 

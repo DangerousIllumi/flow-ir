@@ -36,13 +36,13 @@ function skeleton(line) {
 
 /** 差异分类：先给修复方向，再给行号 */
 function classify(a, b) {
-  if (a === "<缺失>" || b === "<缺失>") return "行数不一致";
-  if (/\{\{/.test(a) !== /\{\{/.test(b)) return "占位符";
+  if (a === "<missing>" || b === "<missing>") return "line-count-mismatch";
+  if (/\{\{/.test(a) !== /\{\{/.test(b)) return "placeholder";
   const kw = /^(IF|ELSE|END|LOOP|SWITCH|CASE|DEFAULT|EXIT LOOP|WAIT|ON ERROR)\b/;
-  if (kw.test(a) || kw.test(b)) return "控制流";
-  if (a.startsWith(b) || b.startsWith(a)) return "参数缺失/多余";
-  if (skeleton(a) === skeleton(b)) return "变量名/字面量";
-  return "其他";
+  if (kw.test(a) || kw.test(b)) return "control-flow";
+  if (a.startsWith(b) || b.startsWith(a)) return "argument-mismatch";
+  if (skeleton(a) === skeleton(b)) return "variable-or-literal";
+  return "other";
 }
 
 /** 逐行比对，返回差异列表（最多 limit 条） */
@@ -51,8 +51,8 @@ function compareRobin(genText, prodText, limit = 20) {
   const lb = normalizeRobin(prodText).split("\n");
   const diffs = [];
   for (let i = 0; i < Math.max(la.length, lb.length); i++) {
-    const a = i < la.length ? la[i] : "<缺失>";
-    const b = i < lb.length ? lb[i] : "<缺失>";
+    const a = i < la.length ? la[i] : "<missing>";
+    const b = i < lb.length ? lb[i] : "<missing>";
     if (a !== b) diffs.push({ index: i + 1, kind: classify(a, b), generated: a, production: b });
     if (diffs.length >= limit) break;
   }

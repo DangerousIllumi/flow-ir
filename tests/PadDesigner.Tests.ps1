@@ -77,7 +77,7 @@ SET B TO 2
         $cmp.match | Should Be $false
         $cmp.diffIndex | Should Be 3
         $cmp.lineA | Should Be 'SET C TO 3'
-        $cmp.lineB | Should Be '<缺失>'
+        $cmp.lineB | Should Be '<missing>'
     }
 
     It '运行日志判定：逐动作行不算结束，末行汇总才返回终止状态' {

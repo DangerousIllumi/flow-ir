@@ -20,14 +20,19 @@ import workday as reconcile  # 保留别名，测试体不用改；被测模块�
 RECONCILE = ROOT / "tools" / "workday" / "workday.py"
 
 
-def _write_calendar(path, rows, base=None):
+def _write_calendar(path, rows, base=None, sheet="工作日", decoy=None):
     """rows: [(相对 base 的天数, 是否工作日)]；base 缺省为今天
 
     base 可指定绝对日期，用于构造“某个月的月末”这类与当前日期无关的场景。
+    sheet 可改页签名；decoy 会先建一个空页签，用于验证「不是按第一个表选」。
     """
     wb = Workbook()
     ws = wb.active
-    ws.title = "工作日"
+    if decoy:
+        ws.title = decoy
+        ws = wb.create_sheet(sheet)
+    else:
+        ws.title = sheet
     ws.append(["日期", "是否工作日"])
     start = base or date.today()
     for off, flag in rows:
@@ -89,6 +94,20 @@ def test_weekend_marked_yes_is_workday(tmp_path):
     cal = tmp_path / "cal.xlsx"
     _write_calendar(cal, [(0, "是")])
     assert reconcile.is_workday(str(cal), date.today())[0] is True
+
+
+def test_chinese_sheet_still_recognized_with_english_decoy_first(tmp_path):
+    """中文页签仍可识别，且优先于排在前面的英文页签"""
+    cal = tmp_path / "cal.xlsx"
+    _write_calendar(cal, [(0, "是")], decoy="Workday")
+    assert reconcile.is_workday(str(cal), date.today()) == (True, True)
+
+
+def test_english_sheet_alias_recognized(tmp_path):
+    """英文页签 Workday 作为别名同样可读"""
+    cal = tmp_path / "cal.xlsx"
+    _write_calendar(cal, [(0, "是")], sheet="Workday")
+    assert reconcile.is_workday(str(cal), date.today()) == (True, True)
 
 
 def test_missing_calendar_falls_back_to_weekday(tmp_path):

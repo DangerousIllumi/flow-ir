@@ -97,11 +97,11 @@ def test_to_number_keeps_legacy_none_semantics():
 
 def test_infer_column_type_by_stored_type():
     """列类型按单元格存储类型推断：日期 / 数值 / 文本 / 空 / 混合"""
-    assert xlsx_io.infer_column_type([datetime(2026, 10, 26), None]) == "日期"
-    assert xlsx_io.infer_column_type([1, 2.5]) == "数值"
-    assert xlsx_io.infer_column_type(["甲", "乙"]) == "文本"
-    assert xlsx_io.infer_column_type([None, ""]) == "空"
-    assert xlsx_io.infer_column_type([1, "甲"]) == "混合"
+    assert xlsx_io.infer_column_type([datetime(2026, 10, 26), None]) == "date"
+    assert xlsx_io.infer_column_type([1, 2.5]) == "number"
+    assert xlsx_io.infer_column_type(["甲", "乙"]) == "text"
+    assert xlsx_io.infer_column_type([None, ""]) == "empty"
+    assert xlsx_io.infer_column_type([1, "甲"]) == "mixed"
 
 
 # ── 整表读取 ──────────────────────────────────────────────────
@@ -233,12 +233,12 @@ def test_dump_prints_columns_and_types(tmp_path):
     proc = _dump(path)
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
-    assert "[工作表] 规则" in out
-    assert "列1：项目（文本）" in out
-    assert "列2：值（数值）" in out
-    assert "列3：日期（日期）" in out
-    assert "[工作表] 空表" in out
-    assert "（空表或无表头）" in out
+    assert "[sheet] 规则" in out
+    assert "column 1: 项目 (text)" in out
+    assert "column 2: 值 (number)" in out
+    assert "column 3: 日期 (date)" in out
+    assert "[sheet] 空表" in out
+    assert "(empty sheet or no header)" in out
 
 
 def test_dump_is_read_only(tmp_path):
@@ -259,4 +259,4 @@ def test_dump_missing_file_fails(tmp_path):
     """文件不存在：退出码 1，错误写 stderr"""
     proc = _dump(tmp_path / "nope.xlsx")
     assert proc.returncode == 1
-    assert "工作簿不存在" in proc.stderr
+    assert "workbook not found" in proc.stderr

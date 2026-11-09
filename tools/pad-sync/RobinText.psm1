@@ -42,8 +42,8 @@ function Compare-RobinText([string]$A, [string]$B) {
     $lb = @((ConvertTo-NormalizedRobin $B) -split "`n")
     $n = [Math]::Max($la.Count, $lb.Count)
     for ($i = 0; $i -lt $n; $i++) {
-        $va = if ($i -lt $la.Count) { $la[$i] } else { '<缺失>' }
-        $vb = if ($i -lt $lb.Count) { $lb[$i] } else { '<缺失>' }
+        $va = if ($i -lt $la.Count) { $la[$i] } else { '<missing>' }
+        $vb = if ($i -lt $lb.Count) { $lb[$i] } else { '<missing>' }
         if ($va -ne $vb) {
             return [ordered]@{ match = $false; diffIndex = ($i + 1); lineA = $va; lineB = $vb }
         }

@@ -63,7 +63,7 @@ Describe 'pad-release 纯函数测试' {
         $cmp = Compare-RobinText $a $b
         $cmp.match | Should Be $false
         $cmp.diffIndex | Should Be 2
-        $cmp.lineB | Should Be '<缺失>'
+        $cmp.lineB | Should Be '<missing>'
     }
 
     It '从 Actions.log 路径解析流程 GUID 与 runId' {

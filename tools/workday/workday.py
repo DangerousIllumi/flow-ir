@@ -36,6 +36,16 @@ from xlsx_io import norm, to_date, find_col  # noqa: E402
 TRUE_FLAGS = ("Y", "YES", "TRUE", "1", "是", "工作日")
 
 
+def _sheet_priority(name):
+    """页签选择优先级：中文「工作日」优先，英文 workday / working day 作为别名"""
+    if "工作日" in name:
+        return 2
+    low = name.lower()
+    if "workday" in low or "working day" in low:
+        return 1
+    return 0
+
+
 def load_calendar(cal_path):
     """读取日历，返回 (工作日集合, 最小日期, 最大日期)
 
@@ -47,8 +57,8 @@ def load_calendar(cal_path):
         return (None, None, None)
     wb = load_workbook(cal_path, data_only=True)
     try:
-        # 优先选名字里含「工作日」的表，否则用第一个表
-        ws = next((wb[s] for s in wb.sheetnames if "工作日" in s), wb[wb.sheetnames[0]])
+        # 优先选名字里含「工作日」的表，其次英文 workday / working day，都没有则用第一个表
+        ws = wb[max(wb.sheetnames, key=_sheet_priority)]
         c_date = c_wd = None
         hdr = 0
         # 在前 10 行内找表头行（同时含「日期」和「是否工作日」）
