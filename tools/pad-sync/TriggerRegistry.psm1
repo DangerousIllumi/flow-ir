@@ -564,7 +564,7 @@ function Register-ScheduleTrigger {
     $runtime = Resolve-TriggerRuntimeConfig -RuntimeConfigPath $RuntimeConfigPath
     $actionSpec = Get-TriggerActionSpec -Spec $Spec -Runtime $runtime -AllowProd:$AllowProd
     $hash = Get-TriggerFingerprint -Spec $Spec
-    $description = "flow-ir-spec:$hash；flow-ir：$($Spec.kind) $($Spec.time) 触发，运行 PAD 流程 $($Spec.flowName)（attended）"
+    $description = "flow-ir-spec:$hash; flow-ir: registered by $($Spec.kind) $($Spec.time) to run PAD flow $($Spec.flowName) (attended)"
 
     if ($DryRun) {
         return [ordered]@{
@@ -613,7 +613,7 @@ function Register-ScheduleTrigger {
         }
         Write-RunAlert -FlowName $Spec.flowName -ExitCode 1 -Stage 'register' -Status 'failed' `
             -Kind 'trigger-register-failed' `
-            -Note ("触发注册失败：$($_.Exception.Message)。下一步：检查计划任务与运行时配置后重新注册。") | Out-Null
+            -Note ("Trigger registration failed: $($_.Exception.Message). Next step: check the scheduled task and the runtime configuration, then register again.") | Out-Null
         throw
     }
 }
@@ -682,7 +682,7 @@ function Unregister-ScheduleTrigger {
         }
         Write-RunAlert -FlowName $Spec.flowName -ExitCode 1 -Stage 'unregister' -Status 'failed' `
             -Kind 'trigger-unregister-failed' `
-            -Note ("触发注销失败：$($_.Exception.Message)。下一步：到任务计划程序手动删除 $($Spec.taskName)。") | Out-Null
+            -Note ("Trigger unregistration failed: $($_.Exception.Message). Next step: delete $($Spec.taskName) manually in Task Scheduler.") | Out-Null
         throw
     }
 }
@@ -726,7 +726,7 @@ function Register-FileTrigger {
             -PadTriggerPath (Join-Path $moduleHere 'pad-trigger.ps1') `
             -RuntimeConfigPath $runtimePath -AllowProd:$AllowProd
         $hash = Get-TriggerFingerprint -Spec $Spec
-        $description = "flow-ir-spec:$hash；flow-ir：file $dir\$($Spec.filePattern) 守望，运行 PAD 流程 $($Spec.flowName)（attended）"
+        $description = "flow-ir-spec:$hash; flow-ir: watching file $dir\$($Spec.filePattern) to run PAD flow $($Spec.flowName) (attended)"
 
         if ($DryRun) {
             return [ordered]@{
@@ -781,7 +781,7 @@ function Register-FileTrigger {
         }
         Write-RunAlert -FlowName $Spec.flowName -ExitCode 1 -Stage 'register' -Status 'failed' `
             -Kind 'trigger-register-failed' `
-            -Note ("file 触发注册失败：$($_.Exception.Message)。下一步：修正监听目录/配置后重新注册。") | Out-Null
+            -Note ("File-trigger registration failed: $($_.Exception.Message). Next step: fix the watched directory or the configuration, then register again.") | Out-Null
         throw
     }
 }
@@ -839,7 +839,7 @@ function Invoke-TriggerWatch {
     if (-not (Test-TriggerDirWritable $stateDir)) {
         Write-RunAlert -FlowName $spec.flowName -ExitCode 1 -Stage 'trigger' -Status 'failed' `
             -Kind 'trigger-failed' `
-            -Note ("状态账本目录不可写：$stateDir。下一步：修正目录权限或配置后人工重跑。") | Out-Null
+            -Note ("State ledger directory is not writable: $stateDir. Next step: fix the directory permissions or the configuration, then rerun by hand.") | Out-Null
         throw (New-TriggerException 'TRIGGER_STATE_DIR_UNWRITABLE' "state ledger directory is not writable: $stateDir")
     }
     $ledger = Get-TriggerLedgerPath -Spec $spec -Runtime $runtime
@@ -869,7 +869,7 @@ function Invoke-TriggerWatch {
             $names = (@($files | ForEach-Object { $_.Name }) -join ', ')
             Write-RunAlert -FlowName $spec.flowName -ExitCode 1 -Stage 'trigger' -Status 'failed' `
                 -Kind 'trigger-failed' `
-                -Note ("监听目录出现 $($files.Count) 个候选文件（$names），不做取最新猜测，本次未触发。下一步：清理目录后人工重跑。") | Out-Null
+                -Note ("The watched directory holds $($files.Count) candidate file(s) ($names); picking the newest one would be a guess, so nothing was triggered. Next step: clean up the directory, then rerun by hand.") | Out-Null
             throw (New-TriggerException 'TRIGGER_FILE_AMBIGUOUS' `
                 "watch directory has $($files.Count) candidate files ($names); this will not guess 'latest'")
         }
@@ -900,7 +900,7 @@ function Invoke-TriggerWatch {
                         if ($LASTEXITCODE -ne 0) {
                             Write-RunAlert -FlowName $spec.flowName -ExitCode 1 -Stage 'run' -Status 'failed' `
                                 -Kind 'trigger-failed' `
-                                -Note ("file 触发后 pad-sync 退出码 $LASTEXITCODE。下一步：查看 PAD 控制台与运行日志后人工重跑，未自动重试。") | Out-Null
+                                -Note ("After the file trigger, pad-sync exited with code $LASTEXITCODE. Next step: check the PAD console and the run log, then rerun by hand; nothing was retried automatically.") | Out-Null
                             throw (New-TriggerException 'TRIGGER_WATCH_RUN_FAILED' `
                                 "pad-sync exit code $LASTEXITCODE (file $($f.Name))")
                         }

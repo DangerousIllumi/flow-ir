@@ -81,9 +81,9 @@
       "branch": null,
       "run_mode": "auto",
       "idempotent": false,
-      "idempotency_note": "保存附件后会标记已读，重跑取不到同一封邮件，请先恢复未读状态",
+      "idempotency_note": "Saving the attachments marks the mail as read, so a rerun cannot fetch the same message; restore the unread state first",
       "reversible": true,
-      "reversibility_note": "附件与标记已读均可重新生成或改回"
+      "reversibility_note": "Both the attachments and the read flag can be regenerated or set back"
     },
     {
       "id": "3",
@@ -105,7 +105,7 @@
       "run_mode": "auto",
       "idempotent": true,
       "reversible": true,
-      "reversibility_note": "每次生成新的带时间戳导出文件，旧文件可直接删除"
+      "reversibility_note": "Each run writes a new timestamped export file, so the old one can simply be deleted"
     },
     {
       "id": "4",
@@ -189,7 +189,7 @@
       "run_mode": "auto",
       "idempotent": true,
       "reversible": true,
-      "reversibility_note": "标色可直接改回或重新生成文件"
+      "reversibility_note": "The colouring can be reverted directly, or the file can be regenerated"
     },
     {
       "id": "8",
@@ -222,9 +222,9 @@
       "branch": null,
       "run_mode": "auto",
       "idempotent": false,
-      "idempotency_note": "每重跑一次会再发一封对账邮件",
+      "idempotency_note": "Every rerun sends one more reconciliation mail",
       "reversible": false,
-      "reversibility_note": "邮件已发出无法撤回，只能补发一封说明"
+      "reversibility_note": "A sent mail cannot be recalled; the only remedy is a follow-up correction mail"
     }
   ]
 }
