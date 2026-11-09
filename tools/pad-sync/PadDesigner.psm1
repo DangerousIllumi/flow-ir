@@ -168,7 +168,7 @@ function Repair-DesignerBounds($Window) {
     # 最小化时 SetWindowPos 不生效，必须先 SW_RESTORE 恢复，
     # 否则后续 Ctrl+A / Ctrl+V 全部打空（实测清空 14 → 14）
     if ([PadNative]::IsIconic($hwnd)) {
-        Write-PadDesignerLog '设计器窗口处于最小化状态，先恢复窗口'
+        Write-PadDesignerLog 'designer window is minimized; restoring it first'
         [void][PadNative]::ShowWindow($hwnd, 9)
         Start-Sleep -Milliseconds 900
     }
@@ -178,7 +178,7 @@ function Repair-DesignerBounds($Window) {
     $outside = Test-WindowOutside -Left $r.L -Top $r.T -Right $r.R -Bottom $r.B `
         -ScreenWidth $screen.Width -ScreenHeight $screen.Height -Minimized:([PadNative]::IsIconic($hwnd))
     if ($outside) {
-        Write-PadDesignerLog "设计器窗口不在可视区域 (L=$($r.L) T=$($r.T) R=$($r.R) B=$($r.B))，移回 (40,40)"
+        Write-PadDesignerLog "designer window is outside the visible area (L=$($r.L) T=$($r.T) R=$($r.R) B=$($r.B)); moving it back to (40,40)"
         [void][PadNative]::ShowWindow($hwnd, 9)
         [void][PadNative]::SetWindowPos($hwnd, [IntPtr]0, 40, 40, 1200, 900, 0x0040)
         Start-Sleep -Milliseconds 900
@@ -195,7 +195,7 @@ function Exit-Recorder($Window) {
         if ($e.Current.Name -match '尚未记录|选择记录以开始') { $recording = $true; break }
     }
     if (-not $recording) { return $true }
-    Write-PadDesignerLog '检测到 UI 记录器处于打开状态，尝试按 Esc 退出'
+    Write-PadDesignerLog 'UI recorder is open; trying Esc to close it'
     [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
     Start-Sleep -Seconds 1
     $all2 = $Window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
@@ -230,7 +230,7 @@ function Focus-ActionList($Window) {
         Start-Sleep -Milliseconds 300
         return $true
     } catch {
-        Write-PadDesignerLog "聚焦动作列表失败：$($_.Exception.Message)"
+        Write-PadDesignerLog "failed to focus the action list: $($_.Exception.Message)"
         return $false
     }
 }
@@ -249,10 +249,10 @@ function Clear-ActionList($Window) {
         [System.Windows.Forms.SendKeys]::SendWait('{DEL}')
         Start-Sleep -Milliseconds 1500
         $left = (Get-ActionItems $Window).Count
-        Write-PadDesignerLog "清空画布第 $round 轮：删除后剩余 $left 个动作"
+        Write-PadDesignerLog "clear canvas round ${round}: $left action(s) left after deleting"
         if ($left -eq 0) { return 0 }
     }
-    throw '清空画布失败：连续 5 轮 Ctrl+A + Delete 后仍有动作残留'
+    throw 'failed to clear the canvas: actions remain after 5 rounds of Ctrl+A + Delete'
 }
 
 # 画布回读：Ctrl+A + Ctrl+C 把当前动作复制成 robin 文本
@@ -296,10 +296,10 @@ function Get-InvokableElement($Element) {
 # 点击工具栏按钮。按钮是否变灰取决于 PAD 版本，不能再作为成功判据
 function Click-ToolButton($Window, [string]$AutoId) {
     $btn = Get-PadElementById $Window $AutoId
-    if (-not $btn) { throw "找不到按钮 $AutoId" }
+    if (-not $btn) { throw "button not found: $AutoId" }
     $btn = Get-InvokableElement $btn
-    if (-not $btn) { throw "按钮 $AutoId 内部没有可 Invoke 的 Button" }
-    if (-not $btn.Current.IsEnabled) { throw "按钮 $AutoId 不可用" }
+    if (-not $btn) { throw "button $AutoId has no invokable Button inside" }
+    if (-not $btn.Current.IsEnabled) { throw "button $AutoId is not enabled" }
     return (Invoke-UiClick $btn)
 }
 
@@ -338,11 +338,11 @@ function Invoke-PadInject {
         [switch]$VerifyCanvas
     )
     $hwnd = Repair-DesignerBounds $Window
-    if (-not (Set-PadForeground $hwnd)) { throw '无法把 PAD 设计器切到前台，Ctrl+A / Ctrl+V 会全部落空' }
+    if (-not (Set-PadForeground $hwnd)) { throw 'cannot bring the PAD designer to the foreground; Ctrl+A / Ctrl+V would do nothing' }
     # 先收掉可能残留的下拉/浮层，否则第一次点击会落在浮层上而不是画布
     [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
     Start-Sleep -Milliseconds 400
-    if (-not (Exit-Recorder $Window)) { throw 'UI 记录器无法关闭，设计器处于不可编辑状态' }
+    if (-not (Exit-Recorder $Window)) { throw 'cannot close the UI recorder; the designer is not editable' }
 
     $before = (Get-ActionItems $Window).Count
     [void](Focus-ActionList $Window)
@@ -351,9 +351,9 @@ function Invoke-PadInject {
     if ($Replace -and $before -gt 0) {
         [void](Set-PadForeground $hwnd)
         $afterClear = Clear-ActionList $Window
-        Write-PadDesignerLog "清空画布：$before → $afterClear"
+        Write-PadDesignerLog "clear canvas: $before -> $afterClear"
         # 清空失败不能继续追加，否则旧动作会和新动作叠加
-        if ($afterClear -gt 0) { throw "清空画布失败（仍有 $afterClear 个动作）" }
+        if ($afterClear -gt 0) { throw "failed to clear the canvas ($afterClear action(s) remain)" }
         [void](Focus-ActionList $Window)
         [void](Set-PadForeground $hwnd)
     }
@@ -370,21 +370,21 @@ function Invoke-PadInject {
         if ((Get-ActionItems $Window).Count -gt $baseCount) { break }
     }
     $final = (Get-ActionItems $Window).Count
-    if ($final -le $baseCount) { throw "粘贴后画布动作数没有增加（仍为 $final）" }
-    Write-PadDesignerLog "注入完成：动作数 $baseCount → $final"
+    if ($final -le $baseCount) { throw "canvas action count did not increase after paste (still $final)" }
+    Write-PadDesignerLog "injection done: action count $baseCount -> $final"
 
     # 画布回读校验：粘贴可能只进去一部分（长文本/焦点丢失），必须与源逐行比对
     $verified = $false
     $cmp = $null
     if ($VerifyCanvas) {
         $canvas = Get-CanvasText $Window
-        if (-not $canvas) { throw '画布回读失败：复制后剪贴板为空（可能没有焦点或画布不可选）' }
+        if (-not $canvas) { throw 'canvas read-back failed: the clipboard is empty after copying (missing focus, or the canvas is not selectable)' }
         $cmp = Test-CanvasMatch -CanvasText $canvas -SourceText $Text
         if (-not $cmp.match) {
-            throw ("画布内容与源 .robin 不一致（可能只粘进去一部分）：第 {0} 行`n  源：{1}`n  画布：{2}" -f $cmp.diffIndex, $cmp.lineA, $cmp.lineB)
+            throw ("canvas content differs from the source .robin (the paste may be partial): line {0}`n  source: {1}`n  canvas: {2}" -f $cmp.diffIndex, $cmp.lineA, $cmp.lineB)
         }
         $verified = $true
-        Write-PadDesignerLog '画布回读校验通过：粘贴内容与源 .robin 逐行一致'
+        Write-PadDesignerLog 'canvas read-back check passed: the pasted content matches the source .robin line by line'
     }
     return [ordered]@{ actions = $final; verified = $verified; diff = $cmp }
 }
@@ -588,31 +588,31 @@ function Invoke-PadRun {
         # 测试阶段直接点设计器的“运行”按钮执行当前画布，不发布到云端：
         # 免掉云端发布等待，也不会再遇到版本冲突
         $win = Get-DesignerWindow -FlowName $WorkflowName
-        if (-not $win) { throw "找不到设计器窗口：$WorkflowName" }
+        if (-not $win) { throw "designer window not found: $WorkflowName" }
         $hwnd = Repair-DesignerBounds $win
-        if (-not (Set-PadForeground $hwnd)) { throw '无法把设计器切到前台，点不到运行按钮' }
+        if (-not (Set-PadForeground $hwnd)) { throw 'cannot bring the designer to the foreground; the run button cannot be clicked' }
         # 设计器的“运行”直接执行当前画布，不需要保存草稿；
         # 实测点保存会让设计器进入锁定态（整体变暗、不可编辑），反而导致运行点不动
         $btn = Get-PadElementById $win 'StartFlowButton'
-        if (-not $btn) { throw '找不到设计器运行按钮 StartFlowButton' }
+        if (-not $btn) { throw 'designer run button StartFlowButton not found' }
         [void](Invoke-UiClick $btn)
-        Write-PadDesignerLog '已点击设计器“运行”（本地运行，未发布）'
+        Write-PadDesignerLog 'clicked the designer Run button (local run, not published)'
     } else {
         # 触发前校验：流程名必须能在本机 Console 的运行记录里解析出 flowId，
         # 否则 PAD 只会弹“未找到具有指定 ID 的环境”，外层再把弹窗点掉就误判成跑完。
         $identity = Resolve-PadFlowIdentity -WorkflowName $WorkflowName
         if (-not $identity) {
             # 带 Data['code'] 的异常：调用方按码分类，不解析中文消息
-            $msg = ("触发前校验失败：PAD 控制台找不到名为「{0}」的流程（Console\Scripts 下没有可解析的 RunDefinition）。" +
-                '请先在 PAD 控制台确认流程名并至少运行一次；本次未触发。') -f $WorkflowName
+            $msg = ("pre-trigger check failed: the PAD console has no flow named '{0}' (no parseable RunDefinition under Console\Scripts). " +
+                'Confirm the flow name in the PAD console and run it at least once; nothing was triggered.') -f $WorkflowName
             $ex = [System.Exception]::new($msg)
             $ex.Data['code'] = 'TRIGGER_PREFLIGHT_FAILED'
             throw $ex
         }
-        Write-PadDesignerLog ("触发前校验通过：flow={0} flowId={1} environmentId={2}" -f `
+        Write-PadDesignerLog ("pre-trigger check passed: flow={0} flowId={1} environmentId={2}" -f `
             $identity.FlowName, $identity.FlowId, $identity.EnvironmentId)
         $uri = "ms-powerautomate:/console/flow/run?workflowName=$WorkflowName&runId=$RunId"
-        Write-PadDesignerLog "触发运行：$uri"
+        Write-PadDesignerLog "trigger run: $uri"
         Start-Process $uri
     }
 
@@ -653,21 +653,21 @@ function Invoke-PadRun {
                 -WindowTitle $cw.Current.Name -ButtonAutomationId 'OKRunFlowFromProtocolHandlerButton' `
                 -ButtonControlType $ok.Current.ControlType.ProgrammaticName.Replace('ControlType.', '')
             if (-not $accept) {
-                Write-PadDesignerLog ("扫描到确认按钮但跳过：进程={0} 标题={1} 按钮={2}" -f `
+                Write-PadDesignerLog ("found a confirm button but skipped it: process={0} title={1} button={2}" -f `
                     $p.ProcessName, $cw.Current.Name, 'OKRunFlowFromProtocolHandlerButton') 'debug'
                 continue
             }
             if ($clickedConfirm.ContainsKey($hwnd)) {
-                Write-PadDesignerLog ("窗口句柄 {0} 已确认过，等待弹窗消失，不重复点击" -f $hwnd) 'debug'
+                Write-PadDesignerLog ("window handle {0} was already confirmed; waiting for the popup to disappear without clicking again" -f $hwnd) 'debug'
                 continue
             }
             try {
                 $ok.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
                 $clickedConfirm[$hwnd] = Get-Date
-                Write-PadDesignerLog ("点击外部触发确认框：窗口标题=「{0}」 时间={1} 依据=进程 PAD.Console.Host + 标题白名单 + OKRunFlowFromProtocolHandlerButton" -f `
+                Write-PadDesignerLog ("clicked the external-trigger confirmation dialog: window title='{0}' time={1} basis=process PAD.Console.Host + title allowlist + OKRunFlowFromProtocolHandlerButton" -f `
                     $cw.Current.Name, (Get-Date).ToString('HH:mm:ss.fff'))
             } catch {
-                Write-PadDesignerLog ("点击确认框失败：{0}" -f $_.Exception.Message)
+                Write-PadDesignerLog ("failed to click the confirmation dialog: {0}" -f $_.Exception.Message)
             }
             # 点后校验：2 秒内按钮应消失；仍存在则记警告且不再重复点击
             $gone = $false
@@ -677,7 +677,7 @@ function Invoke-PadRun {
                 if (-not (Get-PadElementById $cw 'OKRunFlowFromProtocolHandlerButton')) { $gone = $true; break }
             }
             if (-not $gone) {
-                Write-PadDesignerLog ("确认框点击后 2 秒仍未消失（句柄 {0}），保持「已点」标记，不重复点击" -f $hwnd)
+                Write-PadDesignerLog ("the confirmation dialog is still visible 2 seconds after clicking (handle {0}); keeping the 'clicked' mark and not clicking again" -f $hwnd)
             } else {
                 $clickedConfirm.Remove($hwnd)
             }
@@ -698,25 +698,25 @@ function Invoke-PadRun {
                 # 机器人正常执行时没有可见顶层窗口；出现可见且有标题的窗口即等待人处理的弹窗。
                 # 标题与控制台同名的外壳窗口排除，避免误判。
                 if ($d.Title -eq 'Power Automate') {
-                    Write-PadDesignerLog ("扫描到机器人窗口但跳过：标题=「{0}」 class={1} 含按钮={2}" -f `
+                    Write-PadDesignerLog ("found a robot window but skipped it: title='{0}' class={1} hasButton={2}" -f `
                         $d.Title, $d.ClassName, $d.HasButton) 'debug'
                     continue
                 }
                 $currentHumanHandles[$h] = $true
                 if ($humanDialogs.ContainsKey($h)) {
                     $age = ((Get-Date) - $humanDialogs[$h].First).TotalSeconds
-                    Write-PadDesignerLog ("检测到机器人弹窗：标题=「{0}」 已存在 {1:N0} 秒（不自动点击）" -f `
+                    Write-PadDesignerLog ("robot popup detected: title='{0}' present for {1:N0} second(s) (not auto-clicked)" -f `
                         $d.Title, $age) 'debug'
                     if ($NonInteractive -and $age -ge $HumanConfirmGraceSec) {
                         $result.evidence = 'human-confirm'
                         $result.dialogTitle = $d.Title
-                        Write-PadDesignerLog ("非交互运行停在人工确认弹窗：标题=「{0}」，已等待 {1:N0} 秒，交回上层告警，流程保持等待人工点击" -f `
+                        Write-PadDesignerLog ("unattended run is waiting at a manual-confirmation popup: title='{0}', waited {1:N0} second(s); handing it back to the outer alerting layer and leaving the flow waiting for a human click" -f `
                             $d.Title, $age)
                         break
                     }
                 } else {
                     $humanDialogs[$h] = @{ First = Get-Date; Title = $d.Title }
-                    Write-PadDesignerLog ("发现机器人弹窗：标题=「{0}」（非交互模式下需稳定 {1} 秒才判定为人工确认）" -f `
+                    Write-PadDesignerLog ("robot popup found: title='{0}' (in unattended mode it must stay for {1} second(s) before it counts as manual confirmation)" -f `
                         $d.Title, $HumanConfirmGraceSec) 'debug'
                 }
             }
@@ -737,7 +737,7 @@ function Invoke-PadRun {
                 if ($new.Count -gt 0) {
                     $result.evidence = 'telemetry'
                     $result.logPath = $new[0].FullName
-                    Write-PadDesignerLog "已定位本次运行遥测日志：$($new[0].Name)"
+                    Write-PadDesignerLog "located the telemetry log of this run: $($new[0].Name)"
                 }
             } else {
                 # 只认「本次 URL 里那个 runId」对应的目录。
@@ -752,7 +752,7 @@ function Invoke-PadRun {
                     $result.evidence = 'run-dir'
                     $result.runDir = $hit.FullName
                     $result.logPath = Join-Path $hit.FullName 'Actions.log'
-                    Write-PadDesignerLog "已定位本次运行目录：$($hit.Name)"
+                    Write-PadDesignerLog "located the run directory of this run: $($hit.Name)"
                 }
             }
         }
@@ -775,13 +775,13 @@ function Invoke-PadRun {
         if ($result.evidence -and $everAlive -and -not $robotAlive) {
             $quietPolls++
             if ($quietPolls -ge 3) {
-                Write-PadDesignerLog '本次运行的机器人已退出，按结束处理'
+                Write-PadDesignerLog 'the robot of this run has exited; treating the run as finished'
                 break
             }
         } elseif ($result.evidence -and -not $everAlive -and $sw.Elapsed.TotalSeconds -gt $StartupTimeoutSec) {
             # 目录已出现但机器人始终没起来：多半是控制台确认框被取消，或 PAD 启动失败
             $result.startupTimedOut = $true
-            Write-PadDesignerLog "触发后 $StartupTimeoutSec 秒内机器人未启动，判定未运行"
+            Write-PadDesignerLog "the robot did not start within $StartupTimeoutSec second(s) after the trigger; treating the run as not started"
             break
         } else {
             $quietPolls = 0
@@ -790,7 +790,7 @@ function Invoke-PadRun {
         # 6) 一直没有本次运行的任何证据（比如控制台确认框被点了取消）→ 别傻等满超时
         if (-not $result.evidence -and $sw.Elapsed.TotalSeconds -gt $StartupTimeoutSec) {
             $result.startupTimedOut = $true
-            Write-PadDesignerLog "触发后 $StartupTimeoutSec 秒内没有出现本次运行的日志，判定未启动"
+            Write-PadDesignerLog "no log of this run appeared within $StartupTimeoutSec second(s) after the trigger; treating the run as not started"
             break
         }
     }

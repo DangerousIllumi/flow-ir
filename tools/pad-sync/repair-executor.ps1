@@ -38,7 +38,7 @@ function Resolve-PadRoot([string]$Explicit) {
     $envRoot = [string]$env:FLOW_IR_PAD_ROOT
     if ($envRoot) {
         if (Test-Path -LiteralPath $envRoot) { return $envRoot }
-        Write-Host "[executor] 环境变量 FLOW_IR_PAD_ROOT 指向的目录不存在，已忽略：$envRoot"
+        Write-Host "[executor] the directory pointed to by FLOW_IR_PAD_ROOT does not exist; ignored: $envRoot"
     }
 
     # 3) 本地运行时配置：只读 PadRoot 一个字段，不走 PadConfig 的全量必填校验
@@ -50,11 +50,11 @@ function Resolve-PadRoot([string]$Explicit) {
             $cfgRoot = [string]$cfg.PadRoot
             if ($cfgRoot) {
                 if (Test-Path -LiteralPath $cfgRoot) { return $cfgRoot }
-                Write-Host "[executor] 运行时配置的 PadRoot 指向的目录不存在，已忽略：$cfgRoot"
+                Write-Host "[executor] the directory pointed to by the runtime config PadRoot does not exist; ignored: $cfgRoot"
             }
         } catch {
             # 配置损坏不应让修复循环直接崩掉：记录原因继续走兜底
-            Write-Host "[executor] 运行时配置无法解析，已忽略：$($_.Exception.Message)"
+            Write-Host "[executor] the runtime config cannot be parsed; ignored: $($_.Exception.Message)"
         }
     }
 
@@ -66,7 +66,7 @@ $PadRoot = (Resolve-PadRoot $PadRoot).TrimEnd('\')
 
 # 规则表默认取脚本同目录的 repair-rules.json
 if (-not $RulesFile) { $RulesFile = Join-Path $PSScriptRoot 'repair-rules.json' }
-if (-not (Test-Path $RulesFile)) { Write-Host "[executor] 找不到规则文件：$RulesFile"; exit 1 }
+if (-not (Test-Path $RulesFile)) { Write-Host "[executor] rules file not found: $RulesFile"; exit 1 }
 $rules = [IO.File]::ReadAllText($RulesFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
 
 $ctx = [IO.File]::ReadAllText($ContextFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -91,7 +91,7 @@ if ($ctx.failedAction) {
     if ($ctx.failedAction.name) { $actName = [string]$ctx.failedAction.name }
     if ($ctx.failedAction.systemActionName) { $sysName = [string]$ctx.failedAction.systemActionName }
 }
-Write-Host "[executor] 第 $($ctx.round) 轮 错误码：$code ；动作：$sysName / $actName"
+Write-Host "[executor] round $($ctx.round), error code: $code; action: $sysName / $actName"
 
 $text = [IO.File]::ReadAllText($InputRobin, [Text.Encoding]::UTF8)
 $raw = [IO.File]::ReadAllBytes($InputRobin)
@@ -139,9 +139,9 @@ if ($isPathErr) {
     $missing = @($missing | Sort-Object Real -Unique)
 
     if ($missing.Count -eq 0) {
-        Write-Host '[executor] R1：.robin 里的绝对路径都存在，说明报错来自非路径原因'
+        Write-Host '[executor] R1: every absolute path in the .robin exists, so the error comes from something other than a path'
     } elseif ($missing.Count -gt 1) {
-        Write-Host "[executor] R1：有 $($missing.Count) 个路径不存在，无法确定该改哪个：$(@($missing | ForEach-Object { $_.Real }) -join ' | ')"
+        Write-Host "[executor] R1: $($missing.Count) path(s) do not exist; cannot tell which one to fix: $(@($missing | ForEach-Object { $_.Real }) -join ' | ')"
     } else {
         $one = $missing[0]
         $isDir = Is-DirPath $one.Real
@@ -161,9 +161,9 @@ if ($isPathErr) {
             $cand = @(Find-UniqueUnderPad $leaf $isDir)
             if ($cand.Count -eq 1) {
                 $fixed = $cand[0].FullName; $rule = 'R1'
-                Log-Fix 'R1' "$($one.Real) 不存在，$PadRoot 下唯一同名项改为 $fixed"
+                Log-Fix 'R1' "$($one.Real) does not exist; the only same-name entry under $PadRoot was changed to $fixed"
             } elseif ($cand.Count -gt 1) {
-                Write-Host "[executor] R1：$PadRoot 下有 $($cand.Count) 个同名项 $leaf，无法确定唯一目标"
+                Write-Host "[executor] R1: $PadRoot has $($cand.Count) same-name entries for $leaf; the unique target cannot be determined"
             }
         }
 
@@ -172,9 +172,9 @@ if ($isPathErr) {
             try {
                 New-Item -ItemType Directory -Path $one.Real -Force | Out-Null
                 $rule = 'R2'
-                Log-Fix 'R2' "已创建缺失目录 $($one.Real)"
+                Log-Fix 'R2' "created the missing directory $($one.Real)"
             } catch {
-                Write-Host "[executor] R2：创建目录失败：$($_.Exception.Message)"
+                Write-Host "[executor] R2: failed to create the directory: $($_.Exception.Message)"
             }
         }
 
@@ -200,22 +200,22 @@ if ($hintRule) {
 } elseif ($rules.defaultHint) {
     $codeHelp = [string]$rules.defaultHint
 } else {
-    $codeHelp = '未识别的错误码：按错误消息在 docs/script-standards.md 第四节查表。'
+    $codeHelp = 'Unrecognized error code: look it up by error message in section 4 of docs/script-standards.md.'
 }
 
 $extraJson = ''
 if ($ctx.extraLogs) { $extraJson = ($ctx.extraLogs | ConvertTo-Json -Depth 6) }
 
 $hint = @"
-# 修复建议（第 $($ctx.round) 轮）
+# Repair hints (round $($ctx.round))
 
-- 错误码：$code
-- 错误消息：$msg
-- 失败动作：$sysName / $actName
-- 遥测日志：$($ctx.logPath)
-- 当前 .robin：$($ctx.currentRobinPath)
+- Error code: $code
+- Error message: $msg
+- Failed action: $sysName / $actName
+- Telemetry log: $($ctx.logPath)
+- Current .robin: $($ctx.currentRobinPath)
 
-## 判断
+## Assessment
 
 $codeHelp
 
@@ -231,14 +231,14 @@ $extraJson
 $($ctx.failedAction | ConvertTo-Json -Depth 6)
 ``````
 
-## 下一步
+## Next steps
 
-1. 打开上面的 .robin，定位失败动作
-2. 按 docs/script-standards.md 第四节（error.code 修复策略表）处理
-3. 修好后输出到：$OutputRobin
-4. 重新运行 pad-repair-loop 跑下一轮
+1. Open the .robin above and locate the failed action
+2. Follow section 4 of docs/script-standards.md (the error.code fix strategy table)
+3. Write the fixed script to: $OutputRobin
+4. Run pad-repair-loop again for the next round
 "@
 $hintPath = [IO.Path]::ChangeExtension($OutputRobin, '.hint.md')
 [IO.File]::WriteAllText($hintPath, $hint, (New-Object Text.UTF8Encoding($false)))
-Write-Host "[executor] 未能自动修复，修复建议已写入 $hintPath"
+Write-Host "[executor] could not repair automatically; repair hints were written to $hintPath"
 exit 1

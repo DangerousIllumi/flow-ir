@@ -57,7 +57,7 @@ Describe 'pad_flow_name 派生顺序' {
         try { Resolve-FlowFileByName $dir '同名-XYZ' } catch { $err = $_.Exception.Message }
         $err | Should Match 'ADMIT_AMBIGUOUS_FLOW'
         # 不能静默返回第一个
-        $err | Should Match 'a\.json、b\.json'
+        $err | Should Match 'a\.json, b\.json'
     }
 }
 

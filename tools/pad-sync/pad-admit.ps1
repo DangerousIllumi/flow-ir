@@ -81,8 +81,8 @@ function Resolve-FlowFileByName([string]$FlowsDir, [string]$FlowName) {
     }
     if ($hit.Count -eq 1) { return $hit[0].File.FullName }
     if ($hit.Count -gt 1) {
-        throw ("ADMIT_AMBIGUOUS_FLOW：按 '{0}' 命中 {1} 个 flow.json（{2}）；请用 -FlowFile 明确指定" -f `
-            $FlowName, $hit.Count, (($hit | ForEach-Object { $_.File.Name }) -join '、'))
+        throw ("ADMIT_AMBIGUOUS_FLOW: '{0}' matched {1} flow.json file(s) ({2}); specify it explicitly with -FlowFile" -f `
+            $FlowName, $hit.Count, (($hit | ForEach-Object { $_.File.Name }) -join ', '))
     }
     return $null
 }
@@ -202,28 +202,28 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
     }
 
     if ($denies.Count -gt 0) {
-        $ev = @($denies | ForEach-Object { "节点 $($_.node) $($_.hint) 命中 $($_.rule.id)" })
+        $ev = @($denies | ForEach-Object { "node $($_.node) $($_.hint) hit $($_.rule.id)" })
         $results += New-AdmitCheck 'POLICY' 'fail' 'POLICY_DENY' `
-            ('被策略拒绝：' + (@($denies | ForEach-Object { $_.rule.reason }) -join '；')) $ev
+            ('denied by policy: ' + (@($denies | ForEach-Object { $_.rule.reason }) -join '; ')) $ev
         return $results
     }
     if ($asks.Count -gt 0) {
-        $ev = @($asks | ForEach-Object { "节点 $($_.node) $($_.hint) 命中 $($_.rule.id)" })
-        $reason = (@($asks | ForEach-Object { $_.rule.reason }) -join '；')
+        $ev = @($asks | ForEach-Object { "node $($_.node) $($_.hint) hit $($_.rule.id)" })
+        $reason = (@($asks | ForEach-Object { $_.rule.reason }) -join '; ')
         if ($Unattended) {
             $results += New-AdmitCheck 'POLICY' 'fail' 'POLICY_ASK_UNATTENDED' `
-                "无人值守场景下 ask 按 deny 处理：$reason" $ev
+                "unattended run treats ask as deny: $reason" $ev
         } else {
             $results += New-AdmitCheck 'POLICY' 'ask' 'POLICY_ASK' $reason $ev
         }
         return $results
     }
     if ($allows.Count -gt 0 -or [string]$Policy.defaultEffect -eq 'allow') {
-        $results += New-AdmitCheck 'POLICY' 'pass' 'OK' '未命中 deny/ask' @()
+        $results += New-AdmitCheck 'POLICY' 'pass' 'OK' 'no deny/ask matched' @()
         return $results
     }
     $results += New-AdmitCheck 'POLICY' 'fail' 'POLICY_DEFAULT_DENY' `
-        '未命中任何 allow 规则，按 defaultEffect=deny 处理' @()
+        'no allow rule matched; defaultEffect=deny applies' @()
     return $results
 }
 
@@ -237,7 +237,7 @@ $script:TriggerReservedKinds = @('mail', 'callback')
 $script:TriggerDays = @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 $script:TriggerGates = @('none', 'workday', 'last-workday')
 $script:TriggerDayNames = @{
-    mon = '周一'; tue = '周二'; wed = '周三'; thu = '周四'; fri = '周五'; sat = '周六'; sun = '周日'
+    mon = 'Mon'; tue = 'Tue'; wed = 'Wed'; thu = 'Thu'; fri = 'Fri'; sat = 'Sat'; sun = 'Sun'
 }
 
 # 属性存在性判断：兼容 JSON 得到的 PSCustomObject 与测试里直接构造的 Hashtable
@@ -306,11 +306,11 @@ function Invoke-TriggerCheck {
     })
     if ($irreversible.Count -gt 0) {
         $issues += @{ status = 'warn'; code = 'TRIGGER_UNATTENDED_IRREVERSIBLE'
-            message = '存在后果不可回退的节点（reversible=false），请确认回退办法'
+            message = 'some nodes are irreversible (reversible=false); document how to roll them back'
             evidence = @($irreversible | ForEach-Object {
                 $note = $null
                 if (Test-PropExists $_ 'reversibility_note') { $note = [string]$_.reversibility_note }
-                if ($note) { "节点 $($_.id) reversible=false：$note" } else { "节点 $($_.id) reversible=false" }
+                if ($note) { "node $($_.id) reversible=false: $note" } else { "node $($_.id) reversible=false" }
             }) }
     }
     # idempotent=false 却没声明 reversible：提示补声明，不拿默认值糊过去
@@ -320,9 +320,9 @@ function Invoke-TriggerCheck {
     })
     if ($missingRev.Count -gt 0) {
         $issues += @{ status = 'warn'; code = 'TRIGGER_MISSING_REVERSIBILITY'
-            message = '节点 idempotent=false 但未声明 reversible，请补声明（后果能否回退）'
+            message = 'node idempotent=false but reversible is not declared; declare whether the effect can be rolled back'
             evidence = @($missingRev | ForEach-Object {
-                "节点 $($_.id) idempotent=false，reversible 未声明"
+                "node $($_.id) idempotent=false, reversible not declared"
             }) }
     }
 
@@ -337,31 +337,31 @@ function Invoke-TriggerCheck {
     })
     if ($mislabeled.Count -gt 0) {
         $issues += @{ status = 'fail'; code = 'REVERSIBLE_MISLABELED'
-            message = '不可逆动作不能声明 reversible=true（发信/删除/过账无法撤回）'
-            evidence = @($mislabeled | ForEach-Object { "节点 $($_.id) $($_.pad_hint) 被标为 reversible=true" }) }
+            message = 'an irreversible action must not declare reversible=true (mail/delete/posting cannot be undone)'
+            evidence = @($mislabeled | ForEach-Object { "node $($_.id) $($_.pad_hint) is marked reversible=true" }) }
     }
 
     $trg = $null
     if (Test-PropExists $Flow 'trigger') { $trg = $Flow.trigger }
     if ($null -eq $trg) {
         return @(New-AdmitCheck 'TRIGGER' $script:TriggerMode 'TRIGGER_MISSING' `
-            '未声明触发方式（trigger），启动约定仍靠口头记忆；请补 trigger 块' @())
+            'trigger is not declared; the launch convention still depends on memory; add a trigger block' @())
     }
     if (-not (Test-PropExists $trg 'kind') -and (Test-PropExists $trg 'type')) {
         return @(New-AdmitCheck 'TRIGGER' $script:TriggerMode 'TRIGGER_LEGACY_SHAPE' `
-            '只有 type/config 旧形状，缺 kind；请迁移到 kind（不做静默映射）' @("trigger.type=$([string]$trg.type)"))
+            'legacy type/config shape without kind; migrate to kind (no silent mapping)' @("trigger.type=$([string]$trg.type)"))
     }
     if (-not (Test-PropExists $trg 'kind') -or -not [string]$trg.kind) {
-        return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_INVALID' 'trigger.kind 缺失或不是字符串' @())
+        return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_INVALID' 'trigger.kind is missing or not a string' @())
     }
     $kind = [string]$trg.kind
     if ($script:TriggerReservedKinds -contains $kind) {
         return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_KIND_UNSUPPORTED' `
-            "kind=$kind 是保留值，v1 没有对应注册器" @("kind=$kind"))
+            "kind=$kind is a reserved value; v1 has no registrar for it" @("kind=$kind"))
     }
     if ($script:TriggerKinds -notcontains $kind) {
         return @(New-AdmitCheck 'TRIGGER' 'fail' 'TRIGGER_UNKNOWN_KIND' `
-            "kind=$kind 不在 manual/schedule/file" @("kind=$kind"))
+            "kind=$kind is not one of manual/schedule/file" @("kind=$kind"))
     }
 
     # 任务名：显式给出必须安全；未给出按流程名派生。manual 不注册，不需要任务名
@@ -371,15 +371,15 @@ function Invoke-TriggerCheck {
             $taskName = [string]$trg.task_name
             if ($taskName -notmatch '^[A-Za-z0-9._-]{1,64}$') {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                    message = "task_name=$taskName 不匹配 ^[A-Za-z0-9._-]{1,64}$"; evidence = @("task_name=$taskName") }
+                    message = "task_name=$taskName does not match ^[A-Za-z0-9._-]{1,64}$"; evidence = @("task_name=$taskName") }
             }
         }
         if (-not $taskName) { $taskName = Get-TriggerTaskName $FlowName }
         $collisions = @(Find-TriggerTaskCollision -Repo $Repo -SelfFile $SelfFile -TaskName $taskName)
         if ($collisions.Count -gt 0) {
             $issues += @{ status = 'fail'; code = 'TRIGGER_AMBIGUOUS'
-                message = "任务名 $taskName 已被其他流程占用，注册会互相覆盖"
-                evidence = @($collisions | ForEach-Object { "task_name=$taskName 冲突文件：$_" }) }
+                message = "task name $taskName is already used by another flow; registering it would overwrite"
+                evidence = @($collisions | ForEach-Object { "task_name=$taskName conflicting file: $_" }) }
         }
     }
 
@@ -388,7 +388,7 @@ function Invoke-TriggerCheck {
         foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file', 'assisted')) {
             if (Test-PropExists $trg $k) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                    message = "manual 不允许声明 $k（声明了也没人执行）"; evidence = @("trigger.$k") }
+                    message = "manual must not declare $k (nothing would execute it)"; evidence = @("trigger.$k") }
             }
         }
     } else {
@@ -397,7 +397,7 @@ function Invoke-TriggerCheck {
         if (Test-PropExists $trg 'time') { $timeText = [string]$trg.time }
         if (-not $timeText -or $timeText -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
             $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                message = "time=$timeText（应为 HH:mm，如 09:00）"; evidence = @("time=$timeText") }
+                message = "time=$timeText (expected HH:mm, e.g. 09:00)"; evidence = @("time=$timeText") }
         }
 
         if (Test-PropExists $trg 'days') {
@@ -405,7 +405,7 @@ function Invoke-TriggerCheck {
             $badDays = @($dayList | Where-Object { $script:TriggerDays -notcontains [string]$_ })
             if ($dayList.Count -eq 0 -or $badDays.Count -gt 0) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                    message = 'days 必须是非空数组，取值 mon..sun'
+                    message = 'days must be a non-empty array of mon..sun'
                     evidence = @("days=$(@($dayList) -join ',')") }
             }
         }
@@ -415,30 +415,30 @@ function Invoke-TriggerCheck {
             $gate = [string]$trg.gate
             if ($script:TriggerGates -notcontains $gate) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                    message = "gate=$gate 不在 none/workday/last-workday"; evidence = @("gate=$gate") }
+                    message = "gate=$gate is not one of none/workday/last-workday"; evidence = @("gate=$gate") }
             }
         } elseif ($kind -eq 'schedule') {
             $issues += @{ status = 'warn'; code = 'TRIGGER_NO_GATE'
-                message = 'schedule 未声明 gate，节假日会照跑；如不需要请显式写 gate=none'
-                evidence = @('gate 未声明') }
+                message = 'schedule does not declare gate; it will also run on holidays; write gate=none explicitly if that is intended'
+                evidence = @('gate not declared') }
         }
 
         if ((Test-PropExists $trg 'timeout_sec') -and -not (Test-TriggerPositiveInt $trg.timeout_sec)) {
             $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                message = "timeout_sec=$($trg.timeout_sec)（应为正整数秒）"; evidence = @('timeout_sec') }
+                message = "timeout_sec=$($trg.timeout_sec) (expected a positive integer in seconds)"; evidence = @('timeout_sec') }
         }
 
         # assisted：到点自动启动、中途有人确认；必须显式声明 timeout_sec，没人点时靠超时告警兜底
         if (Test-PropExists $trg 'assisted') {
             if (-not ($trg.assisted -is [bool])) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                    message = "assisted=$($trg.assisted)（应为 true/false）"; evidence = @('assisted') }
+                    message = "assisted=$($trg.assisted) (expected true/false)"; evidence = @('assisted') }
             } else {
                 $assisted = [bool]$trg.assisted
                 if ($assisted -and -not (Test-PropExists $trg 'timeout_sec')) {
                     $issues += @{ status = 'fail'; code = 'TRIGGER_ASSISTED_NO_TIMEOUT'
-                        message = 'assisted=true 必须显式声明 timeout_sec（没人点确认时靠超时告警兜底）'
-                        evidence = @('timeout_sec 缺失') }
+                        message = 'assisted=true requires an explicit timeout_sec (the timeout alert is the fallback when nobody confirms)'
+                        evidence = @('timeout_sec missing') }
                 }
             }
         }
@@ -447,33 +447,33 @@ function Invoke-TriggerCheck {
         if ($kind -eq 'file') {
             if (-not (Test-PropExists $trg 'file')) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                    message = 'file 触发必须带 file 对象'; evidence = @('file') }
+                    message = 'file trigger must carry a file object'; evidence = @('file') }
             } else {
                 $f = $trg.file
                 $dir = $null
                 if (Test-PropExists $f 'dir') { $dir = [string]$f.dir }
                 if (-not $dir) {
                     $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                        message = 'file.dir 必填'; evidence = @('file.dir') }
+                        message = 'file.dir is required'; evidence = @('file.dir') }
                 } elseif ($dir -notmatch '^\{\{config\.(\w+)\}\}$') {
                     $issues += @{ status = 'fail'; code = 'TRIGGER_PATH_LITERAL'
-                        message = 'file.dir 必须是 {{config.<KEY>}} 引用，不能是字面路径'
+                        message = 'file.dir must be a {{config.<KEY>}} reference, not a literal path'
                         evidence = @("file.dir=$dir") }
                 }
                 if (Test-PropExists $f 'pattern') { $pattern = [string]$f.pattern }
                 if (-not $pattern -or $pattern.Trim().Length -eq 0) {
                     $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                        message = 'file.pattern 必填且不能为空'; evidence = @('file.pattern') }
+                        message = 'file.pattern is required and must not be empty'; evidence = @('file.pattern') }
                 }
                 foreach ($k in @('poll_sec', 'settle_sec', 'max_wait_sec')) {
                     if ((Test-PropExists $f $k) -and -not (Test-TriggerPositiveInt $f.$k)) {
                         $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                            message = "file.$k=$($f.$k)（应为正整数秒）"; evidence = @("file.$k") }
+                            message = "file.$k=$($f.$k) (expected a positive integer in seconds)"; evidence = @("file.$k") }
                     }
                 }
                 if ((Test-PropExists $f 'once_per_file') -and -not ($f.once_per_file -is [bool])) {
                     $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
-                        message = 'file.once_per_file 必须是 true/false'; evidence = @('file.once_per_file') }
+                        message = 'file.once_per_file must be true/false'; evidence = @('file.once_per_file') }
                 }
             }
         }
@@ -486,8 +486,8 @@ function Invoke-TriggerCheck {
         })
         if ($confirm.Count -gt 0 -and -not $assisted) {
             $issues += @{ status = 'fail'; code = 'TRIGGER_UNATTENDED_CONFIRM'
-                message = '无人值守触发但节点需要人工确认'
-                evidence = @($confirm | ForEach-Object { "节点 $($_.id) run_mode=confirm" }) }
+                message = 'unattended trigger but nodes require manual confirmation'
+                evidence = @($confirm | ForEach-Object { "node $($_.id) run_mode=confirm" }) }
         }
     }
 
@@ -508,13 +508,13 @@ function Invoke-TriggerCheck {
                 $liveCode = [string]$_.Exception.Data['code']
             }
             $issues += @{ status = 'fail'; code = $liveCode
-                message = "无法查询计划任务：$($_.Exception.Message)" ; evidence = @("kind=$kind") }
+                message = "failed to query the scheduled task: $($_.Exception.Message)" ; evidence = @("kind=$kind") }
             $live = $null
         }
         if ($null -ne $live) {
             if (-not $live.ok -and [string]$live.code -eq 'TRIGGER_NOT_REGISTERED') {
                 $issues += @{ status = 'warn'; code = 'TRIGGER_NOT_REGISTERED'
-                    message = "计划任务尚未注册：$($live.taskName)（-TriggerLive 下只提示，不阻断）"
+                    message = "scheduled task is not registered yet: $($live.taskName) (reported only under -TriggerLive, not blocking)"
                     evidence = @("taskName=$($live.taskName)", "specHash=$($live.specHash)") }
             } elseif (-not $live.ok) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_DRIFT'
@@ -525,14 +525,14 @@ function Invoke-TriggerCheck {
     }
 
     if ($issues.Count -eq 0) {
-        $dayText = '周一~周五'
+        $dayText = 'Mon~Fri'
         if (Test-PropExists $trg 'days') {
-            $dayText = (@($trg.days) | ForEach-Object { $script:TriggerDayNames[[string]$_] }) -join '、'
+            $dayText = (@($trg.days) | ForEach-Object { $script:TriggerDayNames[[string]$_] }) -join ', '
         }
         $msg = switch ($kind) {
-            'manual' { '触发声明合法：manual（手工或外部链接触发，无需注册）' }
-            'schedule' { "触发声明合法：schedule $timeText（$dayText，gate=$gate）" }
-            default { "触发声明合法：file $timeText（$dayText，pattern=$pattern）" }
+            'manual' { 'trigger declaration is valid: manual (started manually or by an external link; no registration needed)' }
+            'schedule' { "trigger declaration is valid: schedule $timeText ($dayText, gate=$gate)" }
+            default { "trigger declaration is valid: file $timeText ($dayText, pattern=$pattern)" }
         }
         return @(New-AdmitCheck 'TRIGGER' 'pass' 'OK' $msg @())
     }
@@ -552,16 +552,16 @@ function Resolve-InputDir {
     $m = [regex]::Match([string]$Token, '^\{\{config\.(\w+)\}\}$')
     if (-not $m.Success) {
         return @{ dir = $null; code = 'INPUT_PATH_LITERAL'
-            message = "inputs.dir 必须是 {{config.<KEY>}} 引用，不能是字面路径：$Token" }
+            message = "inputs.dir must be a {{config.<KEY>}} reference, not a literal path: $Token" }
     }
     $key = $m.Groups[1].Value
     if (-not $Config) {
         return @{ dir = $null; code = 'INPUT_CONFIG_UNRESOLVED'
-            message = "未提供 config，无法解析 {{config.$key}}；请用 -ConfigFile 指定" }
+            message = "no config provided; cannot resolve {{config.$key}}; specify it with -ConfigFile" }
     }
     if (-not (Test-PropExists $Config $key) -or -not [string]$Config.$key) {
         return @{ dir = $null; code = 'INPUT_CONFIG_UNRESOLVED'
-            message = "配置里没有可用键 $key（$ConfigFile）" }
+            message = "config has no usable key $key ($ConfigFile)" }
     }
     return @{ dir = [string]$Config.$key; code = $null; message = $null }
 }
@@ -574,23 +574,23 @@ function Invoke-InputCheck {
     $nodes = @($Flow.nodes | Where-Object { $_ -and (Test-PropExists $_ 'inputs') })
     if ($nodes.Count -eq 0) {
         return @(New-AdmitCheck 'INPUT' 'warn' 'INPUT_UNDECLARED' `
-            '没有节点声明输入文件（inputs）：运行前不会核对输入；依赖输入文件的流程请补声明' @())
+            'no node declares input files (inputs); inputs are not checked before the run; add declarations to flows that depend on input files' @())
     }
 
     foreach ($n in $nodes) {
         $list = @($n.inputs)
         if ($list.Count -eq 0) {
             $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
-                message = "节点 $($n.id) inputs 必须是非空数组"; evidence = @("节点 $($n.id)") }
+                message = "node $($n.id) inputs must be a non-empty array"; evidence = @("node $($n.id)") }
             continue
         }
         for ($i = 0; $i -lt $list.Count; $i++) {
             $it = $list[$i]
-            $at = "节点 $($n.id) inputs[$i]"
+            $at = "node $($n.id) inputs[$i]"
             $isObj = ($it -is [System.Management.Automation.PSCustomObject]) -or ($it -is [hashtable])
             if (-not $isObj) {
                 $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
-                    message = "$at 必须是对象"; evidence = @($at) }
+                    message = "$at must be an object"; evidence = @($at) }
                 continue
             }
 
@@ -598,7 +598,7 @@ function Invoke-InputCheck {
             if ((Test-PropExists $it 'dir') -and ($it.dir -is [string])) { $dirToken = [string]$it.dir }
             if (-not $dirToken) {
                 $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
-                    message = "$at.dir 必填且必须是字符串"; evidence = @($at) }
+                    message = "$at.dir is required and must be a string"; evidence = @($at) }
                 continue
             }
             $res = Resolve-InputDir $dirToken $Config $ConfigFile
@@ -612,13 +612,13 @@ function Invoke-InputCheck {
             if ((Test-PropExists $it 'pattern') -and ($it.pattern -is [string])) { $pattern = [string]$it.pattern }
             if (-not $pattern -or $pattern.Trim().Length -eq 0) {
                 $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
-                    message = "$at.pattern 必填且不能为空"; evidence = @($at) }
+                    message = "$at.pattern is required and must not be empty"; evidence = @($at) }
                 continue
             }
             # required 必须显式声明，不默认填充（与 run_mode / idempotent 的必答口径一致）
             if (-not (Test-PropExists $it 'required') -or -not ($it.required -is [bool])) {
                 $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
-                    message = "$at.required 必须是 true/false（不默认填充）"; evidence = @($at) }
+                    message = "$at.required must be true/false (no default filling)"; evidence = @($at) }
                 continue
             }
             $required = [bool]$it.required
@@ -628,7 +628,7 @@ function Invoke-InputCheck {
             if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
                 if ($required) {
                     $issues += @{ status = 'fail'; code = 'INPUT_DIR_UNREADABLE'
-                        message = "必需输入的目录不存在：$dir"; evidence = @("$at $dir\$pattern") }
+                        message = "required input directory does not exist: $dir"; evidence = @("$at $dir\$pattern") }
                 }
                 continue
             }
@@ -637,28 +637,28 @@ function Invoke-InputCheck {
             } catch {
                 if ($required) {
                     $issues += @{ status = 'fail'; code = 'INPUT_DIR_UNREADABLE'
-                        message = "输入目录不可读：$dir（$($_.Exception.Message)）"; evidence = @("$at") }
+                        message = "input directory is not readable: $dir ($($_.Exception.Message))"; evidence = @("$at") }
                 }
                 continue
             }
             if ($cands.Count -ge 2) {
-                $names = @($cands | ForEach-Object { $_.Name }) -join '、'
+                $names = @($cands | ForEach-Object { $_.Name }) -join ', '
                 $issues += @{ status = 'fail'; code = 'INPUT_FILE_AMBIGUOUS'
-                    message = "$at 有 $($cands.Count) 个候选（$names），不做'取最新'的猜测；请先清理目录"
-                    evidence = @("$at $dir\$pattern", "候选：$names") }
+                    message = "$at has $($cands.Count) candidates ($names); no 'take the latest' guessing; clean up the directory first"
+                    evidence = @("$at $dir\$pattern", "candidate(s): $names") }
                 continue
             }
             if ($cands.Count -eq 0 -and $required) {
                 $issues += @{ status = 'fail'; code = 'INPUT_FILE_MISSING'
-                    message = "$at 必需输入未找到：$dir\$pattern"; evidence = @("$at") }
+                    message = "$at required input not found: $dir\$pattern"; evidence = @("$at") }
                 continue
             }
-            $passEvidence += "$at $dir\$pattern：$($cands.Count) 个候选$(if ($required) { '（必需）' } else { '（可选）' })"
+            $passEvidence += "$at ${dir}\${pattern}: $($cands.Count) candidate(s)$(if ($required) { ' (required)' } else { ' (optional)' })"
         }
     }
 
     if ($issues.Count -eq 0) {
-        return @(New-AdmitCheck 'INPUT' 'pass' 'OK' "$($nodes.Count) 个节点的输入声明已核对" $passEvidence)
+        return @(New-AdmitCheck 'INPUT' 'pass' 'OK' "$($nodes.Count) node(s) input declarations checked" $passEvidence)
     }
     return @($issues | ForEach-Object {
         New-AdmitCheck 'INPUT' $_.status $_.code $_.message $_.evidence
@@ -683,14 +683,14 @@ function Invoke-AdmitChecks {
 
     # 1 REGISTRY
     if ($kbMap.Count -eq 0) {
-        $checks += New-AdmitCheck 'REGISTRY' 'warn' 'KB_MISSING' '找不到动作知识库，跳过 REGISTRY/ARGS/SELECTOR' @()
+        $checks += New-AdmitCheck 'REGISTRY' 'warn' 'KB_MISSING' 'action knowledge base not found; skipping REGISTRY/ARGS/SELECTOR' @()
     } else {
         $unknown = @($actionNodes | Where-Object { -not $kbMap.ContainsKey([string]$_.pad_hint) })
         if ($unknown.Count -gt 0) {
-            $checks += New-AdmitCheck 'REGISTRY' 'fail' 'UNKNOWN_ACTION' '存在 KB 里没有的动作' `
-                @($unknown | ForEach-Object { "节点 $($_.id) $($_.pad_hint)" })
+            $checks += New-AdmitCheck 'REGISTRY' 'fail' 'UNKNOWN_ACTION' 'some actions are missing from the KB' `
+                @($unknown | ForEach-Object { "node $($_.id) $($_.pad_hint)" })
         } else {
-            $checks += New-AdmitCheck 'REGISTRY' 'pass' 'OK' "$($actionNodes.Count) 个动作全部在 KB 中" @()
+            $checks += New-AdmitCheck 'REGISTRY' 'pass' 'OK' "$($actionNodes.Count) action(s) all found in the KB" @()
         }
 
         # 2 ARGS
@@ -705,7 +705,7 @@ function Invoke-AdmitChecks {
             $paramNames = @()
             if ($n.params) { $paramNames = @($n.params.PSObject.Properties.Name | Where-Object { $_ }) }
             foreach ($k in $paramNames) {
-                if ($valid -notcontains $k) { $argErrs += "节点 $($n.id) 未知参数 $k" }
+                if ($valid -notcontains $k) { $argErrs += "node $($n.id) unknown parameter $k" }
             }
             foreach ($p in @($act.input_params)) {
                 if ($p.required -ne $true) { continue }
@@ -713,25 +713,25 @@ function Invoke-AdmitChecks {
                 if ([string]$p.type -match '(Instance|Handle)$' -or [string]$p.type -eq 'Browser') { continue }
                 if ($null -ne $p.default) { continue }
                 if ($paramNames -notcontains [string]$p.name) {
-                    $argWarns += "节点 $($n.id) 未写必填参数 $($p.name)（KB 无默认值，生成时会省略）"
+                    $argWarns += "node $($n.id) required parameter $($p.name) not written (no default in KB; omitted at generation time)"
                 }
             }
         }
         if ($argErrs.Count -gt 0) {
-            $checks += New-AdmitCheck 'ARGS' 'fail' 'UNKNOWN_PARAM' '参数与 KB 不一致' $argErrs
+            $checks += New-AdmitCheck 'ARGS' 'fail' 'UNKNOWN_PARAM' 'parameter names do not match the KB' $argErrs
         } elseif ($argWarns.Count -gt 0) {
-            $checks += New-AdmitCheck 'ARGS' 'warn' 'MISSING_PARAM' '部分必填参数未显式给出（生成时省略）' $argWarns
+            $checks += New-AdmitCheck 'ARGS' 'warn' 'MISSING_PARAM' 'some required parameters are not given explicitly (omitted at generation time)' $argWarns
         } else {
-            $checks += New-AdmitCheck 'ARGS' 'pass' 'OK' '参数名与必填项齐全' @()
+            $checks += New-AdmitCheck 'ARGS' 'pass' 'OK' 'parameter names and required fields are complete' @()
         }
 
         # 3 SELECTOR
         $ui = @($actionNodes | Where-Object { $kbMap[[string]$_.pad_hint].needs_ui_selector -eq $true })
         if ($ui.Count -gt 0) {
-            $checks += New-AdmitCheck 'SELECTOR' 'fail' 'UI_SELECTOR' '这些动作需要已录制的 UI 元素' `
-                @($ui | ForEach-Object { "节点 $($_.id) $($_.pad_hint)" })
+            $checks += New-AdmitCheck 'SELECTOR' 'fail' 'UI_SELECTOR' 'these actions need recorded UI elements' `
+                @($ui | ForEach-Object { "node $($_.id) $($_.pad_hint)" })
         } else {
-            $checks += New-AdmitCheck 'SELECTOR' 'pass' 'OK' '无需要 UI 选择器的动作' @()
+            $checks += New-AdmitCheck 'SELECTOR' 'pass' 'OK' 'no action needs a UI selector' @()
         }
     }
 
@@ -739,40 +739,40 @@ function Invoke-AdmitChecks {
     if ($RobinPath -and (Test-Path -LiteralPath $RobinPath)) {
         $out = & node (Join-Path $Paths.Repo 'tools\pad-robin\check.js') $RobinPath 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
-            $checks += New-AdmitCheck 'STATIC' 'pass' 'OK' '静态校验 0 错误' @()
+            $checks += New-AdmitCheck 'STATIC' 'pass' 'OK' 'static check: 0 errors' @()
         } else {
-            $checks += New-AdmitCheck 'STATIC' 'fail' 'STATIC_SYNTAX' '静态校验发现错误' @($out.Trim() -split "`r?`n" | Select-Object -First 10)
+            $checks += New-AdmitCheck 'STATIC' 'fail' 'STATIC_SYNTAX' 'static check found errors' @($out.Trim() -split "`r?`n" | Select-Object -First 10)
         }
     } else {
-        $checks += New-AdmitCheck 'STATIC' 'warn' 'ROBIN_MISSING' '没有找到 .robin，跳过静态校验' @()
+        $checks += New-AdmitCheck 'STATIC' 'warn' 'ROBIN_MISSING' '.robin not found; skipping the static check' @()
     }
 
     # 5 EDGE
     if ($Flow.edges -and @($Flow.edges).Count -gt 0) {
         $out = & node (Join-Path $Paths.Repo 'tools\flow-drawio\check-flow.js') $Paths.FlowFile 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
-            $checks += New-AdmitCheck 'EDGE' 'pass' 'OK' 'edges 与 next/branch 一致' @()
+            $checks += New-AdmitCheck 'EDGE' 'pass' 'OK' 'edges agree with next/branch' @()
         } else {
-            $checks += New-AdmitCheck 'EDGE' 'fail' 'EDGE_DRIFT' 'edges 与 next/branch 不一致' @($out.Trim() -split "`r?`n" | Select-Object -First 10)
+            $checks += New-AdmitCheck 'EDGE' 'fail' 'EDGE_DRIFT' 'edges disagree with next/branch' @($out.Trim() -split "`r?`n" | Select-Object -First 10)
         }
     } else {
-        $checks += New-AdmitCheck 'EDGE' 'warn' 'EDGE_ABSENT' 'flow.json 没有显式 edges，跳过' @()
+        $checks += New-AdmitCheck 'EDGE' 'warn' 'EDGE_ABSENT' 'flow.json has no explicit edges; skipped' @()
     }
 
     # 6 BOUNDED
     $unbounded = @()
     foreach ($n in @($nodes | Where-Object { $_.pad_hint -eq 'LOOP' })) {
         $lp = $n.loop
-        if (-not $lp) { $unbounded += "节点 $($n.id) 缺 loop 定义"; continue }
-        if ([string]$lp.kind -eq 'while') { $unbounded += "节点 $($n.id) 是无界 LOOP WHILE"; continue }
+        if (-not $lp) { $unbounded += "node $($n.id) has no loop definition"; continue }
+        if ([string]$lp.kind -eq 'while') { $unbounded += "node $($n.id) is an unbounded LOOP WHILE"; continue }
         if ([string]$lp.kind -eq 'fromto' -and [string]::IsNullOrWhiteSpace([string]$lp.to)) {
-            $unbounded += "节点 $($n.id) 缺上界"
+            $unbounded += "node $($n.id) has no upper bound"
         }
     }
     if ($unbounded.Count -gt 0) {
-        $checks += New-AdmitCheck 'BOUNDED' 'fail' 'UNBOUNDED_LOOP' '存在无界或未声明上界的循环' $unbounded
+        $checks += New-AdmitCheck 'BOUNDED' 'fail' 'UNBOUNDED_LOOP' 'some loops are unbounded or have no declared upper bound' $unbounded
     } else {
-        $checks += New-AdmitCheck 'BOUNDED' 'pass' 'OK' '循环都有明确上界' @()
+        $checks += New-AdmitCheck 'BOUNDED' 'pass' 'OK' 'every loop has an explicit upper bound' @()
     }
 
     # 7 POLICY
@@ -785,7 +785,7 @@ function Invoke-AdmitChecks {
     if ($Policy) {
         $checks += Invoke-AdmitPolicy $Flow $Policy $ctx -Unattended:$Unattended
     } else {
-        $checks += New-AdmitCheck 'POLICY' 'warn' 'POLICY_MISSING' '没有 business\policy.json，跳过策略评估' @()
+        $checks += New-AdmitCheck 'POLICY' 'warn' 'POLICY_MISSING' 'business\policy.json not found; skipping policy evaluation' @()
     }
 
     # 8 BUDGET（未声明即 warn：报告模式下不阻断存量流程）
@@ -795,16 +795,16 @@ function Invoke-AdmitChecks {
         $loops = @($nodes | Where-Object { $_.pad_hint -eq 'LOOP' -and $_.loop -and $_.loop.kind -eq 'fromto' })
         foreach ($n in $loops) {
             if ($b.maxLoop -and ([int]$n.loop.to - [int]$n.loop.from + 1) -gt [int]$b.maxLoop) {
-                $ev += "节点 $($n.id) 循环 $($n.loop.to - $n.loop.from + 1) 次，超过预算 $($b.maxLoop)"
+                $ev += "node $($n.id) loops $($n.loop.to - $n.loop.from + 1) times, exceeding budget $($b.maxLoop)"
             }
         }
         if ($ev.Count -gt 0) {
-            $checks += New-AdmitCheck 'BUDGET' 'fail' 'BUDGET_EXCEEDED' '超出预算声明' $ev
+            $checks += New-AdmitCheck 'BUDGET' 'fail' 'BUDGET_EXCEEDED' 'budget declaration exceeded' $ev
         } else {
-            $checks += New-AdmitCheck 'BUDGET' 'pass' 'OK' '在预算声明内' @()
+            $checks += New-AdmitCheck 'BUDGET' 'pass' 'OK' 'within the budget declaration' @()
         }
     } else {
-        $checks += New-AdmitCheck 'BUDGET' 'fail' 'BUDGET_UNKNOWN' 'flow.json 未声明 budget，预算未知（未知按超限处理）' @()
+        $checks += New-AdmitCheck 'BUDGET' 'fail' 'BUDGET_UNKNOWN' 'flow.json does not declare budget; budget unknown (unknown is treated as exceeded)' @()
     }
 
     # 9 ACCEPTANCE
@@ -814,21 +814,21 @@ function Invoke-AdmitChecks {
         try {
             $spec = [IO.File]::ReadAllText($AcceptancePath, [Text.Encoding]::UTF8) | ConvertFrom-Json
             foreach ($c in @($spec.checks)) {
-                if ($knownTypes -notcontains [string]$c.type) { $accErrs += "判据「$($c.name)」类型不支持：$($c.type)" }
+                if ($knownTypes -notcontains [string]$c.type) { $accErrs += "criterion '$($c.name)' has an unsupported type: $($c.type)" }
                 foreach ($s in @($c.path, $c.dir) + @($c.paths)) {
                     if ($s -and ([string]$s -match '\{\{variables\.' -or [string]$s -match '%[A-Za-z_]\w*%')) {
-                        $accErrs += "判据「$($c.name)」有未解析引用：$s"
+                        $accErrs += "criterion '$($c.name)' has an unresolved reference: $s"
                     }
                 }
             }
-        } catch { $accErrs += "JSON 解析失败：$($_.Exception.Message)" }
+        } catch { $accErrs += "JSON parse failed: $($_.Exception.Message)" }
         if ($accErrs.Count -gt 0) {
-            $checks += New-AdmitCheck 'ACCEPTANCE' 'fail' 'ACCEPTANCE_INVALID' '验收判据不合法' $accErrs
+            $checks += New-AdmitCheck 'ACCEPTANCE' 'fail' 'ACCEPTANCE_INVALID' 'acceptance criteria are invalid' $accErrs
         } else {
-            $checks += New-AdmitCheck 'ACCEPTANCE' 'pass' 'OK' "$(@($spec.checks).Count) 条判据合法" @()
+            $checks += New-AdmitCheck 'ACCEPTANCE' 'pass' 'OK' "$(@($spec.checks).Count) criteria valid" @()
         }
     } else {
-        $checks += New-AdmitCheck 'ACCEPTANCE' 'warn' 'ACCEPTANCE_MISSING' '没有验收判据文件' @()
+        $checks += New-AdmitCheck 'ACCEPTANCE' 'warn' 'ACCEPTANCE_MISSING' 'no acceptance criteria file' @()
     }
 
     # 10 CONFIG
@@ -839,19 +839,19 @@ function Invoke-AdmitChecks {
             try {
                 $schema = [IO.File]::ReadAllText($schemaPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
                 foreach ($k in @($schema.required)) {
-                    if ($Config.PSObject.Properties.Name -notcontains $k) { $cfgErrs += "缺少必填键 $k" }
+                    if ($Config.PSObject.Properties.Name -notcontains $k) { $cfgErrs += "missing required key $k" }
                 }
-            } catch { $cfgErrs += "schema 解析失败：$($_.Exception.Message)" }
+            } catch { $cfgErrs += "schema parse failed: $($_.Exception.Message)" }
         } else {
-            $cfgErrs += "找不到 schema：$schemaPath"
+            $cfgErrs += "schema not found: $schemaPath"
         }
         if ($cfgErrs.Count -gt 0) {
-            $checks += New-AdmitCheck 'CONFIG' 'fail' 'CONFIG_INVALID' '部署配置不合法' $cfgErrs
+            $checks += New-AdmitCheck 'CONFIG' 'fail' 'CONFIG_INVALID' 'deployment config is invalid' $cfgErrs
         } else {
-            $checks += New-AdmitCheck 'CONFIG' 'pass' 'OK' '配置通过 schema 必填项校验' @()
+            $checks += New-AdmitCheck 'CONFIG' 'pass' 'OK' 'config passes the schema required-field check' @()
         }
     } else {
-        $checks += New-AdmitCheck 'CONFIG' 'warn' 'CONFIG_MISSING' '未提供 config，跳过' @()
+        $checks += New-AdmitCheck 'CONFIG' 'warn' 'CONFIG_MISSING' 'no config provided; skipped' @()
     }
 
     # 11 PREFLIGHT
@@ -864,16 +864,16 @@ function Invoke-AdmitChecks {
             $probes = @(Invoke-PreflightChecks -Requirements $req -Variables $vars)
             $bad = @($probes | Where-Object { -not $_.Ok })
             if ($bad.Count -gt 0) {
-                $checks += New-AdmitCheck 'PREFLIGHT' 'fail' 'PREFLIGHT_MISSING' '环境依赖缺失' `
-                    @($bad | ForEach-Object { "$($_.Name)：$($_.Detail)" })
+                $checks += New-AdmitCheck 'PREFLIGHT' 'fail' 'PREFLIGHT_MISSING' 'environment dependencies missing' `
+                    @($bad | ForEach-Object { "$($_.Name): $($_.Detail)" })
             } else {
-                $checks += New-AdmitCheck 'PREFLIGHT' 'pass' 'OK' "$($probes.Count) 项环境依赖齐全" @()
+                $checks += New-AdmitCheck 'PREFLIGHT' 'pass' 'OK' "$($probes.Count) environment dependencies are all present" @()
             }
         } catch {
-            $checks += New-AdmitCheck 'PREFLIGHT' 'warn' 'PREFLIGHT_ERROR' "环境探查失败：$($_.Exception.Message)" @()
+            $checks += New-AdmitCheck 'PREFLIGHT' 'warn' 'PREFLIGHT_ERROR' "environment probe failed: $($_.Exception.Message)" @()
         }
     } else {
-        $checks += New-AdmitCheck 'PREFLIGHT' 'warn' 'PREFLIGHT_SKIPPED' '缺少 requirements 或 config，跳过' @()
+        $checks += New-AdmitCheck 'PREFLIGHT' 'warn' 'PREFLIGHT_SKIPPED' 'requirements or config missing; skipped' @()
     }
 
     # 12 FINGERPRINT（机制与哈希在 PadFingerprint.psm1，本脚本不另写一份）
@@ -901,10 +901,10 @@ function Invoke-AdmitChecks {
         ([string]$_.pad_hint -like 'Scripting.RunDOSCommand*' -or [string]$_.pad_hint -like 'Scripting.RunVBScript*') -and -not $_.intent
     })
     if ($noIntent.Count -gt 0) {
-        $checks += New-AdmitCheck 'INTENT' 'fail' 'MISSING_INTENT' '通用脚本动作缺少 intent 标签，策略只能靠参数名识别（改名即绕过）' `
-            @($noIntent | ForEach-Object { "节点 $($_.id) $($_.pad_hint)" })
+        $checks += New-AdmitCheck 'INTENT' 'fail' 'MISSING_INTENT' 'generic script actions lack an intent tag; policy can only identify them by parameter name (renaming bypasses it)' `
+            @($noIntent | ForEach-Object { "node $($_.id) $($_.pad_hint)" })
     } else {
-        $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' '通用脚本动作都有 intent' @()
+        $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' 'all generic script actions have an intent' @()
     }
 
     # 15 TRIGGER（静态校验；-TriggerLive 时追加只读的注册校验）
@@ -931,7 +931,7 @@ if (-not $NoMain) {
                 # 先 pad_flow_name，再文件名 / name；多命中直接 ADMIT_AMBIGUOUS_FLOW
                 $FlowFile = Resolve-FlowFileByName $flowsDir $FlowName
                 if (-not $FlowFile) {
-                    throw "E_FLOW_FILE_REQUIRED: 未提供 -FlowFile，按流程名派生也找不到：$FlowName（business\flows 下无匹配 pad_flow_name / 文件名 / name）；请用 -FlowFile 指定"
+                    throw "E_FLOW_FILE_REQUIRED: -FlowFile not provided, and deriving it from the flow name failed: $FlowName (no match on pad_flow_name / file name / name under business\flows); specify it with -FlowFile"
                 }
                 $nameFromLookup = $true
             } else {
@@ -948,10 +948,10 @@ if (-not $NoMain) {
                 if ($cands.Count -eq 1) {
                     $FlowFile = $cands[0].FullName
                 } elseif ($cands.Count -eq 0) {
-                    throw "E_FLOW_FILE_REQUIRED: 未提供 -FlowFile，flows 目录里也没有流程定义 .json；请用 -FlowFile 指定"
+                    throw "E_FLOW_FILE_REQUIRED: -FlowFile not provided and the flows directory has no flow definition .json; specify it with -FlowFile"
                 } else {
-                    throw ("E_FLOW_FILE_AMBIGUOUS(candidates=$($cands.Count)): 未提供 -FlowFile，找到 $($cands.Count) 个候选，请用 -FlowFile 指定：" +
-                        (($cands | ForEach-Object { $_.Name }) -join '、'))
+                    throw ("E_FLOW_FILE_AMBIGUOUS(candidates=$($cands.Count)): -FlowFile not provided; found $($cands.Count) candidates; specify one with -FlowFile: " +
+                        (($cands | ForEach-Object { $_.Name }) -join ', '))
                 }
             }
         }
@@ -1028,10 +1028,10 @@ if (-not $NoMain) {
 
     if (-not $Json) {
         foreach ($c in $result.checks) {
-            Write-Host ("[{0}] {1} {2}：{3}" -f $c.status.ToUpper(), $c.id, $c.code, $c.message)
+            Write-Host ("[{0}] {1} {2}: {3}" -f $c.status.ToUpper(), $c.id, $c.code, $c.message)
             foreach ($e in @($c.evidence)) { if ($e) { Write-Host "        - $e" } }
         }
-        Write-Host ("[admit] 通过 {0} / 警告 {1} / 待批 {2} / 失败 {3}" -f `
+        Write-Host ("[admit] pass {0} / warn {1} / ask {2} / fail {3}" -f `
             $result.summary.pass, $result.summary.warn, $result.summary.ask, $result.summary.fail)
     }
     Write-Output ('PAD_ADMIT_RESULT=' + ($result | ConvertTo-Json -Depth 8 -Compress))

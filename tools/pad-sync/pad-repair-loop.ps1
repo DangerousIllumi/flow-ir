@@ -28,13 +28,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
-    Write-Error '安全熔断：默认只能操作 PAD_SYNC_TEST 测试流程。操作生产流程请显式加 -AllowProd。'
+    Write-Error 'safety fuse: only the PAD_SYNC_TEST flow may be touched by default. Add -AllowProd explicitly to operate on a production flow.'
 }
 # V 模型红线：生产流程只允许观察或人工修复，不允许自动改代码
 if ($FlowName -ne 'PAD_SYNC_TEST' -and $Executor) {
-    throw '生产流程禁止自动修复：请只用 -SingleRound 观察，或人工修改 .robin'
+    throw 'automatic repair is forbidden for production flows: use -SingleRound to observe, or edit the .robin manually'
 }
-if (-not (Test-Path $SourceRobin)) { Write-Error "找不到 .robin：$SourceRobin" }
+if (-not (Test-Path $SourceRobin)) { Write-Error ".robin not found: $SourceRobin" }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $padSync = Join-Path $here 'pad-sync.ps1'
@@ -42,7 +42,7 @@ $padSync = Join-Path $here 'pad-sync.ps1'
 Import-Module (Join-Path $here 'TextEncoding.psm1') -Force
 # 子进程末行 RESULT 的解析统一由 PadTelemetry 提供，本脚本不再自带正则
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
-if (-not (Test-Path $padSync)) { Write-Error "找不到 pad-sync.ps1：$padSync" }
+if (-not (Test-Path $padSync)) { Write-Error "pad-sync.ps1 not found: $padSync" }
 
 if (-not $ResultDir) { $ResultDir = Join-Path $env:TEMP "pad-repair-$(Get-Date -Format 'HHmmss')" }
 New-Item -ItemType Directory -Force -Path $ResultDir | Out-Null
@@ -61,10 +61,10 @@ function Log([string]$m) {
 # 静态自检：非空、行数>=2
 function Test-RobinSyntax([string]$path) {
     $text = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
-    if (-not $text.Trim()) { return $false, '.robin 为空' }
-    if ($text.Contains([char]0)) { return $false, '.robin 含空字符' }
+    if (-not $text.Trim()) { return $false, '.robin is empty' }
+    if ($text.Contains([char]0)) { return $false, '.robin contains NUL characters' }
     $lines = ($text -split "`r?`n").Where({ $_.Trim() -ne '' })
-    if ($lines.Count -lt 2) { return $false, '.robin 动作数太少（需至少 2 行）' }
+    if ($lines.Count -lt 2) { return $false, '.robin has too few actions (at least 2 lines required)' }
     return $true, $null
 }
 
@@ -73,7 +73,7 @@ function Read-LogAuto([string]$path, [int]$maxChars = 4000) {
     # 编码探测与解码统一交给 TextEncoding 模块（UTF-16LE / UTF-8-BOM / ANSI 三例有 Pester 覆盖）
     $text = (Read-TextFileAuto $path).text
     # 日志可能很大，只保留尾部（报错信息通常在最后）
-    if ($text.Length -gt $maxChars) { $text = '...(已截断)...' + $text.Substring($text.Length - $maxChars) }
+    if ($text.Length -gt $maxChars) { $text = '...(truncated)...' + $text.Substring($text.Length - $maxChars) }
     return $text
 }
 
@@ -128,10 +128,10 @@ function Get-RunDosExtraLog($failedAction) {
     $actionName = $failedAction.action
     $sysName = $failedAction.systemActionName
     if (-not ($sysName -match 'RunDOSCommand' -or $actionName -match 'RunDOS')) {
-        $extra.hookNote = '不是 RunDOSCommand 动作，跳过 hook'; return $extra
+        $extra.hookNote = 'not a RunDOSCommand action; hook skipped'; return $extra
     }
     $cmdLine = $failedAction.inputs.DOSCommandOrApplication
-    if (-not $cmdLine) { $extra.hookNote = 'inputs 里无 DOSCommandOrApplication'; return $extra }
+    if (-not $cmdLine) { $extra.hookNote = 'inputs has no DOSCommandOrApplication'; return $extra }
     # 正则提取脚本路径：优先 .vbs 后 .py，单引号包裹模式避免双引号转义
     $scriptPath = $null
     if ($cmdLine -match '"([^"]+\.vbs)"') { $scriptPath = $Matches[1] }
@@ -139,28 +139,28 @@ function Get-RunDosExtraLog($failedAction) {
     elseif ($cmdLine -match 'python[^"]*"([^"]+\.py)"') { $scriptPath = $Matches[1] }
     elseif ($cmdLine -match '"([^"]+\.py)"') { $scriptPath = $Matches[1] }
     $extra.scriptPath = $scriptPath
-    if (-not $scriptPath) { $extra.hookNote = '无法解析脚本路径'; return $extra }
+    if (-not $scriptPath) { $extra.hookNote = 'cannot resolve the script path'; return $extra }
     if ($scriptPath -match '\.vbs$') {
         # 不再猜"脚本名_result.txt"，改为从 VBS 源码提取真实日志文件名与目录
         $logFile = Get-VbsLogFile $scriptPath
         if ($logFile) {
             $extra.vbsLogPath = $logFile.FullName
             $extra.vbsLog = Read-LogAuto $logFile.FullName
-            $extra.hookNote = "VBS 日志已读取：$($logFile.FullName)（$($logFile.Length) 字节，修改于 $($logFile.LastWriteTime.ToString('HH:mm:ss'))）"
+            $extra.hookNote = "VBS log read: $($logFile.FullName) ($($logFile.Length) bytes, modified at $($logFile.LastWriteTime.ToString('HH:mm:ss'))"
         } else {
-            $extra.hookNote = "VBS 源码声明的日志文件在磁盘上均不存在：$scriptPath"
+            $extra.hookNote = "none of the log files declared by the VBS source exists on disk: $scriptPath"
         }
     } elseif ($scriptPath -match '\.py$') {
         $out = $failedAction.inputs.standardOutput
         if (-not $out) { $out = $failedAction.inputs.standardError }
-        if ($out) { $extra.pythonStdout = $out; $extra.hookNote = 'Python stdout 已读取' }
-        else { $extra.hookNote = 'Python 但无 standardOutput/standardError' }
+        if ($out) { $extra.pythonStdout = $out; $extra.hookNote = 'Python stdout read' }
+        else { $extra.hookNote = 'Python action but no standardOutput/standardError' }
     }
     return $extra
 }
 
 function Invoke-RunCycle([string]$robinPath, [int]$round) {
-    Log "——— 第 $round 轮：注入 + 运行 ———"
+    Log "--- round ${round}: inject + run ---"
     $tmpOut = Join-Path $ResultDir "pad-sync-out_$round.log"
     $syncArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $padSync,
         '-FlowName', $FlowName, '-RobinFile', $robinPath, '-Replace',
@@ -168,7 +168,7 @@ function Invoke-RunCycle([string]$robinPath, [int]$round) {
     if ($LocalRun) { $syncArgs += '-LocalRun' }
     & powershell @syncArgs > $tmpOut 2>&1
     $lines = @(Get-Content $tmpOut)
-    if ($lines.Count -gt 0) { Log "pad-sync 最后一行：$($lines[$lines.Count - 1])" }
+    if ($lines.Count -gt 0) { Log "pad-sync last line: $($lines[$lines.Count - 1])" }
     return (Read-ChildResult -Name 'SYNC' -Lines $lines -Logger { param($m) Log $m })
 }
 
@@ -177,9 +177,9 @@ try {
     Copy-Item $SourceRobin $currentRobin -Force
     for ($round = 1; $round -le $MaxRound; $round++) {
         $ok, $msg = Test-RobinSyntax $currentRobin
-        if (-not $ok) { throw "第 ${round} 轮 .robin 静态自检失败：$msg" }
+        if (-not $ok) { throw "round ${round}: .robin static self-check failed: $msg" }
         $res = Invoke-RunCycle $currentRobin $round
-        if (-not $res) { throw "第 ${round} 轮：pad-sync 没返回有效结果" }
+        if (-not $res) { throw "round ${round}: pad-sync returned no valid result" }
         # 设计器本地运行返回的是动作级异常数组 failedActions（没有单数 failedAction），
         # 取第一个异常并补上 hook 需要的 systemActionName 字段
         $fa = $res.failedAction
@@ -198,16 +198,16 @@ try {
         }
         $rootResult.rounds += $roundRec
         if ($res.ok) {
-            Log "✅ 第 $round 轮通过！status=$($res.status)"
+            Log "✅ round $round passed! status=$($res.status)"
             if ($res.failedActions -and @($res.failedActions).Count -gt 0) {
                 $names = @($res.failedActions | ForEach-Object { "$($_.module).$($_.action)" }) -join ', '
-                Log "⚠️ 本轮有被捕获的动作异常（不影响最终结果）：$names"
+                Log "⚠️ this round has caught action exceptions (they do not affect the final result): $names"
             }
             $rootResult.ok = $true; break
         }
         $f = $fa
-        if (-not $f) { Log '失败但无 Failed 动作，停止'; break }
-        Log "第 $round 轮失败：action=$($f.name) error.code=$($f.error.code)"
+        if (-not $f) { Log 'failed without a Failed action; stopping'; break }
+        Log "round $round failed: action=$($f.name) error.code=$($f.error.code)"
         $ctxPath = Join-Path $ResultDir "repair_ctx_$round.json"
         $nextPath = Join-Path $ResultDir "round_$($round+1).robin"
         [ordered]@{
@@ -220,39 +220,39 @@ try {
             nextRobinPath = $nextPath
             extraLogs = (Get-RunDosExtraLog $f)
         } | ConvertTo-Json -Depth 10 | Out-File $ctxPath -Encoding UTF8
-        Log "修复上下文已落盘：$ctxPath"
-        Log "修复指引：读 $ctxPath → 改 current.robin → 输出到 $nextPath"
+        Log "repair context written: $ctxPath"
+        Log "repair guidance: read $ctxPath -> edit current.robin -> write to $nextPath"
         # 可插拔执行器：把上下文交给外部程序，修完的 .robin 直接进下一轮
         if ($Executor) {
-            if (-not (Test-Path $Executor)) { throw "找不到 executor：$Executor" }
-            Log "调用 executor：$Executor"
+            if (-not (Test-Path $Executor)) { throw "executor not found: $Executor" }
+            Log "calling executor: $Executor"
             $execLog = Join-Path $ResultDir "executor_$round.log"
             $execSw = [Diagnostics.Stopwatch]::StartNew()
             & powershell -NoProfile -ExecutionPolicy Bypass -File $Executor -ContextFile $ctxPath -InputRobin $currentRobin -OutputRobin $nextPath *> $execLog
             $execCode = $LASTEXITCODE
             $execSw.Stop()
-            Log "executor 退出码=$execCode，耗时 $([int]$execSw.Elapsed.TotalSeconds) 秒（日志 $execLog）"
+            Log "executor exit code=$execCode, took $([int]$execSw.Elapsed.TotalSeconds) second(s) (log $execLog)"
             if ($execCode -ne 0) {
-                Log 'executor 放弃修复，循环停止'
+                Log 'executor gave up repairing; stopping the loop'
                 $rootResult.executorAborted = $true
                 break
             }
             if (-not (Test-Path $nextPath)) {
-                Log "executor 未产出 $nextPath，循环停止"
+                Log "executor produced no $nextPath; stopping the loop"
                 $rootResult.executorAborted = $true
                 break
             }
             $okFix, $msgFix = Test-RobinSyntax $nextPath
-            if (-not $okFix) { Log "executor 产物自检失败：$msgFix"; break }
+            if (-not $okFix) { Log "executor output failed the self-check: $msgFix"; break }
             $currentRobin = $nextPath
             continue
         }
         if ($SingleRound) {
-            Log "单轮模式：修复上下文已生成，等 agent 改完 current.robin 后再跑下一轮"
+            Log 'single-round mode: repair context is ready; run the next round after the agent edits current.robin'
             $rootResult.nextRobinPath = $nextPath
             break
         }
-        if ($round -eq $MaxRound) { Log "已达最大轮数 $MaxRound，停止"; break }
+        if ($round -eq $MaxRound) { Log "reached the maximum number of rounds $MaxRound; stopping"; break }
         Copy-Item $currentRobin $nextPath -Force
         $currentRobin = $nextPath
     }
@@ -260,7 +260,7 @@ try {
 }
 catch {
     $rootResult.lastError = $_.Exception.Message
-    Log "循环失败：$($_.Exception.Message)"
+    Log "loop failed: $($_.Exception.Message)"
 }
 finally {
     Write-Output ('PAD_REPAIR_LOOP_RESULT=' + ($rootResult | ConvertTo-Json -Depth 10 -Compress))

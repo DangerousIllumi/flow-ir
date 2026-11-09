@@ -125,15 +125,15 @@ def replace_text(path, old: str, new: str, count: int = 1) -> tuple:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="VBS/日志文本编码探测与安全写回")
+    ap = argparse.ArgumentParser(description="Detect the encoding of VBS/log text and write it back safely")
     sub = ap.add_subparsers(dest="cmd")
-    p_probe = sub.add_parser("probe", help="打印文件的编码判定结果")
+    p_probe = sub.add_parser("probe", help="print the detected encoding of each file")
     p_probe.add_argument("files", nargs="+")
-    p_rep = sub.add_parser("replace", help="替换文本并按原编码写回")
+    p_rep = sub.add_parser("replace", help="replace text and write it back in the original encoding")
     p_rep.add_argument("file")
     p_rep.add_argument("--old", required=True)
     p_rep.add_argument("--new", required=True)
-    p_rep.add_argument("--all", action="store_true", help="替换全部命中（默认只替换第一处）")
+    p_rep.add_argument("--all", action="store_true", help="replace every match (only the first is replaced by default)")
     args = ap.parse_args(argv)
     if not args.cmd:
         ap.print_help()

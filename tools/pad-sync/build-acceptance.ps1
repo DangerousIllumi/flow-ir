@@ -59,12 +59,12 @@ function Resolve-Node($Node, [hashtable]$Map) {
 try {
     $flow = [IO.File]::ReadAllText($FlowFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
 } catch {
-    Write-Error "读取 flow.json 失败：$($_.Exception.Message)"
+    Write-Error "failed to read flow.json: $($_.Exception.Message)"
     exit 1
 }
 
 if (-not $flow.acceptance -or -not $flow.acceptance.checks) {
-    Write-Error "flow.json 里没有 acceptance.checks，无法生成验收判据"
+    Write-Error "flow.json has no acceptance.checks; cannot build acceptance criteria"
     exit 1
 }
 
@@ -82,21 +82,21 @@ $errs = @()
 foreach ($c in @($flow.acceptance.checks)) {
     $resolved = Resolve-Node $c $vars
     $type = [string]$resolved.type
-    if (-not $resolved.name) { $errs += "有一条判据缺少 name" }
+    if (-not $resolved.name) { $errs += "one criterion is missing name" }
     if ($KNOWN_TYPES -notcontains $type) {
-        $errs += "判据「$($resolved.name)」类型 $type 不受支持（只支持 $($KNOWN_TYPES -join ' / ')）"
+        $errs += "criterion '$($resolved.name)' has an unsupported type $type (supported: $($KNOWN_TYPES -join ' / '))"
     }
     foreach ($s in @($resolved.path, $resolved.dir) + @($resolved.paths)) {
         # 只允许剩下 {{PAD_ROOT}} 这类部署占位符（由 config 在验收时替换）
         if ($s -and ($s -match '\{\{variables\.' -or $s -match '%[A-Za-z_]\w*%')) {
-            $errs += "判据「$($resolved.name)」里还有未解析的引用：$s"
+            $errs += "criterion '$($resolved.name)' has an unresolved reference: $s"
         }
     }
     $checks += $resolved
 }
 
 if ($errs.Count -gt 0) {
-    foreach ($e in $errs) { Write-Host "[build-acceptance] 错误：$e" }
+    foreach ($e in $errs) { Write-Host "[build-acceptance] error: $e" }
     exit 1
 }
 
@@ -108,17 +108,17 @@ $spec = [ordered]@{
 $json = $spec | ConvertTo-Json -Depth 12
 
 if ($Check) {
-    Write-Host "[build-acceptance] $($checks.Count) 条判据通过校验（未写文件）"
+    Write-Host "[build-acceptance] $($checks.Count) criteria passed validation (no file written)"
     Write-Output $json
     exit 0
 }
 
 if (-not $OutFile) {
-    Write-Error "缺少 -OutFile（或用 -Check 只校验）"
+    Write-Error "-OutFile is missing (or use -Check to validate only)"
     exit 1
 }
 $dir = Split-Path -Parent $OutFile
 if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 [IO.File]::WriteAllText($OutFile, $json, (New-Object Text.UTF8Encoding($false)))
-Write-Host "[build-acceptance] 已生成 $OutFile（$($checks.Count) 条判据）"
+Write-Host "[build-acceptance] generated $OutFile ($($checks.Count) criteria)"
 exit 0

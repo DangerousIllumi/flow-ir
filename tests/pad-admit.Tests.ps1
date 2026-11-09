@@ -240,7 +240,7 @@ Describe 'pad-admit TRIGGER（观察期 warn）' {
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
         $r[0].status | Should Be 'fail'
         $r[0].code | Should Be 'TRIGGER_UNATTENDED_CONFIRM'
-        ($r[0].evidence -join ' ') | Should Match '节点 9'
+        ($r[0].evidence -join ' ') | Should Match 'node 9'
     }
 
     It 'schedule 缺 time：fail + TRIGGER_INVALID' {
@@ -281,7 +281,7 @@ Describe 'pad-admit TRIGGER（观察期 warn）' {
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
         $r[0].status | Should Be 'warn'
         $r[0].code | Should Be 'TRIGGER_UNATTENDED_IRREVERSIBLE'
-        ($r[0].evidence -join ' ') | Should Match '节点 43'
+        ($r[0].evidence -join ' ') | Should Match 'node 43'
         ($r[0].evidence -join ' ') | Should Match '过账需冲销凭证'
     }
 
@@ -294,7 +294,7 @@ Describe 'pad-admit TRIGGER（观察期 warn）' {
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
         $r[0].status | Should Be 'warn'
         $r[0].code | Should Be 'TRIGGER_MISSING_REVERSIBILITY'
-        ($r[0].evidence -join ' ') | Should Match '节点 29'
+        ($r[0].evidence -join ' ') | Should Match 'node 29'
     }
 
     It '不可逆动作写成 reversible=true：fail + REVERSIBLE_MISLABELED' {
@@ -307,7 +307,7 @@ Describe 'pad-admit TRIGGER（观察期 warn）' {
         $hit = @($r | Where-Object { $_.code -eq 'REVERSIBLE_MISLABELED' })
         $hit.Count | Should Be 1
         $hit[0].status | Should Be 'fail'
-        ($hit[0].evidence -join ' ') | Should Match '节点 44'
+        ($hit[0].evidence -join ' ') | Should Match 'node 44'
     }
 
     It 'manual 声明：reversible=false 同样报可逆性 warn（报告模式可见）' {
@@ -320,7 +320,7 @@ Describe 'pad-admit TRIGGER（观察期 warn）' {
         $r.Count | Should Be 1
         $r[0].status | Should Be 'warn'
         $r[0].code | Should Be 'TRIGGER_UNATTENDED_IRREVERSIBLE'
-        ($r[0].evidence -join ' ') | Should Match '节点 43'
+        ($r[0].evidence -join ' ') | Should Match 'node 43'
     }
 }
 
@@ -350,7 +350,7 @@ Describe 'pad-admit INPUT（节点级输入文件声明）' {
         $r.Count | Should Be 1
         $r[0].status | Should Be 'fail'
         $r[0].code | Should Be 'INPUT_FILE_MISSING'
-        ($r[0].evidence -join ' ') | Should Match '节点 1'
+        ($r[0].evidence -join ' ') | Should Match 'node 1'
     }
 
     It '多候选：fail + INPUT_FILE_AMBIGUOUS，证据列出全部候选，绝不取最新' {
