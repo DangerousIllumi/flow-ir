@@ -32,16 +32,16 @@ function Read-FingerprintScriptConfig {
         $ConfigPath = Join-Path (Join-Path (Join-Path $RepoRoot 'business') 'config') 'fingerprint-scripts.json'
     }
     if (-not (Test-Path -LiteralPath $ConfigPath)) {
-        throw "缺少脚本指纹清单配置：$ConfigPath（业务层配置缺失时不允许跳过脚本漂移检测）"
+        throw "Missing script fingerprint config: $ConfigPath (script drift detection cannot be skipped when the business-layer config is missing)"
     }
     try {
         $j = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
     } catch {
-        throw "脚本指纹清单配置无法解析：${ConfigPath}；$($_.Exception.Message)"
+        throw "Cannot parse script fingerprint config: ${ConfigPath}; $($_.Exception.Message)"
     }
     $repo = @($j.repoScripts | Where-Object { $_ })
     if ($repo.Count -eq 0) {
-        throw "脚本指纹清单配置的 repoScripts 为空：$ConfigPath"
+        throw "repoScripts is empty in the script fingerprint config: $ConfigPath"
     }
     return [ordered]@{
         path            = $ConfigPath
@@ -106,8 +106,8 @@ function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]
     })
     if ($hit.Count -gt 1) {
         # 带 Data['code'] 的异常：调用方按码分类，不解析中文消息
-        $msg = "Workspace 里有 $($hit.Count) 个候选修订，无法确定本次发布对应哪一份：" +
-            (($hit | ForEach-Object { $_.Directory.Name }) -join '、')
+        $msg = "Workspace has $($hit.Count) candidate revisions; cannot determine which one belongs to this release: " +
+            (($hit | ForEach-Object { $_.Directory.Name }) -join ', ')
         $ex = [System.Exception]::new($msg)
         $ex.Data['code'] = 'FINGERPRINT_AMBIGUOUS'
         throw $ex
@@ -204,7 +204,7 @@ function Test-ScriptFingerprint {
     if (-not $read.ok) {
         return [ordered]@{
             status = 'warn'; code = $read.code
-            message = "$($read.message)，无法核对脚本指纹：$BaselinePath"
+            message = "$($read.message); cannot check script fingerprints for: $BaselinePath"
             evidence = @("baseline=$BaselinePath")
         }
     }
@@ -215,7 +215,7 @@ function Test-ScriptFingerprint {
         # 向后兼容：v2 及更早基线没有 scripts 段，按 warn 提示重新播种
         return [ordered]@{
             status = 'warn'; code = 'SCRIPT_FINGERPRINT_LEGACY'
-            message = '基线缺少 scripts 段（v3 之前的旧基线），请重新播种后再核对脚本指纹'
+            message = 'Baseline has no scripts section (pre-v3 baseline); reseed before checking script fingerprints'
             evidence = @("baseline=$BaselinePath")
         }
     }
@@ -224,7 +224,7 @@ function Test-ScriptFingerprint {
         # 已播种 v3 但还没收录 PAD 旧拷贝的基线：同样按 legacy 提示重播，不判 fail
         return [ordered]@{
             status = 'warn'; code = 'SCRIPT_FINGERPRINT_LEGACY'
-            message = '基线缺少 external 段（PAD 旧拷贝未收录），请重新播种后再核对脚本指纹'
+            message = 'Baseline has no external section (PAD legacy copies were not captured); reseed before checking script fingerprints'
             evidence = @("baseline=$BaselinePath")
         }
     }
@@ -247,35 +247,35 @@ function Test-ScriptFingerprint {
         if ($expectedKeys -contains $k) { $was = [string]$expected.$k }
         $cur = [string]$now[$k]
         if (-not $was) {
-            $bad += "$k 基线未记录"
+            $bad += "$k not recorded in the baseline"
         } elseif (-not $cur) {
-            $bad += "$k 当前缺失（基线 $($was.Substring(0, 12))）"
+            $bad += "$k missing now (baseline $($was.Substring(0, 12)))"
         } elseif ($cur -ne $was) {
-            $bad += "$k 基线 $($was.Substring(0, 12)) 当前 $($cur.Substring(0, 12))"
+            $bad += "$k baseline $($was.Substring(0, 12)) now $($cur.Substring(0, 12))"
         }
     }
     foreach ($k in $extKeys) {
         $was = [string]$expectedExternal.$k
         $cur = [string]$nowExt[$k]
         if (-not $was) {
-            $bad += "$k 基线未记录"
+            $bad += "$k not recorded in the baseline"
         } elseif (-not $cur) {
-            $bad += "$k 当前缺失（基线 $($was.Substring(0, 12))）"
+            $bad += "$k missing now (baseline $($was.Substring(0, 12)))"
         } elseif ($cur -ne $was) {
-            $bad += "$k 基线 $($was.Substring(0, 12)) 当前 $($cur.Substring(0, 12))"
+            $bad += "$k baseline $($was.Substring(0, 12)) now $($cur.Substring(0, 12))"
         }
     }
     $total = $keys.Count + $extKeys.Count
     if ($bad.Count -gt 0) {
         return [ordered]@{
             status = 'warn'; code = 'SCRIPT_FINGERPRINT_MISMATCH'
-            message = ("$($bad.Count)/$total 个脚本哈希与基线不一致（观察期只提醒，不阻断）")
+            message = ("$($bad.Count)/$total script hashes differ from the baseline (observation period only warns, it does not block)")
             evidence = $bad
         }
     }
     return [ordered]@{
         status = 'pass'; code = 'OK'
-        message = "$($keys.Count) 个仓库脚本 + $($extKeys.Count) 个 PAD 旧拷贝哈希与基线一致"
+        message = "$($keys.Count) repo scripts + $($extKeys.Count) PAD legacy copies match the baseline hashes"
         evidence = @("baseline=$BaselinePath")
     }
 }
@@ -307,22 +307,22 @@ function Get-FingerprintBaselinePath([string]$RepoRoot, [string]$FlowName) {
 # 读基线。不抛异常：返回 ok/code/message，由调用方决定按 warn 还是 fail
 function Read-FingerprintBaseline([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
-        return [ordered]@{ ok = $false; code = 'FINGERPRINT_NO_BASELINE'; message = '没有指纹基线'; data = $null }
+        return [ordered]@{ ok = $false; code = 'FINGERPRINT_NO_BASELINE'; message = 'no fingerprint baseline'; data = $null }
     }
     try {
         $j = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json
     } catch {
-        return [ordered]@{ ok = $false; code = 'FINGERPRINT_BASELINE_CORRUPT'; message = "基线无法解析：$($_.Exception.Message)"; data = $null }
+        return [ordered]@{ ok = $false; code = 'FINGERPRINT_BASELINE_CORRUPT'; message = "baseline cannot be parsed: $($_.Exception.Message)"; data = $null }
     }
     foreach ($k in @('flow', 'hashes')) {
         if ($j.PSObject.Properties.Name -notcontains $k) {
-            return [ordered]@{ ok = $false; code = 'FINGERPRINT_BASELINE_CORRUPT'; message = "基线缺少字段 $k"; data = $null }
+            return [ordered]@{ ok = $false; code = 'FINGERPRINT_BASELINE_CORRUPT'; message = "baseline is missing field $k"; data = $null }
         }
     }
     if ($j.hashes.PSObject.Properties.Name -notcontains 'robin' -or -not $j.hashes.robin) {
-        return [ordered]@{ ok = $false; code = 'FINGERPRINT_BASELINE_CORRUPT'; message = '基线缺少 robin 哈希'; data = $null }
+        return [ordered]@{ ok = $false; code = 'FINGERPRINT_BASELINE_CORRUPT'; message = 'baseline is missing the robin hash'; data = $null }
     }
-    return [ordered]@{ ok = $true; code = $null; message = '基线可读'; data = $j }
+    return [ordered]@{ ok = $true; code = $null; message = 'baseline is readable'; data = $j }
 }
 
 # 写基线：先写临时文件再原子替换，避免半份 JSON
@@ -426,7 +426,7 @@ function Test-FlowFingerprint {
     if (-not $parts.robin) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-            message = "读不到 .robin，无法计算指纹：$RobinPath"
+            message = "cannot read .robin; cannot compute the fingerprint: $RobinPath"
             evidence = @("robin=$RobinPath")
         }
     }
@@ -442,11 +442,11 @@ function Test-FlowFingerprint {
                 [string]$rec.acceptance -eq [string]$parts.acceptance) { $ok = $true; break }
         }
         if ($ok) {
-            return [ordered]@{ status = 'pass'; code = 'OK'; message = "与批准记录一致：$fpLine"; evidence = @($ApprovePath) }
+            return [ordered]@{ status = 'pass'; code = 'OK'; message = "matches the approval record: $fpLine"; evidence = @($ApprovePath) }
         }
         return [ordered]@{
             status = 'fail'; code = 'FINGERPRINT_MISMATCH'
-            message = "与批准记录不一致：$fpLine"
+            message = "does not match the approval record: $fpLine"
             evidence = @("approve=$ApprovePath")
         }
     }
@@ -467,7 +467,7 @@ function Test-FlowFingerprint {
             if ($ConfigPath) { $hint += "-ConfigFile '$ConfigPath'" }
             if ($AcceptancePath) { $hint += "-AcceptanceFile '$AcceptancePath'" }
             $hint += @('-Set', '-Confirm')
-            $msg += "；未发布流程的正常状态，首次发布并真实运行一次后执行：$($hint -join ' ')"
+            $msg += "; normal state for an unpublished flow; after the first release and one real run, execute: $($hint -join ' ')"
             $ev += "fix=$($hint -join ' ')"
         }
         return [ordered]@{
@@ -498,37 +498,37 @@ function Test-FlowFingerprint {
         if (-not $run -and $displayName -ne $FlowName) {
             # 兜底：极少数旧基线把业务名写进了 flow 字段
             $run = Find-LatestFlowRun $ScriptsRoot $FlowName
-            $searched = "$displayName（兜底 $FlowName）"
+            $searched = "$displayName (fallback $FlowName)"
         }
         if (-not $run) {
             return [ordered]@{
                 status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-                message = "本地运行历史里找不到流程 $displayName，无法解析身份"
+                message = "flow $displayName not found in the local run history; cannot resolve its identity"
                 evidence = @("scriptsRoot=$ScriptsRoot", "searched=$searched")
             }
         }
         if ($base.flowGuid -and [string]$base.flowGuid -ne [string]$run.flowGuid) {
-            $ev += "flowGuid 基线=$($base.flowGuid) 当前=$($run.flowGuid)"
+            $ev += "flowGuid baseline=$($base.flowGuid) current=$($run.flowGuid)"
             return [ordered]@{
                 status = $nonPass; code = 'FINGERPRINT_FLOW_STALE'
-                message = '基线对应的流程 GUID 已变化（流程被重建或换了目标）'
+                message = 'the flow GUID recorded in the baseline has changed (the flow was rebuilt or retargeted)'
                 evidence = $ev
             }
         }
     }
     if ($base.environmentId -and $EnvironmentId -and [string]$base.environmentId -ne [string]$EnvironmentId) {
-        $ev += "environmentId 基线=$($base.environmentId) 当前=$EnvironmentId"
+        $ev += "environmentId baseline=$($base.environmentId) current=$EnvironmentId"
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-            message = '基线与当前 PAD 环境不一致'
+            message = 'baseline does not match the current PAD environment'
             evidence = $ev
         }
     }
     if ($base.machine -and [string]$base.machine -ne [string]$Machine) {
-        $ev += "machine 基线=$($base.machine) 当前=$Machine"
+        $ev += "machine baseline=$($base.machine) current=$Machine"
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-            message = '基线与当前机器不一致'
+            message = 'baseline does not match the current machine'
             evidence = $ev
         }
     }
@@ -537,7 +537,7 @@ function Test-FlowFingerprint {
     if (-not $depBase -or -not $depBase.logicHash) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-            message = '基线缺少已发布哈希，请重新播种（source/deployed 拆分后的新格式）'
+            message = 'baseline has no deployed hash; reseed (new format after the source/deployed split)'
             evidence = $ev
         }
     }
@@ -546,7 +546,7 @@ function Test-FlowFingerprint {
     if ($baseSource -ne [string]$parts.robin) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_SOURCE_MISMATCH'
-            message = '源 .robin 与基线不一致（流程定义有改动，需要重新发布或重新播种）'
+            message = 'source .robin differs from the baseline (the flow definition changed; republish or reseed)'
             evidence = $ev
         }
     }
@@ -554,7 +554,7 @@ function Test-FlowFingerprint {
     if ($baseConfig -and $baseConfig -ne [string]$parts.config) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_CONFIG_STALE'
-            message = '部署配置与基线不一致（变量替换结果会变）'
+            message = 'deployment config differs from the baseline (variable substitution results will change)'
             evidence = $ev
         }
     }
@@ -572,7 +572,7 @@ function Test-FlowFingerprint {
         $ev += "deployed=$DeployedRobinPath"
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
-            message = "找不到部署产物，请先生成 $depLeaf"
+            message = "deployment artifact not found; generate $depLeaf first"
             evidence = $ev
         }
     }
@@ -581,22 +581,22 @@ function Test-FlowFingerprint {
         $ev += "deployed=$DeployedRobinPath"
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_DEPLOYED_MISMATCH'
-            message = '部署产物与已发布副本逻辑不一致（发布副本已过期或被改过）'
+            message = 'deployment artifact is logically inconsistent with the published copy (the published copy is stale or was modified)'
             evidence = $ev
         }
     }
 
     # 原始字节不同是常态（源是模板、PAD 落盘还会追加 @@ 头），只记录不判失败
-    $note = '（源是模板，含占位符，与部署产物原始字节不同属正常）'
+    $note = ' (source is a template with placeholders; its raw bytes differing from the deployment artifact is expected)'
     $ev += "deployed=$DeployedRobinPath"
     $depRaw = (Get-FileHash -LiteralPath $DeployedRobinPath -Algorithm SHA256).Hash.ToLower()
     if ([string]$depBase.robinSha256 -and $depRaw -ne [string]$depBase.robinSha256) {
-        $note += '（部署产物与已发布副本原始字节不同，规范化后一致）'
+        $note += ' (deployment artifact raw bytes differ from the published copy; identical after normalization)'
         $ev += "deployedRaw=$($depRaw.Substring(0,12)) workspaceRaw=$([string]$depBase.robinSha256.ToString().Substring(0,12))"
     }
     return [ordered]@{
         status = 'pass'; code = 'OK'
-        message = "与基线一致：$fpLine$note"
+        message = "matches the baseline: $fpLine$note"
         evidence = (@($BaselinePath) + $ev)
     }
 }

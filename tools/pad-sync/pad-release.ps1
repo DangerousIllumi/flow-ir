@@ -75,7 +75,7 @@ function Get-TestSummary([string]$RepoRoot, [string]$PythonExe) {
     $summary = [ordered]@{ pytestPassed = 0; pytestFailed = 0; pesterPassed = 0; pesterFailed = 0 }
     $testsDir = Join-Path $RepoRoot 'tests'
 
-    Log "运行 pytest：$testsDir"
+    Log "running pytest: $testsDir"
     # 不能用 Select-Object -First 截断输出（会提前杀死子进程），Out-String 全量收集
     $out = & $PythonExe -m pytest $testsDir -q 2>&1 | Out-String
     $m = [regex]::Match($out, '(\d+) passed'); if ($m.Success) { $summary.pytestPassed = [int]$m.Groups[1].Value }
@@ -83,7 +83,7 @@ function Get-TestSummary([string]$RepoRoot, [string]$PythonExe) {
     if ($LASTEXITCODE -ne 0 -and $summary.pytestFailed -eq 0) { $summary.pytestFailed = -1 }  # 非断言类失败（如解释器报错）
 
     foreach ($f in (Get-ChildItem $testsDir -Filter '*.Tests.ps1' -ErrorAction SilentlyContinue)) {
-        Log "运行 Pester：$($f.Name)"
+        Log "running Pester: $($f.Name)"
         $r = Invoke-Pester -Script $f.FullName -PassThru
         $items = @()
         if ($r -and $r.PSObject.Properties['TestResult'] -and $r.TestResult) { $items = @($r.TestResult) }
@@ -120,7 +120,7 @@ function Invoke-Deploy([string]$SrcRobin, [string]$CfgFile, [string]$Flow, [stri
     $json = Read-ChildResult -Name 'DEPLOY' `
         -Lines ([IO.File]::ReadAllLines($tmp, [Text.Encoding]::UTF8)) `
         -Logger { param($m) Write-Host "[release] $m" }
-    if (-not $json) { throw "pad-deploy 无 PAD_DEPLOY_RESULT 输出（日志：$tmp）" }
+    if (-not $json) { throw "pad-deploy produced no PAD_DEPLOY_RESULT output (log: $tmp)" }
     return $json
 }
 
@@ -133,12 +133,12 @@ function Get-ApprovalFingerprint([string]$RobinPath, [string]$ConfigPath, [strin
 
 # 只展示每个哈希前 8 位，够人眼核对又不刷屏
 function Format-ApprovalFingerprint($Fp) {
-    if (-not $Fp) { return '(无)' }
+    if (-not $Fp) { return '(none)' }
     $parts = @()
     foreach ($k in $Fp.Keys) {
         if ($Fp[$k]) { $parts += ('{0}={1}' -f $k, $Fp[$k].Substring(0, 8)) }
     }
-    if ($parts.Count -eq 0) { return '(无)' }
+    if ($parts.Count -eq 0) { return '(none)' }
     return ($parts -join ' ')
 }
 
@@ -156,15 +156,15 @@ if (-not $NoMain) {
         warnings = @(); errors = @()
     }
     try {
-        if (-not $FlowName) { throw '缺少 -FlowName（不设为 Mandatory 是为了让 Pester 能 dot-source 本脚本）' }
-        if (-not (Test-Path $script:DeployPath)) { throw "找不到 pad-deploy.ps1" }
+        if (-not $FlowName) { throw 'missing -FlowName (not Mandatory so Pester can dot-source this script)' }
+        if (-not (Test-Path $script:DeployPath)) { throw "pad-deploy.ps1 not found" }
         # 不再默认到某个具体业务流程：先按 -FlowName 派生，派生不到就明确要求显式指定
         if (-not $SourceRobin) {
             $guess = Join-Path $script:RepoRoot ("business\flows\{0}.robin" -f $FlowName)
             if (Test-Path -LiteralPath $guess) {
                 $SourceRobin = $guess
             } else {
-                throw "E_SOURCE_ROBIN_REQUIRED: 未提供 -SourceRobin，按流程名派生也找不到：$guess；请用 -SourceRobin 指定"
+                throw "E_SOURCE_ROBIN_REQUIRED: -SourceRobin not provided and the name-derived path was not found: $guess; specify it with -SourceRobin"
             }
         }
         if (-not $ConfigFile) {
@@ -172,11 +172,11 @@ if (-not $NoMain) {
             if (Test-Path -LiteralPath $guess) {
                 $ConfigFile = $guess
             } else {
-                throw "E_CONFIG_REQUIRED: 未提供 -ConfigFile，按流程名派生也找不到：$guess；请用 -ConfigFile 指定"
+                throw "E_CONFIG_REQUIRED: -ConfigFile not provided and the name-derived path was not found: $guess; specify it with -ConfigFile"
             }
         }
         $result.sourceRobin = $SourceRobin
-        if (-not (Test-Path $SourceRobin)) { throw "找不到 .robin：$SourceRobin" }
+        if (-not (Test-Path $SourceRobin)) { throw ".robin not found: $SourceRobin" }
         # 验收判据默认取同名的 <flow>.acceptance.json（与 flow.json 同目录）
         if (-not $AcceptanceFile) {
             $candidate = [IO.Path]::ChangeExtension($SourceRobin, '.acceptance.json')
@@ -184,26 +184,26 @@ if (-not $NoMain) {
         }
         $result.acceptanceFile = $AcceptanceFile
         if ($AcceptanceFile -and -not (Test-Path $AcceptanceFile)) {
-            throw "找不到验收判据文件：$AcceptanceFile"
+            throw "acceptance criteria file not found: $AcceptanceFile"
         }
         if ($AcceptanceFile) { $AcceptanceFile = (Resolve-Path -LiteralPath $AcceptanceFile).Path }
         $result.acceptanceFile = $AcceptanceFile
         if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
-            throw '安全熔断：默认只能发布 PAD_SYNC_TEST。发布生产流程必须显式 -AllowProd。'
+            throw 'Safety fuse: only PAD_SYNC_TEST may be released by default. Releasing a production flow requires explicit -AllowProd.'
         }
 
         # ── 阶段 1：测试摘要 ──
         if ($SkipTests) {
             $result.tests = [ordered]@{ skipped = $true }
-            $result.warnings += '已跳过测试摘要（-SkipTests）'
-            Log '已跳过测试（-SkipTests）'
+            $result.warnings += 'test summary skipped (-SkipTests)'
+            Log 'tests skipped (-SkipTests)'
         } else {
             $result.stage = 'tests'
             $result.tests = Get-TestSummary $script:RepoRoot $PythonExe
-            Log ("测试摘要：pytest {0} 通过/{1} 失败；Pester {2} 通过/{3} 失败" -f `
+            Log ("test summary: pytest {0} passed/{1} failed; Pester {2} passed/{3} failed" -f `
                 $result.tests.pytestPassed, $result.tests.pytestFailed, $result.tests.pesterPassed, $result.tests.pesterFailed)
             if ($result.tests.pytestFailed -ne 0 -or $result.tests.pesterFailed -ne 0) {
-                throw '测试未全绿，发布中止'
+                throw 'tests are not all green; release aborted'
             }
         }
 
@@ -214,12 +214,12 @@ if (-not $NoMain) {
         Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
         $result.stage = 'deploy-dryrun'
         $dry = Invoke-Deploy $SourceRobin $ConfigFile $FlowName $SchemaFile $RunTimeoutSec -DryRunMode -Prod:$AllowProd
-        if (-not $dry.ok) { throw ("校验/替换失败：" + (@($dry.errors) -join '；')) }
+        if (-not $dry.ok) { throw ("validation/substitution failed: " + (@($dry.errors) -join '; ')) }
         $result.deployedRobin = [string]$dry.deployedRobinPath
         $result.replacedCount = [int]$dry.replacedCount
         $deployedText = [IO.File]::ReadAllText($result.deployedRobin, [Text.Encoding]::UTF8)
         $result.sha256 = Get-RobinHash $deployedText
-        Log "替换完成：$($result.replacedCount) 处；内容哈希 $($result.sha256.Substring(0,12))…"
+        Log "substitution complete: $($result.replacedCount) placeholders; content hash $($result.sha256.Substring(0,12))..."
 
         # ── 阶段 3：发布前快照（流程 GUID + 当前云端版本） ──
         $result.stage = 'snapshot'
@@ -229,45 +229,45 @@ if (-not $NoMain) {
         if ($before) {
             $result.flowGuid = $before.flowGuid
             $result.flowVersionBefore = $before.flowVersion
-            Log "当前云端版本：$($before.flowVersion)（最近运行 $($before.startTime)，$($before.status)）"
+            Log "current cloud version: $($before.flowVersion) (latest run $($before.startTime), $($before.status))"
         } else {
-            $result.warnings += '本地运行历史里找不到该流程（可能从未运行过），发布前快照为空'
-            Log '未找到历史运行记录，发布前快照为空'
+            $result.warnings += 'flow not found in the local run history (it may never have run); the pre-release snapshot is empty'
+            Log 'no historical run record found; the pre-release snapshot is empty'
         }
 
         if ($DryRun) {
             # DryRun：到此为止，不确认、不发布、不写 manifest
             $result.ok = $true; $result.stage = 'done'; $exitCode = 0
-            Log '[DryRun] 测试 + 校验 + 替换 + 快照已完成，未发布'
+            Log '[DryRun] tests + validation + substitution + snapshot completed; nothing was released'
         } else {
             # ── 阶段 4：用户确认（一次，含测试摘要与副作用说明） ──
             $result.stage = 'confirm'
             $t = $result.tests
-            $testText = $(if ($t.skipped) { '已跳过' } else { "pytest $($t.pytestPassed) 通过/$($t.pytestFailed) 失败；Pester $($t.pesterPassed) 通过/$($t.pesterFailed) 失败" })
-            $acceptText = $(if ($AcceptanceFile) { "验收判据：$([IO.Path]::GetFileName($AcceptanceFile))`n" } else { '' })
-            $runNote = $(if ($PublishOnly) { '本次只发布、不触发运行。' } else { '发布后将立即通过 URL 触发一次真实运行（会收发真实邮件、操作 SAP）。' })
+            $testText = $(if ($t.skipped) { 'skipped' } else { "pytest $($t.pytestPassed) passed/$($t.pytestFailed) failed; Pester $($t.pesterPassed) passed/$($t.pesterFailed) failed" })
+            $acceptText = $(if ($AcceptanceFile) { "acceptance criteria: $([IO.Path]::GetFileName($AcceptanceFile))`n" } else { '' })
+            $runNote = $(if ($PublishOnly) { 'This release does not trigger a run.' } else { 'After release a real run is triggered immediately via URL (it sends and receives real email and operates SAP).' })
             # 批准绑定指纹：确认框上看到的就是即将发布的三份内容，发布前再复核一次
             $result.fingerprint = Get-ApprovalFingerprint $result.sourceRobin $ConfigFile $result.acceptanceFile
             $fpText = Format-ApprovalFingerprint $result.fingerprint
-            $msg = "目标流程：$FlowName`n测试摘要：$testText`n$($acceptText)替换变量：$($result.replacedCount) 处`n内容哈希：$($result.sha256.Substring(0,12))…`n批准指纹：$fpText`n当前云端版本：$($result.flowVersionBefore)`n`n前置条件：该流程已在 PAD 设计器中打开。`n注意：$runNote`n`n确定发布？"
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ConfirmPath -Title '发布确认' -Msg $msg
-            if ($LASTEXITCODE -ne 0) { throw '用户取消发布' }
-            Log '用户已确认发布'
+            $msg = "Target flow: $FlowName`nTest summary: $testText`n$($acceptText)Replaced variables: $($result.replacedCount)`nContent hash: $($result.sha256.Substring(0,12))...`nApproval fingerprint: $fpText`nCurrent cloud version: $($result.flowVersionBefore)`n`nPrerequisite: this flow is already open in the PAD designer.`nNote: $runNote`n`nRelease now?"
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ConfirmPath -Title 'Release confirmation' -Msg $msg
+            if ($LASTEXITCODE -ne 0) { throw 'user cancelled the release' }
+            Log 'user confirmed the release'
             $fpNow = Get-ApprovalFingerprint $result.sourceRobin $ConfigFile $result.acceptanceFile
             if (($fpNow | ConvertTo-Json -Compress) -ne ($result.fingerprint | ConvertTo-Json -Compress)) {
-                throw '确认后 robin/config/acceptance 发生变化，请重新发布并重新确认'
+                throw 'robin/config/acceptance changed after confirmation; release again and confirm again'
             }
 
             # ── 阶段 5：正式发布（注入 → 发布 → URL 触发 → 收集） ──
             $result.stage = 'publish'
             $deployStartUtc = [datetime]::UtcNow
             $rel = Invoke-Deploy $SourceRobin $ConfigFile $FlowName $SchemaFile $RunTimeoutSec $AcceptanceFile -Prod:$AllowProd -NoConfirm -PublishOnlyMode:$PublishOnly
-            if (-not $rel.ok) { throw ("发布或验证运行失败：" + (@($rel.errors) -join '；')) }
+            if (-not $rel.ok) { throw ("release or verification run failed: " + (@($rel.errors) -join '; ')) }
             $result.runStatus = [string]$rel.runResult.status
             $result.runId = [string]$rel.runResult.runId
             $result.acceptance = $rel.runResult.acceptance
-            if ($PublishOnly) { Log '发布完成（-PublishOnly，未触发运行）' }
-            else { Log "发布完成，验证运行状态：$($result.runStatus)" }
+            if ($PublishOnly) { Log 'release complete (-PublishOnly, no run was triggered)' }
+            else { Log "release complete; verification run status: $($result.runStatus)" }
 
             # ── 阶段 6：发布后校验 ──
             $result.stage = 'verify'
@@ -275,7 +275,7 @@ if (-not $NoMain) {
             if (-not $PublishOnly) {
                 $ids = Get-FlowGuidFromLogPath ([string]$rel.runResult.logPath)
                 if ($ids) { $result.flowGuid = $ids.flowGuid; $result.runId = $ids.runId }
-                if (-not $result.flowGuid) { throw '无法确定流程 GUID，发布后校验中止' }
+                if (-not $result.flowGuid) { throw 'cannot determine the flow GUID; post-release verification aborted' }
                 $runDefPath = Join-Path (Split-Path -Parent ([string]$rel.runResult.logPath)) 'RunDefinition.json'
                 if (Test-Path $runDefPath) {
                     $rd = [IO.File]::ReadAllText($runDefPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -283,15 +283,15 @@ if (-not $NoMain) {
                     $runStartUtc = [datetime]::Parse([string]$rd.startTime).ToUniversalTime()
                     # 允许 2 分钟时钟误差，防止本机与云端时钟轻微偏移误判
                     if ($runStartUtc -lt $deployStartUtc.AddMinutes(-2)) {
-                        throw "云端历史校验失败：本次运行 startTime=$($rd.startTime) 早于发布时间"
+                        throw "cloud history check failed: this run has startTime=$($rd.startTime), earlier than the release time"
                     }
-                    if ([string]$rd.status -ne 'Succeeded') { throw "云端历史校验失败：运行状态 $($rd.status)" }
-                    Log "云端历史校验通过：flowVersion=$($result.flowVersionAfter)，startTime=$($rd.startTime)"
+                    if ([string]$rd.status -ne 'Succeeded') { throw "cloud history check failed: run status $($rd.status)" }
+                    Log "cloud history check passed: flowVersion=$($result.flowVersionAfter), startTime=$($rd.startTime)"
                 } else {
-                    $result.warnings += '找不到本次运行的 RunDefinition.json，跳过 flowVersion 校验'
+                    $result.warnings += 'RunDefinition.json for this run was not found; skipping the flowVersion check'
                 }
             }
-            if (-not $result.flowGuid) { throw '无法确定流程 GUID，发布后校验中止' }
+            if (-not $result.flowGuid) { throw 'cannot determine the flow GUID; post-release verification aborted' }
             # 6b) 已发布版本哈希与画布（注入内容）一致
             # Workspace 是本地缓存，可能滞后于云端；最多等 60 秒让本次修订落盘
             $wsRobin = $null
@@ -302,16 +302,16 @@ if (-not $NoMain) {
                 Start-Sleep -Seconds 3
             }
             if (-not $wsRobin) {
-                throw "Workspace 里找不到本次发布（runId=$($result.runId)）对应的已发布定义（flowGuid=$($result.flowGuid)）；不退回取最新一份"
+                throw "no published definition for this release (runId=$($result.runId)) in Workspace (flowGuid=$($result.flowGuid)); will not fall back to the latest one"
             }
             $wsStale = ((Get-Item $wsRobin).LastWriteTime.ToUniversalTime() -lt $deployStartUtc.AddMinutes(-2))
             if ($wsStale) {
                 if ($PublishOnly) {
                     # 只发布模式：云端 published（控制台 modifiedOn 已更新），本地缓存未刷新时不误判失败
-                    $result.warnings += 'Workspace 缓存未刷新，跳过哈希校验（以发布状态为准）'
-                    Log '警告：Workspace 缓存未刷新，跳过哈希校验'
+                    $result.warnings += 'Workspace cache was not refreshed; skipping hash verification (published state takes precedence)'
+                    Log 'warning: Workspace cache was not refreshed; skipping hash verification'
                 } else {
-                    throw "已发布定义副本未更新（$wsRobin 时间早于本次发布），无法确认哈希一致"
+                    throw "published definition copy was not updated ($wsRobin is older than this release); cannot confirm the hash matches"
                 }
             } else {
                 $wsText = [IO.File]::ReadAllText($wsRobin, [Text.Encoding]::UTF8)
@@ -319,21 +319,21 @@ if (-not $NoMain) {
                 $result.hashMatch = $cmp.match
                 if (-not $cmp.match) {
                     # 带 Data['code'] 的异常：告警分类按码判断，不解析中文消息
-                    $msg = "已发布版本与画布不一致：第 $($cmp.diffIndex) 行`n  画布：$($cmp.lineA)`n  云端：$($cmp.lineB)"
+                    $msg = "published version differs from the canvas: line $($cmp.diffIndex)`n  canvas: $($cmp.lineA)`n  cloud: $($cmp.lineB)"
                     $ex = [System.Exception]::new($msg)
                     $ex.Data['code'] = 'RELEASE_CANVAS_MISMATCH'
                     throw $ex
                 }
-                Log "哈希校验通过：已发布版本与注入内容一致（$($result.sha256.Substring(0,12))…）"
+                Log "hash check passed: published version matches the injected content ($($result.sha256.Substring(0,12))...)"
             }
 
             # ── 快照归档：发布成功即固化一份成品，供 pad-rollback.ps1 重发 ──
             $snapshotsRoot = Join-Path $script:RepoRoot 'business\snapshots'
             $result.snapshotPath = Save-ReleaseSnapshot $snapshotsRoot $FlowName $result.deployedRobin $result.sha256 ([datetime]::Now)
-            Log "快照已归档：$($result.snapshotPath)"
+            Log "snapshot archived: $($result.snapshotPath)"
             # 只保留最近 20 个快照，避免无限增长
             $removed = @(Remove-OldReleaseSnapshots (Split-Path -Parent $result.snapshotPath) 20)
-            if ($removed.Count -gt 0) { Log "已清理旧快照 $($removed.Count) 个（保留最近 20 个）" }
+            if ($removed.Count -gt 0) { Log "removed $($removed.Count) old snapshots (keeping the latest 20)" }
 
             # ── 指纹基线：发布成功后固化「这份定义 + 配置 + 验收」的哈希，供准入比对 ──
             # 写入失败不推翻已经成功的发布，但必须显式告警
@@ -344,10 +344,10 @@ if (-not $NoMain) {
                     -WorkspaceRobin $wsRobin -ConfigPath $ConfigFile -AcceptancePath $AcceptanceFile
                 [void](Write-FingerprintBaseline $fpPath $fpBase)
                 $result.fingerprintBaseline = $fpPath
-                Log "指纹基线已更新：$fpPath"
+                Log "fingerprint baseline updated: $fpPath"
             } catch {
-                $result.warnings += "指纹基线写入失败：$($_.Exception.Message)"
-                Log "警告：指纹基线写入失败（$($_.Exception.Message)）"
+                $result.warnings += "fingerprint baseline write failed: $($_.Exception.Message)"
+                Log "warning: fingerprint baseline write failed ($($_.Exception.Message))"
             }
 
             $result.ok = $true; $result.stage = 'done'; $exitCode = 0
@@ -355,7 +355,7 @@ if (-not $NoMain) {
     }
     catch {
         $result.errors += $_.Exception.Message
-        Log "发布流水线失败于 [$($result.stage)]：$($_.Exception.Message)"
+        Log "release pipeline failed at [$($result.stage)]: $($_.Exception.Message)"
         # DryRun 不触碰 PAD，失败不写告警，避免污染真实运维记录
         if (-not $DryRun) {
             $ak = Get-AlertKindConstants
@@ -368,9 +368,9 @@ if (-not $NoMain) {
                     $r = Write-RunAlert -FlowName $result.flow -ExitCode 1 -Stage $result.stage `
                         -Status $result.runStatus -Kind $kind -RunId ([string]$result.runId) `
                         -Dir (Join-Path $script:RepoRoot 'business\logs') `
-                        -Note "发布流水线失败于 stage=$($result.stage)：$msg。下一步：按提示处理后重新发布，未自动重试。"
-                    if ($r -and -not $r.skipped) { Log "失败告警已写入：$($r.path)" }
-                } catch { Log "告警写入失败（不影响发布结果）：$($_.Exception.Message)" }
+                        -Note "Release pipeline failed at stage=$($result.stage): $msg. Next step: fix it as prompted and release again; nothing was retried automatically."
+                    if ($r -and -not $r.skipped) { Log "failure alert written: $($r.path)" }
+                } catch { Log "failed to write the alert (does not affect the release result): $($_.Exception.Message)" }
             }
         }
     }
@@ -394,11 +394,11 @@ if (-not $NoMain) {
             try {
                 Add-ManifestEntry $manifestPath $entry
                 $result.manifestPath = $manifestPath
-                Log "manifest 已追加：$manifestPath"
+                Log "manifest appended: $manifestPath"
                 # release 记录永久保留，这里只清理过期的 run 记录
                 [void](Remove-OldManifestEntries $manifestPath -KeepDays 90)
             }
-            catch { $result.warnings += "manifest 写入失败：$($_.Exception.Message)" }
+            catch { $result.warnings += "manifest write failed: $($_.Exception.Message)" }
         }
         Write-Output ("PAD_RELEASE_RESULT=" + ($result | ConvertTo-Json -Depth 10 -Compress))
     }

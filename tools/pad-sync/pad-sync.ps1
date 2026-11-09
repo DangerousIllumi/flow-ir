@@ -167,7 +167,7 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
     }
     if (-not $flowPath -and -not $DeriveFlow) {
         Write-Log 'no flow.json provided; the admit gate did not apply (nothing was checked)'
-        $script:Result.warnings += '准入网关未适用：缺少 flow.json'
+        $script:Result.warnings += 'admit gate not applicable: flow.json is missing'
         return $true
     }
 
@@ -199,7 +199,7 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
     }
     Write-Log $decision.message
     if ($decision.summary -and [int]$decision.summary.warn -gt 0) {
-        $script:Result.warnings += "准入警告 $([int]$decision.summary.warn) 项（不阻断）"
+        $script:Result.warnings += "admit warnings: $([int]$decision.summary.warn) item(s) (non-blocking)"
     }
     return $true
 }
@@ -419,7 +419,7 @@ try {
             $script:Result.ok = $null
             $script:Result.evidence = 'human-confirm'
             $script:Result.logPath = $runHint.logPath
-            $script:Result.warnings += "非交互运行停在人工确认弹窗「$($runHint.dialogTitle)」，流程保持等待人工点击"
+            $script:Result.warnings += "non-interactive run stopped at the manual-confirmation dialog '$($runHint.dialogTitle)'; the flow is still waiting for a manual click"
             Write-Log "run stopped at a manual-confirmation dialog `"$($runHint.dialogTitle)`": not clicking automatically; handle it manually and rerun"
         } elseif ($runHint.startupTimedOut -and -not $runHint.status) {
             # 运行目录已出现但机器人始终没启动：以前会落到 Unknown→退出码 0，静默无告警，
@@ -457,7 +457,7 @@ try {
                 $script:Result.ok = $null
                 $script:Result.evidence = 'unknown'
                 $script:Result.logPath = $runHint.logPath
-                $script:Result.warnings += 'RobinRobot.log 暂不可读或不存在，本次取证为 Unknown（不判失败）'
+                $script:Result.warnings += 'RobinRobot.log is temporarily unreadable or missing; evidence for this run is Unknown (not treated as a failure)'
                 Write-Log 'RobinRobot.log is unreadable or missing; outcome recorded as Unknown (unknown is not failure)'
             } else {
                 $script:Result.status = $res.status
@@ -504,7 +504,7 @@ try {
                         $script:Result.warnings += $console.note
                         Write-Log $console.note
                     } else {
-                        $script:Result.warnings += 'Actions.log 与 PadConsole 均无本次运行证据，结果未知（不判失败、不发 run-failed）'
+                        $script:Result.warnings += 'neither Actions.log nor PadConsole has evidence for this run; the result is unknown (not treated as a failure and no run-failed alert is sent)'
                         Write-Log 'no usable run evidence; outcome recorded as Unknown (unknown is not failure)'
                     }
                     # 必须清空，否则下面 if ($res) 会用 $res.status（可能为 $null）覆盖 'Unknown'

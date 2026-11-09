@@ -73,7 +73,7 @@ Describe 'PadFingerprint 定位与身份' {
         try { $null = Find-WorkspaceRobin (Join-Path $work 'Workspace') $g '' ([datetime]::UtcNow.AddDays(-1)) }
         catch { $ex = $_.Exception }
         $ex.Data['code'] | Should Be 'FINGERPRINT_AMBIGUOUS'
-        $ex.Message | Should Match '2 个候选修订'
+        $ex.Message | Should Match '2 candidate revisions'
     }
 
     It '环境 ID：从合成 console.config 读取首个 EnvironmentId，读不到返回 null' {
@@ -303,7 +303,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         })
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $robin -BaselinePath $base
         $r.code | Should Be 'FINGERPRINT_UNKNOWN'
-        $r.message | Should Match '缺少已发布哈希'
+        $r.message | Should Match 'no deployed hash'
         $r.status | Should Be 'fail'
     }
 
@@ -330,7 +330,7 @@ Describe 'PadFingerprint 身份解析与哈希域拆分' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $src -DeployedRobinPath $fake.deployed `
             -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'pass'
-        $r.message | Should Match '原始字节不同'
+        $r.message | Should Match 'raw bytes differ'
     }
 
     It '形态三：规范化后真漂移 → FINGERPRINT_DEPLOYED_MISMATCH（默认 fail）' {
@@ -369,7 +369,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $r.status | Should Be 'pass'
         $r.code | Should Be 'OK'
         # 整体通过时明确说明：源是模板，与部署产物不同属正常
-        $r.message | Should Match '源是模板'
+        $r.message | Should Match 'source is a template'
     }
 
     It '② 篡改 deployed.logicHash → FINGERPRINT_DEPLOYED_MISMATCH' {
@@ -383,7 +383,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_DEPLOYED_MISMATCH'
-        $r.message | Should Match '部署产物与已发布副本逻辑不一致'
+        $r.message | Should Match 'logically inconsistent with the published copy'
     }
 
     It '③ 删掉部署产物 → FINGERPRINT_UNKNOWN（提示先生成，不许 pass）' {
@@ -395,7 +395,7 @@ Describe 'PadFingerprint 已发布侧改比部署产物' {
         $r = Test-FlowFingerprint -FlowName 'F' -RobinPath $fake.robin -BaselinePath $base -ScriptsRoot $fake.scripts
         $r.status | Should Be 'fail'
         $r.code | Should Be 'FINGERPRINT_UNKNOWN'
-        $r.message | Should Match '找不到部署产物'
+        $r.message | Should Match 'deployment artifact not found'
     }
 
     It '④ 源 .robin 改字节 → 仍 FINGERPRINT_SOURCE_MISMATCH' {

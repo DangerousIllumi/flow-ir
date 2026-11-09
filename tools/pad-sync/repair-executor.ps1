@@ -219,13 +219,13 @@ $hint = @"
 
 $codeHelp
 
-## 外部脚本日志（extraLogs）
+## External script logs (extraLogs)
 
 ``````json
 $extraJson
 ``````
 
-## 失败动作
+## Failed action
 
 ``````json
 $($ctx.failedAction | ConvertTo-Json -Depth 6)

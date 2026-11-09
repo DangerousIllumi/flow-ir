@@ -81,7 +81,7 @@ Describe 'pad-rollback 快照测试' {
         $root = Join-Path $work 'snapshots'
         New-Snap $root 'F' '20261028-100000' 'cccccccc' | Out-Null
         { Select-RollbackSnapshot $root 'F' -Back 1 } | Should Throw
-        try { Select-RollbackSnapshot $root 'F' -Back 1 } catch { $_.Exception.Message | Should Match '只有 1 个版本' }
+        try { Select-RollbackSnapshot $root 'F' -Back 1 } catch { $_.Exception.Message | Should Match 'only 1 version' }
     }
 
     It '-Back 小于 1 直接报错' {
@@ -111,7 +111,7 @@ Describe 'pad-rollback 快照测试' {
     It '流程无任何快照时报错，并给出快照目录' {
         $work = New-Work
         try { Select-RollbackSnapshot (Join-Path $work 'snapshots') '新流程' } catch {
-            $_.Exception.Message | Should Match '没有任何快照'
+            $_.Exception.Message | Should Match 'has no snapshots'
             $_.Exception.Message | Should Match '新流程'
         }
     }

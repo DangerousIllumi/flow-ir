@@ -45,7 +45,7 @@ function New-RunManifestEntry {
 # manifest 保留策略：run 记录只留最近 N 天；release / rollback 永久保留（回滚与审计要用）
 # 解析失败的行一律保留，宁可多留也不静默丢证据
 function Remove-OldManifestEntries([string]$Path, [int]$KeepDays = 90, [datetime]$Now = [datetime]::UtcNow) {
-    if ($KeepDays -lt 1) { throw 'KeepDays 必须 >= 1' }
+    if ($KeepDays -lt 1) { throw 'KeepDays must be >= 1' }
     if (-not (Test-Path -LiteralPath $Path)) { return 0 }
     $cut = $Now.ToUniversalTime().AddDays(-$KeepDays)
     $keep = New-Object System.Collections.Generic.List[string]
@@ -71,7 +71,7 @@ function Remove-OldManifestEntries([string]$Path, [int]$KeepDays = 90, [datetime
 # 快照保留：只保留最新 N 个，按文件名（时间戳）升序删除最旧的
 # 文件名格式固定为 yyyyMMdd-HHmmss-<sha8>.robin，字符串排序即时间排序
 function Remove-OldReleaseSnapshots([string]$Dir, [int]$Keep = 20) {
-    if ($Keep -lt 1) { throw 'Keep 必须 >= 1' }
+    if ($Keep -lt 1) { throw 'Keep must be >= 1' }
     if (-not (Test-Path -LiteralPath $Dir)) { return @() }
     $files = @(Get-ChildItem -LiteralPath $Dir -File |
         Where-Object { $_.Name -notlike '*.deployed.robin' } |
@@ -91,7 +91,7 @@ function Remove-OldReleaseSnapshots([string]$Dir, [int]$Keep = 20) {
 # 流程名可能含路径分隔符等非法字符，落成目录名前统一替换
 function Get-SnapshotSafeName([string]$FlowName) {
     $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|]', '_').Trim()
-    if (-not $safe) { throw '流程名为空，无法定位快照目录' }
+    if (-not $safe) { throw 'flow name is empty; cannot locate the snapshot dir' }
     return $safe
 }
 
@@ -128,19 +128,19 @@ function Get-ReleaseSnapshots([string]$SnapshotsRoot, [string]$FlowName) {
 function Select-RollbackSnapshot([string]$SnapshotsRoot, [string]$FlowName, [int]$Back = 1, [string]$To) {
     $all = @(Get-ReleaseSnapshots $SnapshotsRoot $FlowName)
     if ($all.Count -eq 0) {
-        throw "流程「$FlowName」没有任何快照（快照目录：$(Get-ReleaseSnapshotDir $SnapshotsRoot $FlowName)）"
+        throw "flow '$FlowName' has no snapshots (snapshot dir: $(Get-ReleaseSnapshotDir $SnapshotsRoot $FlowName))"
     }
     if ($To) {
         $hit = @($all | Where-Object {
             $_.FullName -eq $To -or $_.Name -eq $To -or $_.Name -like ('*-' + $To + '.robin')
         })
-        if ($hit.Count -eq 0) { throw "找不到快照：$To" }
-        if ($hit.Count -gt 1) { throw "快照标识「$To」匹配到多个文件，请写完整文件名" }
+        if ($hit.Count -eq 0) { throw "snapshot not found: $To" }
+        if ($hit.Count -gt 1) { throw "snapshot id '$To' matched multiple files; write the full file name" }
         return $hit[0]
     }
-    if ($Back -lt 1) { throw '-Back 必须 ≥ 1（1 表示回退到上一个版本）' }
+    if ($Back -lt 1) { throw '-Back must be >= 1 (1 means roll back one version)' }
     $idx = $all.Count - 1 - $Back
-    if ($idx -lt 0) { throw "快照不足：当前只有 $($all.Count) 个版本，无法回退 $Back 个版本" }
+    if ($idx -lt 0) { throw "not enough snapshots: only $($all.Count) version(s) exist; cannot go back $Back version(s)" }
     return $all[$idx]
 }
 

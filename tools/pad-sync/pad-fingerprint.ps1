@@ -92,7 +92,7 @@ if (-not $BaselinePath) { $BaselinePath = Get-FingerprintBaselinePath $RepoRoot 
 
 function Log([string]$m) { Write-Host "[fingerprint] $m" }
 if ($businessName -ne $FlowName) {
-    Log "业务流：$businessName（基线/产物按 flow.json 文件名命名，与 pad-admit 一致）"
+    Log "business flow: $businessName (baseline/artifacts are named after the flow.json file name, consistent with pad-admit)"
 }
 
 $result = [ordered]@{
@@ -109,7 +109,7 @@ try {
     $run = Find-LatestFlowRun $ScriptsRoot $FlowName
     if (-not $run) {
         $result.code = 'FINGERPRINT_UNKNOWN'
-        throw "本地运行历史里找不到流程 $FlowName，无法定位修订（请先正常跑一次该流程）"
+        throw "flow $FlowName not found in the local run history; cannot locate the revision (run the flow once first)"
     }
     $ids = Get-FlowGuidFromLogPath ([string]$run.path)
     $result.flowGuid = [string]$run.flowGuid
@@ -118,7 +118,7 @@ try {
     $wsRobin = Find-WorkspaceRobin $WorkspaceRoot $result.flowGuid $result.runId $since
     if (-not $wsRobin) {
         $result.code = 'FINGERPRINT_UNKNOWN'
-        throw "Workspace 里找不到本次运行（runId=$($result.runId)）对应的已发布定义（flowGuid=$($result.flowGuid)）；不退回取最新一份"
+        throw "no published definition for this run (runId=$($result.runId)) in Workspace (flowGuid=$($result.flowGuid)); will not fall back to the latest one"
     }
     $result.workspaceRobin = $wsRobin
     $result.revisionDir = Split-Path -Parent $wsRobin
@@ -134,22 +134,22 @@ try {
     $sha = @()
     foreach ($k in @('robin', 'config', 'acceptance')) {
         $v = $result.hashes[$k]
-        $sha += ('{0}={1}' -f $k, $(if ($v) { $v } else { '(缺失)' }))
+        $sha += ('{0}={1}' -f $k, $(if ($v) { $v } else { '(missing)' }))
     }
 
-    Log "流程：$FlowName"
-    Log "修订目录：$($result.revisionDir)"
-    Log "Workspace：$wsRobin"
-    Log "修改时间：$($result.workspaceMtime)"
-    Log "三个哈希：$($sha -join ' ')"
-    Log "基线文件：$BaselinePath"
+    Log "flow: $FlowName"
+    Log "revision dir: $($result.revisionDir)"
+    Log "Workspace: $wsRobin"
+    Log "modified: $($result.workspaceMtime)"
+    Log "hashes: $($sha -join ' ')"
+    Log "baseline file: $BaselinePath"
 
     # ── 写入：必须 -Set + -Confirm，且 -DryRun 永远不写 ──
     if ($Set -and -not $DryRun) {
         if (-not $Confirm) {
             $result.stage = 'need-confirm'; $result.code = 'FINGERPRINT_CONFIRM_REQUIRED'
-            $result.message = '定位结果已打印；确认无误后加 -Confirm 才会写基线'
-            Log '未加 -Confirm：不写基线（防止静默播种）'
+            $result.message = 'location result printed; add -Confirm to write the baseline'
+            Log 'no -Confirm: baseline not written (prevents silent seeding)'
             $exitCode = 2
         } else {
             $baseArgs = @{
@@ -168,13 +168,13 @@ try {
             [void](Write-FingerprintBaseline $BaselinePath $base)
             $result.written = $true
             $result.stage = 'done'; $result.ok = $true; $result.code = 'OK'
-            $result.message = '基线已写入'
-            Log "基线已写入：$BaselinePath"
+            $result.message = 'baseline written'
+            Log "baseline written: $BaselinePath"
             $exitCode = 0
         }
     } else {
         $result.stage = 'done'; $result.ok = $true; $result.code = 'OK'
-        $result.message = $(if ($DryRun) { 'DryRun：只查看，不写基线' } else { '只查看，不写基线（加 -Set 才播种）' })
+        $result.message = $(if ($DryRun) { 'DryRun: inspect only, baseline not written' } else { 'inspect only, baseline not written (add -Set to seed)' })
         $exitCode = 0
     }
 } catch {
@@ -183,11 +183,11 @@ try {
         else { $result.code = 'FINGERPRINT_UNKNOWN' }
     }
     $result.message = $_.Exception.Message
-    Log "失败：$($_.Exception.Message)"
+    Log "failed: $($_.Exception.Message)"
     if ($result.code -eq 'FINGERPRINT_AMBIGUOUS') { $exitCode = 2 }
 } finally {
     if (-not $Json) {
-        Log ("结果：{0} {1}（written={2}）" -f $result.code, $result.message, $result.written)
+        Log ("result: {0} {1} (written={2})" -f $result.code, $result.message, $result.written)
     }
     Write-Output ('PAD_FINGERPRINT_RESULT=' + ($result | ConvertTo-Json -Depth 8 -Compress))
 }

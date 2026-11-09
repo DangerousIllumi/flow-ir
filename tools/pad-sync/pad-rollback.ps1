@@ -73,7 +73,7 @@ function Invoke-DeployFromSnapshot([string]$RobinPath, [string]$CfgFile, [string
     $json = Read-ChildResult -Name 'DEPLOY' `
         -Lines ([IO.File]::ReadAllLines($tmp, [Text.Encoding]::UTF8)) `
         -Logger { param($m) Write-Host "[rollback] $m" }
-    if (-not $json) { throw "pad-deploy 无 PAD_DEPLOY_RESULT 输出（日志：$tmp）" }
+    if (-not $json) { throw "pad-deploy produced no PAD_DEPLOY_RESULT output (log: $tmp)" }
     return $json
 }
 
@@ -88,7 +88,7 @@ if (-not $NoMain) {
         manifestPath = $null; warnings = @(); errors = @()
     }
     try {
-        if (-not $FlowName) { throw '缺少 -FlowName' }
+        if (-not $FlowName) { throw 'missing -FlowName' }
         if (-not $SnapshotsRoot) { $SnapshotsRoot = Join-Path $script:RepoRoot 'business\snapshots' }
         if (-not $ManifestPath) { $ManifestPath = Join-Path $script:RepoRoot 'business\manifest.jsonl' }
         if (-not $ConfigFile) {
@@ -97,12 +97,12 @@ if (-not $NoMain) {
             if (Test-Path -LiteralPath $guess) {
                 $ConfigFile = $guess
             } else {
-                throw "E_CONFIG_REQUIRED: 未提供 -ConfigFile，按流程名派生也找不到：$guess；请用 -ConfigFile 指定"
+                throw "E_CONFIG_REQUIRED: -ConfigFile not provided and the name-derived path was not found: $guess; specify it with -ConfigFile"
             }
         }
-        if (-not (Test-Path $ConfigFile)) { throw "找不到 config.json：$ConfigFile" }
+        if (-not (Test-Path $ConfigFile)) { throw "config.json not found: $ConfigFile" }
         if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
-            throw '安全熔断：默认只能回滚 PAD_SYNC_TEST。回滚生产流程必须显式 -AllowProd。'
+            throw 'Safety fuse: only PAD_SYNC_TEST may be rolled back by default. Rolling back a production flow requires explicit -AllowProd.'
         }
 
         # ── 阶段 1：定位目标版本 ──
@@ -114,21 +114,21 @@ if (-not $NoMain) {
         # 最近一个快照即当前生效版本
         $current = if ($all.Count -gt 0) { $all[$all.Count - 1] } else { $null }
         if ($current) { $result.fromSha256 = Get-RobinHash ([IO.File]::ReadAllText($current.FullName, [Text.Encoding]::UTF8)) }
-        Log "当前版本快照：$(if ($current) { $current.Name } else { '无' })"
-        Log "回滚目标快照：$($target.Name)（sha $($result.targetSha256.Substring(0, 8))…）"
+        Log "current version snapshot: $(if ($current) { $current.Name } else { 'none' })"
+        Log "rollback target snapshot: $($target.Name) (sha $($result.targetSha256.Substring(0, 8))...)"
 
         if ($DryRun) {
             $result.ok = $true; $result.stage = 'done'; $exitCode = 0
-            Log '[DryRun] 已定位目标版本，未发布'
+            Log '[DryRun] target version located; nothing was published'
         } else {
             # ── 阶段 2：用户确认（回滚也是一次真实发布，会立即跑一次） ──
             $result.stage = 'confirm'
             if (-not $SkipConfirm) {
-                $runNote = $(if ($PublishOnly) { '本次只发布、不触发运行。' } else { '回滚后会立即通过 URL 触发一次真实运行。' })
-                $msg = "目标流程：$FlowName`n当前快照：$(if ($current) { $current.Name } else { '无' })`n回滚到：$($target.Name)`n`n注意：回滚只还原工作流定义，不会撤销已过账的 SAP 凭证、已发出的邮件或已改动的报表文件。`n$runNote`n`n确定回滚？"
-                & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ConfirmPath -Title '回滚确认' -Msg $msg
-                if ($LASTEXITCODE -ne 0) { throw '用户取消回滚' }
-                Log '用户已确认回滚'
+                $runNote = $(if ($PublishOnly) { 'This run only publishes and does not trigger a run.' } else { 'After rollback a real run is triggered immediately via URL.' })
+                $msg = "Target flow: $FlowName`nCurrent snapshot: $(if ($current) { $current.Name } else { 'none' })`nRoll back to: $($target.Name)`n`nNote: a rollback only restores the flow definition; it does not undo SAP documents already posted, emails already sent, or report files already changed.`n$runNote`n`nRoll back now?"
+                & powershell -NoProfile -ExecutionPolicy Bypass -File $script:ConfirmPath -Title 'Rollback confirmation' -Msg $msg
+                if ($LASTEXITCODE -ne 0) { throw 'user cancelled the rollback' }
+                Log 'user confirmed the rollback'
             }
 
             # ── 阶段 3：发布（复用 pad-deploy 的注入 / 校验 / 运行链路） ──
@@ -141,11 +141,11 @@ if (-not $NoMain) {
                 Copy-Item -LiteralPath $target.FullName -Destination $tmpRobin -Force
                 $dep = Invoke-DeployFromSnapshot $tmpRobin $ConfigFile $FlowName $SchemaFile $RunTimeoutSec -PublishOnly:$PublishOnly
                 $result.deployedRobin = [string]$dep.deployedRobinPath
-                if (-not $dep.ok) { throw ('回滚发布失败：' + (@($dep.errors) -join '；')) }
+                if (-not $dep.ok) { throw ('rollback publish failed: ' + (@($dep.errors) -join '; ')) }
                 $result.runStatus = [string]$dep.runResult.status
                 $result.runId = [string]$dep.runResult.runId
-                if ($PublishOnly) { Log '回滚发布完成（-PublishOnly，未触发运行）' }
-                else { Log "回滚发布完成，验证运行状态：$($result.runStatus)" }
+                if ($PublishOnly) { Log 'rollback publish complete (-PublishOnly, no run was triggered)' }
+                else { Log "rollback publish complete; verification run status: $($result.runStatus)" }
 
                 # ── 指纹基线：回滚成功后必须重写，否则准入还按旧定义比对 ──
                 # 基线写失败不推翻已成功的回滚，但必须显式告警
@@ -167,10 +167,10 @@ if (-not $NoMain) {
                         -WorkspaceRobin $wsRobin -ConfigPath $ConfigFile -AcceptancePath $null
                     [void](Write-FingerprintBaseline $fpPath $fpBase)
                     $result.fingerprintBaseline = $fpPath
-                    Log "指纹基线已重写：$fpPath"
+                    Log "fingerprint baseline rewritten: $fpPath"
                 } catch {
-                    $result.warnings += "指纹基线重写失败：$($_.Exception.Message)"
-                    Log "警告：指纹基线重写失败（$($_.Exception.Message)）"
+                    $result.warnings += "fingerprint baseline rewrite failed: $($_.Exception.Message)"
+                    Log "warning: fingerprint baseline rewrite failed ($($_.Exception.Message))"
                 }
 
                 $result.ok = $true; $result.stage = 'done'; $exitCode = 0
@@ -181,7 +181,7 @@ if (-not $NoMain) {
     }
     catch {
         $result.errors += $_.Exception.Message
-        Log "回滚失败于 [$($result.stage)]：$($_.Exception.Message)"
+        Log "rollback failed at [$($result.stage)]: $($_.Exception.Message)"
     }
     finally {
         # ── 阶段 4：manifest（DryRun 不写；成功失败都记录，供审计） ──
@@ -195,8 +195,8 @@ if (-not $NoMain) {
                 fingerprintBaseline = $result.fingerprintBaseline
                 ok = $result.ok; errors = $result.errors
             }
-            try { Add-ManifestEntry $ManifestPath $entry; $result.manifestPath = $ManifestPath; Log "manifest 已追加：$ManifestPath" }
-            catch { $result.warnings += "manifest 写入失败：$($_.Exception.Message)" }
+            try { Add-ManifestEntry $ManifestPath $entry; $result.manifestPath = $ManifestPath; Log "manifest appended: $ManifestPath" }
+            catch { $result.warnings += "manifest write failed: $($_.Exception.Message)" }
         }
         Write-Output ('PAD_ROLLBACK_RESULT=' + ($result | ConvertTo-Json -Depth 10 -Compress))
     }
