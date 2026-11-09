@@ -136,10 +136,11 @@ Describe 'pad-configure 不再默认到具体业务流程' {
         $p.ExitCode | Should Not Be 0
         $out = ([IO.File]::ReadAllText($o, [Text.Encoding]::UTF8) +
             [IO.File]::ReadAllText($e, [Text.Encoding]::UTF8))
-        $out | Should Match '找不到示例配置'
+        $out | Should Match 'E_EXAMPLE_CONFIG_MISSING'
         $out | Should Match 'no-such-flow\.example\.json'
         # 不能进入逐项确认或写盘
-        $out | Should Not Match '逐项确认配置'
+        $out | Should Not Match 'INTERACTIVE_CONFIRM'
+        $out | Should Not Match 'CONFIG_WRITTEN'
         (Test-Path $cfg) | Should Be $false
     }
 }

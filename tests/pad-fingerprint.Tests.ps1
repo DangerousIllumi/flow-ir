@@ -473,8 +473,9 @@ Describe 'pad-fingerprint 播种必须人工确认' {
             -RepoRoot $work2 -ScriptsRoot $fake.scripts -WorkspaceRoot $fake.workspace `
             -ConsoleConfigPath $cc -ConfigFile $cfg -BaselinePath $baseline -Set 2>&1 | Out-String
         $LASTEXITCODE | Should Be 2
-        $first | Should Match '三个哈希'
         $first | Should Match 'FINGERPRINT_CONFIRM_REQUIRED'
+        $first | Should Match '"stage":"need-confirm"'
+        $first | Should Match '"written":false'
         (Test-Path -LiteralPath $baseline) | Should Be $false
 
         $second = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:Script -FlowName 'F' `

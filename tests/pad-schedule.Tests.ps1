@@ -54,10 +54,11 @@ Describe 'pad-schedule 纯函数测试' {
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -PythonExe 'python' `
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '未提供工作日日历文件'
+        # ASCII 锚点：CONFIG_MISSING + -CalendarPath 共同锁定「缺日历」这条报错
+        $out | Should Match 'CONFIG_MISSING'
         $out | Should Match 'CalendarPath'
         # 绝不能静默退化成「每个工作日都跑」
-        $out | Should Not Match '开始运行'
+        $out | Should Not Match 'RUN_START'
     }
 
     It '运行入口日历文件不存在：非零退出、不运行，并标记 calendarOk=false' {
@@ -66,9 +67,9 @@ Describe 'pad-schedule 纯函数测试' {
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript `
             -CalendarPath (Join-Path $TestDrive 'nope.xlsx') 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '工作日历文件不存在或读不到'
+        $out | Should Match 'CALENDAR_UNAVAILABLE'
         # 绝不能静默退化成「每个工作日都跑」
-        $out | Should Not Match '开始运行'
+        $out | Should Not Match 'RUN_START'
         # 告警分级要靠这个标记区分「日历不可用」与「运行失败」
         $r = [regex]::Match($out, 'PAD_SCHEDULE_RESULT=(\{.*\})').Groups[1].Value | ConvertFrom-Json
         $r.calendarOk | Should Be $false
@@ -88,8 +89,8 @@ Describe 'pad-schedule 纯函数测试' {
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -CalendarPath $calendar `
             -PythonExe $py -WorkdayScript $probe -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '工作日判断脚本执行失败'
-        $out | Should Not Match '开始运行'
+        $out | Should Match 'CALENDAR_SCRIPT_FAILED'
+        $out | Should Not Match 'RUN_START'
         $r = [regex]::Match($out, 'PAD_SCHEDULE_RESULT=(\{.*\})').Groups[1].Value | ConvertFrom-Json
         $r.calendarOk | Should Be $false
         $r.reason | Should Be 'calendar-unavailable'
@@ -100,15 +101,16 @@ Describe 'pad-schedule 纯函数测试' {
             -FlowName 'PAD_SYNC_TEST' -DryRun -PythonExe 'python' `
             -WorkdayScript $workdayScript -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '未提供工作日日历文件'
+        $out | Should Match 'CONFIG_MISSING'
+        $out | Should Match '-CalendarPath'
     }
 
     It '忽略日历模式不需要 -CalendarPath（显式声明才允许不看日历）' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $scheduleScript `
             -FlowName 'PAD_SYNC_TEST' -DryRun -IgnoreCalendar -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
-        $out | Should Match '忽略日历'
-        $out | Should Not Match '未提供工作日日历文件'
+        $out | Should Match 'IGNORE_CALENDAR'
+        $out | Should Not Match 'CONFIG_MISSING'
     }
 
     It '传入日历：参数被接受并原样转发给工作日判断脚本（不是工作日则跳过）' {
@@ -130,7 +132,7 @@ Describe 'pad-schedule 纯函数测试' {
             -FlowName 'PAD_SYNC_TEST' -RunIfWorkday -CalendarPath $calendar `
             -PythonExe $py -WorkdayScript $probe -PadSyncPath $scheduleScript 2>&1 | Out-String
         $LASTEXITCODE | Should Be 0
-        $out | Should Match '今天不是工作日'
+        $out | Should Match 'SKIP_NOT_WORKDAY'
         # 参数确实原样传到了判断脚本，而不是被替换成内置默认值
         (Test-Path $probeLog) | Should Be $true
         ([IO.File]::ReadAllText($probeLog, [Text.Encoding]::UTF8)) | Should Match 'workday-calendar\.xlsx'

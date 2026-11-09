@@ -162,29 +162,29 @@ function New-ScheduleActionSpec {
 # 日历读不到、判断脚本跑不通一律硬失败：绝不按周一至周五猜测继续跑（节假日会误跑）
 function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$CalendarPath) {
     if (-not $WorkdayScript -or -not (Test-Path $WorkdayScript)) {
-        throw "工作日判断脚本执行失败：找不到脚本 $WorkdayScript"
+        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：找不到脚本 $WorkdayScript"
     }
     if (-not $CalendarPath -or -not (Test-Path $CalendarPath)) {
-        throw "工作日历文件不存在或读不到：$CalendarPath"
+        throw "CALENDAR_UNAVAILABLE: 工作日历文件不存在或读不到：$CalendarPath"
     }
     try {
         $out = & $PythonExe $WorkdayScript --is-workday --calendar $CalendarPath 2>&1 | Out-String
     } catch {
-        throw "工作日判断脚本执行失败：$($_.Exception.Message)"
+        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($_.Exception.Message)"
     }
     $m = [regex]::Match($out, 'WORKDAY=(\d)')
     if (-not $m.Success) {
-        throw "工作日判断脚本执行失败：$($out.Trim())"
+        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($out.Trim())"
     }
     # 脚本跑通了但 CALENDAR_OK=0：日历能打开却认不出表头，同样不能猜
     if ($out -match 'CALENDAR_OK=0') {
-        throw "工作日历文件读不到或格式不对：$CalendarPath"
+        throw "CALENDAR_UNAVAILABLE: 工作日历文件读不到或格式不对：$CalendarPath"
     }
     # 日历能读但今天不在覆盖范围：不能当成「今天休息」静默跳过，必须硬失败
     if ($out -match 'CALENDAR_STALE=1') {
         $min = [regex]::Match($out, 'CALENDAR_MIN=([^\r\n]*)').Groups[1].Value.Trim()
         $max = [regex]::Match($out, 'CALENDAR_MAX=([^\r\n]*)').Groups[1].Value.Trim()
-        throw "日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
+        throw "CALENDAR_STALE: 日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
     }
     return [ordered]@{ workday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
@@ -211,11 +211,11 @@ function Test-TodayLastWorkday([string]$PythonExe, [string]$WorkdayScript, [stri
     try {
         $out = & $PythonExe $WorkdayScript --is-last-workday --calendar $CalendarPath 2>&1 | Out-String
     } catch {
-        throw "工作日判断脚本执行失败：$($_.Exception.Message)"
+        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($_.Exception.Message)"
     }
     $m = [regex]::Match($out, 'LAST_WORKDAY=(\d)')
     if (-not $m.Success) {
-        throw "工作日判断脚本执行失败：$($out.Trim())"
+        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($out.Trim())"
     }
     return [ordered]@{ lastWorkday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
@@ -262,14 +262,14 @@ if (-not $NoMain) {
                 $wd = Test-TodayWorkday $PythonExe $WorkdayScript $CalendarPath
                 $result.calendarOk = $wd.calendarOk
                 if (-not $wd.workday) {
-                    Log "今天不是工作日，本次跳过（日历：$CalendarPath）"
+                    Log "SKIP_NOT_WORKDAY：今天不是工作日，本次跳过（日历：$CalendarPath）"
                     $result.ok = $true; $result.skipped = $true; $result.reason = 'not-workday'
                     $exitCode = 0
                     return
                 }
             }
             if (-not (Test-Path $PadSyncPath)) { throw "找不到 pad-sync.ps1：$PadSyncPath" }
-            Log "日期检查通过，开始运行 $FlowName"
+            Log "RUN_START：日期检查通过，开始运行 $FlowName"
             $syncArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PadSyncPath,
                 '-FlowName', $FlowName, '-RunOnly', '-RunTimeoutSec', $RunTimeoutSec,
                 '-LockWaitSec', $LockWaitSec, '-NonInteractive')
@@ -379,7 +379,7 @@ if (-not $NoMain) {
             $spec = New-ScheduleActionSpec -ScriptPath $PadSyncPath -FlowName $FlowName -AllowProd:$AllowProd `
                 -AcceptanceFile $AcceptanceFile -ConfigFile $ConfigFile `
                 -RunTimeoutSec $RunTimeoutSec
-            Log ("触发：周一至周五 {0:HH:mm}（忽略日历，节假日会误跑、调休会漏跑）" -f $at)
+            Log ("触发：周一至周五 {0:HH:mm}（IGNORE_CALENDAR：忽略日历，节假日会误跑、调休会漏跑）" -f $at)
         }
         Log "动作：$($spec.exe) $($spec.args)"
 
@@ -421,7 +421,7 @@ if (-not $NoMain) {
     catch {
         $msg = $_.Exception.Message
         $result.errors += $msg
-        if ($msg -match '^(工作日历文件|工作日判断脚本|日历不覆盖今天)') {
+        if ($msg -match '^(CALENDAR_UNAVAILABLE|CALENDAR_SCRIPT_FAILED|CALENDAR_STALE)') {
             # 日历类失败分两种：过期（exit 5 / calendar-stale）与不可用（exit 1）
             $cal = Get-CalendarFailure $msg
             $exitCode = $cal.exitCode

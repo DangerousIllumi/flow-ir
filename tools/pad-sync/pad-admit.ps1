@@ -913,7 +913,7 @@ if (-not $NoMain) {
                 # 先 pad_flow_name，再文件名 / name；多命中直接 ADMIT_AMBIGUOUS_FLOW
                 $FlowFile = Resolve-FlowFileByName $flowsDir $FlowName
                 if (-not $FlowFile) {
-                    throw "未提供 -FlowFile，按流程名派生也找不到：$FlowName（business\flows 下无匹配 pad_flow_name / 文件名 / name）；请用 -FlowFile 指定"
+                    throw "E_FLOW_FILE_REQUIRED: 未提供 -FlowFile，按流程名派生也找不到：$FlowName（business\flows 下无匹配 pad_flow_name / 文件名 / name）；请用 -FlowFile 指定"
                 }
                 $nameFromLookup = $true
             } else {
@@ -930,9 +930,9 @@ if (-not $NoMain) {
                 if ($cands.Count -eq 1) {
                     $FlowFile = $cands[0].FullName
                 } elseif ($cands.Count -eq 0) {
-                    throw "未提供 -FlowFile，flows 目录里也没有流程定义 .json；请用 -FlowFile 指定"
+                    throw "E_FLOW_FILE_REQUIRED: 未提供 -FlowFile，flows 目录里也没有流程定义 .json；请用 -FlowFile 指定"
                 } else {
-                    throw ("未提供 -FlowFile，找到 $($cands.Count) 个候选，请用 -FlowFile 指定：" +
+                    throw ("E_FLOW_FILE_AMBIGUOUS(candidates=$($cands.Count)): 未提供 -FlowFile，找到 $($cands.Count) 个候选，请用 -FlowFile 指定：" +
                         (($cands | ForEach-Object { $_.Name }) -join '、'))
                 }
             }

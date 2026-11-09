@@ -144,8 +144,8 @@ function Invoke-ConfigureMain {
         $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
         if ($cmd) { $PythonExe = $cmd.Source }
     }
-    if (-not (Test-Path $ExamplePath)) { throw "找不到示例配置：$ExamplePath" }
-    if (-not (Test-Path $SchemaFile)) { throw "找不到 schema：$SchemaFile" }
+    if (-not (Test-Path $ExamplePath)) { throw "E_EXAMPLE_CONFIG_MISSING: 找不到示例配置：$ExamplePath" }
+    if (-not (Test-Path $SchemaFile)) { throw "E_SCHEMA_MISSING: 找不到 schema：$SchemaFile" }
 
     $checks = @()
     if ($SkipProbe -and -not $ProbeOnly) {
@@ -181,7 +181,7 @@ function Invoke-ConfigureMain {
         $obj.PSObject.Properties | ForEach-Object { $answers[$_.Name] = $_.Value }
     } elseif (-not $ProbeOnly) {
         # 交互模式：逐项给出默认值，回车即采用默认
-        Write-Host '[configure] 逐项确认配置（直接回车 = 采用方括号内的默认值）'
+        Write-Host '[configure] INTERACTIVE_CONFIRM 逐项确认配置（直接回车 = 采用方括号内的默认值）'
         foreach ($p in $defaults.PSObject.Properties) {
             $def = [string]$p.Value
             if ($p.Name -eq 'PAD_ROOT' -and $PadRoot) { $def = $PadRoot }
@@ -211,7 +211,7 @@ function Invoke-ConfigureMain {
     }
     Copy-Item $tmp $ConfigPath -Force
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    Write-Host "[configure] 配置已写入：$ConfigPath"
+    Write-Host "[configure] CONFIG_WRITTEN 配置已写入：$ConfigPath"
     Write-Host '[configure] 下一步：.\pad-deploy.ps1 -DryRun 预览替换结果'
     return 0
 }

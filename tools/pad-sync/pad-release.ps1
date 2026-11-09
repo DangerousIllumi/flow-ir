@@ -164,7 +164,7 @@ if (-not $NoMain) {
             if (Test-Path -LiteralPath $guess) {
                 $SourceRobin = $guess
             } else {
-                throw "未提供 -SourceRobin，按流程名派生也找不到：$guess；请用 -SourceRobin 指定"
+                throw "E_SOURCE_ROBIN_REQUIRED: 未提供 -SourceRobin，按流程名派生也找不到：$guess；请用 -SourceRobin 指定"
             }
         }
         if (-not $ConfigFile) {
@@ -172,7 +172,7 @@ if (-not $NoMain) {
             if (Test-Path -LiteralPath $guess) {
                 $ConfigFile = $guess
             } else {
-                throw "未提供 -ConfigFile，按流程名派生也找不到：$guess；请用 -ConfigFile 指定"
+                throw "E_CONFIG_REQUIRED: 未提供 -ConfigFile，按流程名派生也找不到：$guess；请用 -ConfigFile 指定"
             }
         }
         $result.sourceRobin = $SourceRobin

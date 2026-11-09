@@ -219,10 +219,10 @@ Describe 'pad-release 不再默认到具体业务流程' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script:Release `
             -FlowName 'NoSuchFlow-XYZ' -DryRun -SkipTests 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '未提供 -SourceRobin'
+        $out | Should Match 'E_SOURCE_ROBIN_REQUIRED'
         $out | Should Match '-SourceRobin'
         # 必须在跑测试/发布之前就失败（不能走到执行阶段）
-        $out | Should Not Match '运行 pytest'
-        $out | Should Not Match '发布完成'
+        $out | Should Not Match 'pytestPassed'
+        $out | Should Not Match '"stage":"done"'
     }
 }

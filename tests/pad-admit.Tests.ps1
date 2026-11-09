@@ -397,7 +397,8 @@ Describe 'pad-admit 不再默认到具体业务流程' {
             -FlowName 'NoSuchFlow-XYZ' *> $out
         $LASTEXITCODE | Should Not Be 0
         $text = [IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)
-        $text | Should Match '未提供 -FlowFile'
+        $text | Should Match 'ADMIT_ERROR'
+        $text | Should Match 'E_FLOW_FILE_REQUIRED'
         $text | Should Match '-FlowFile'
         # 必须在读取流程定义之前失败，不能输出 14 项准入检查的汇总
         $text | Should Not Match '"total":14'

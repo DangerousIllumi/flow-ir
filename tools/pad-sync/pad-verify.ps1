@@ -41,18 +41,18 @@ if ($BuildFromFlow) {
         if ($cands.Count -eq 1) { $FlowFile = $cands[0].FullName }
         elseif ($cands.Count -eq 0) { $FlowFile = $null }
         else {
-            Write-Output ('PAD_VERIFY_RESULT={"ok":false,"error":"business\\flows 目录有 ' + $cands.Count + ' 个候选，请用 -FlowFile 指定"}')
+            Write-Output ('PAD_VERIFY_RESULT={"ok":false,"error":"E_FLOW_AMBIGUOUS(candidates=' + $cands.Count + '): business\\flows 目录有 ' + $cands.Count + ' 个候选，请用 -FlowFile 指定"}')
             exit 1
         }
     }
     if (-not $FlowFile) {
-        Write-Output 'PAD_VERIFY_RESULT={"ok":false,"error":"未提供 -FlowFile，business\\flows 目录里也没有流程定义；请用 -FlowFile 指定"}'
+        Write-Output 'PAD_VERIFY_RESULT={"ok":false,"error":"E_FLOW_FILE_REQUIRED: 未提供 -FlowFile，business\\flows 目录里也没有流程定义；请用 -FlowFile 指定"}'
         exit 1
     }
     $AcceptanceFile = Join-Path $env:TEMP ("pad-acceptance-" + [guid]::NewGuid().ToString('N') + ".json")
     & (Join-Path $PSScriptRoot 'build-acceptance.ps1') -FlowFile $FlowFile -OutFile $AcceptanceFile
     if ($LASTEXITCODE -ne 0) {
-        Write-Output ('PAD_VERIFY_RESULT={"ok":false,"error":"从 flow.json 生成验收判据失败"}')
+        Write-Output ('PAD_VERIFY_RESULT={"ok":false,"error":"E_ACCEPTANCE_BUILD_FAILED: 从 flow.json 生成验收判据失败"}')
         exit 1
     }
 }
@@ -75,7 +75,7 @@ try {
             elseif ($c.ok) { $mark = 'OK  ' }
             Write-Host ("  [{0}] {1}：{2}" -f $mark, $c.name, $c.detail)
         }
-        Write-Host ("[verify] 通过 {0} / 失败 {1} / 跳过 {2}" -f $result.passed, $result.failed, $result.skipped)
+        Write-Host ("[verify] VERIFY_SUMMARY 通过 {0} / 失败 {1} / 跳过 {2}" -f $result.passed, $result.failed, $result.skipped)
     }
 
     Write-Output ("PAD_VERIFY_RESULT=" + ($result | ConvertTo-Json -Depth 8 -Compress))

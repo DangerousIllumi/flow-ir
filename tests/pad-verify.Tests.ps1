@@ -31,10 +31,11 @@ Describe 'pad-verify 不再默认到具体业务流程' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $box.Script `
             -BuildFromFlow -ConfigFile $cfg 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '请用 -FlowFile 指定'
-        # 不能进入验收检查阶段
-        $out | Should Not Match '验收判据：'
-        $out | Should Not Match '通过 \d+ / 失败'
+        $out | Should Match 'E_FLOW_FILE_REQUIRED'
+        $out | Should Match '-FlowFile'
+        # 不能进入验收检查阶段（成功路径才输出汇总行与 checks 字段）
+        $out | Should Not Match 'VERIFY_SUMMARY'
+        $out | Should Not Match '"checks"'
     }
 
     It 'flows 目录有多个候选：非零退出，并报告候选数' {
@@ -46,8 +47,9 @@ Describe 'pad-verify 不再默认到具体业务流程' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $box.Script `
             -BuildFromFlow -ConfigFile $cfg 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '2 个候选'
+        $out | Should Match 'E_FLOW_AMBIGUOUS'
+        $out | Should Match 'candidates=2'
         $out | Should Match '-FlowFile'
-        $out | Should Not Match '验收判据：'
+        $out | Should Not Match 'VERIFY_SUMMARY'
     }
 }

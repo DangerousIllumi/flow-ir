@@ -144,10 +144,10 @@ Describe 'pad-rollback 不再默认到具体业务流程' {
         $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script `
             -FlowName 'NoSuchFlow-XYZ' -DryRun 2>&1 | Out-String
         $LASTEXITCODE | Should Not Be 0
-        $out | Should Match '未提供 -ConfigFile'
+        $out | Should Match 'E_CONFIG_REQUIRED'
         $out | Should Match '-ConfigFile'
         # 不能走到快照定位/回滚发布
-        $out | Should Not Match '回滚目标快照'
-        $out | Should Not Match '回滚发布完成'
+        $out | Should Not Match '"stage":"select"'
+        $out | Should Not Match '"stage":"done"'
     }
 }
