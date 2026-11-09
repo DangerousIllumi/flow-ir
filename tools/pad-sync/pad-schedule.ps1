@@ -96,7 +96,7 @@ Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
 # 任务名：flow-ir-<流程名>；流程名里的非法字符与空白统一替换成下划线
 function Get-ScheduleTaskName([string]$FlowName) {
     $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
-    if (-not $safe) { throw '流程名为空，无法生成任务名' }
+    if (-not $safe) { throw 'flow name is empty; cannot build a task name' }
     return 'flow-ir-' + $safe
 }
 
@@ -104,7 +104,7 @@ function Get-ScheduleTaskName([string]$FlowName) {
 function ConvertTo-ScheduleTime([string]$Time) {
     $t = [datetime]::MinValue
     if (-not [datetime]::TryParse([string]$Time, [ref]$t)) {
-        throw "触发时刻格式不对：$Time（应为 HH:mm，如 09:00）"
+        throw "invalid trigger time: $Time (expected HH:mm, e.g. 09:00)"
     }
     return $t
 }
@@ -162,30 +162,30 @@ function New-ScheduleActionSpec {
 # 日历读不到、判断脚本跑不通一律硬失败：绝不按周一至周五猜测继续跑（节假日会误跑）
 function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$CalendarPath) {
     if (-not $WorkdayScript -or -not (Test-Path $WorkdayScript)) {
-        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：找不到脚本 $WorkdayScript"
+        throw "CALENDAR_SCRIPT_FAILED: workday check script failed: script not found $WorkdayScript"
     }
     if (-not $CalendarPath -or -not (Test-Path $CalendarPath)) {
-        throw "CALENDAR_UNAVAILABLE: 工作日历文件不存在或读不到：$CalendarPath"
+        throw "CALENDAR_UNAVAILABLE: workday calendar file missing or unreadable: $CalendarPath"
     }
     try {
         $out = & $PythonExe $WorkdayScript --is-workday --calendar $CalendarPath 2>&1 | Out-String
     } catch {
-        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($_.Exception.Message)"
+        throw "CALENDAR_SCRIPT_FAILED: workday check script failed: $($_.Exception.Message)"
     }
     $m = [regex]::Match($out, 'WORKDAY=(\d)')
     if (-not $m.Success) {
-        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($out.Trim())"
+        throw "CALENDAR_SCRIPT_FAILED: workday check script failed: $($out.Trim())"
     }
     # 脚本跑通了但 CALENDAR_OK=0：日历能打开却认不出表头，同样不能猜
     if ($out -match 'CALENDAR_OK=0') {
-        throw "CALENDAR_UNAVAILABLE: 工作日历文件读不到或格式不对：$CalendarPath"
+        throw "CALENDAR_UNAVAILABLE: workday calendar file unreadable or badly formatted: $CalendarPath"
     }
     # 日历能读但今天不在覆盖范围：不能当成「今天休息」静默跳过，必须硬失败
     if ($out -match 'CALENDAR_STALE=1') {
         $min = [regex]::Match($out, 'CALENDAR_MIN=([^\r\n]*)').Groups[1].Value.Trim()
         $max = [regex]::Match($out, 'CALENDAR_MAX=([^\r\n]*)').Groups[1].Value.Trim()
         # 带 Data['code'] 的异常：分类按码判断，不解析中文消息
-        $msg = "CALENDAR_STALE: 日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
+        $msg = "CALENDAR_STALE: calendar does not cover today: today $((Get-Date).ToString('yyyy-MM-dd')) (covered $min ~ $max); treating the calendar as stale; this run did not execute"
         $ex = [System.Exception]::new($msg)
         $ex.Data['code'] = 'CALENDAR_STALE'
         # 区间随异常携带，读取方不再从中文消息里正则抽取
@@ -218,11 +218,11 @@ function Test-TodayLastWorkday([string]$PythonExe, [string]$WorkdayScript, [stri
     try {
         $out = & $PythonExe $WorkdayScript --is-last-workday --calendar $CalendarPath 2>&1 | Out-String
     } catch {
-        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($_.Exception.Message)"
+        throw "CALENDAR_SCRIPT_FAILED: workday check script failed: $($_.Exception.Message)"
     }
     $m = [regex]::Match($out, 'LAST_WORKDAY=(\d)')
     if (-not $m.Success) {
-        throw "CALENDAR_SCRIPT_FAILED: 工作日判断脚本执行失败：$($out.Trim())"
+        throw "CALENDAR_SCRIPT_FAILED: workday check script failed: $($out.Trim())"
     }
     return [ordered]@{ lastWorkday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
@@ -250,17 +250,17 @@ if (-not $NoMain) {
         if ($RunIfWorkday -or $RunIfLastWorkday) {
             $result.action = $(if ($RunIfLastWorkday) { 'run-if-last-workday' } else { 'run-if-workday' })
             # 运行入口所需参数必须显式传入或来自 -ConfigPath；不退回任何内置路径
-            if (-not $WorkdayScript) { throw 'CONFIG_MISSING: 未提供 WorkdayScript（用 -ConfigPath 或显式参数）' }
-            if (-not $PythonExe) { throw 'CONFIG_MISSING: 未提供 PythonExe（用 -ConfigPath 或显式参数）' }
+            if (-not $WorkdayScript) { throw 'CONFIG_MISSING: WorkdayScript not provided (use -ConfigPath or an explicit parameter)' }
+            if (-not $PythonExe) { throw 'CONFIG_MISSING: PythonExe not provided (use -ConfigPath or an explicit parameter)' }
             # 日历必须由任务动作显式传入：缺了就硬失败，绝不退化成「每个工作日都跑」
-            if (-not $CalendarPath) { throw 'CONFIG_MISSING: 未提供工作日日历文件（用 -ConfigPath 或 -CalendarPath）' }
-            if (-not $PadSyncPath) { throw 'CONFIG_MISSING: 未提供 PadSyncPath（用 -ConfigPath 或显式参数）' }
+            if (-not $CalendarPath) { throw 'CONFIG_MISSING: workday calendar file not provided (use -ConfigPath or -CalendarPath)' }
+            if (-not $PadSyncPath) { throw 'CONFIG_MISSING: PadSyncPath not provided (use -ConfigPath or an explicit parameter)' }
 
             if ($RunIfLastWorkday) {
                 $lw = Test-TodayLastWorkday $PythonExe $WorkdayScript $CalendarPath
                 $result.calendarOk = $lw.calendarOk
                 if (-not $lw.lastWorkday) {
-                    Log "今天不是本月最后一个工作日，本次跳过（日历：$CalendarPath）"
+                    Log "today is not the last workday of this month; skipped (calendar: $CalendarPath)"
                     $result.ok = $true; $result.skipped = $true; $result.reason = 'not-last-workday'
                     $exitCode = 0
                     return
@@ -269,20 +269,20 @@ if (-not $NoMain) {
                 $wd = Test-TodayWorkday $PythonExe $WorkdayScript $CalendarPath
                 $result.calendarOk = $wd.calendarOk
                 if (-not $wd.workday) {
-                    Log "SKIP_NOT_WORKDAY：今天不是工作日，本次跳过（日历：$CalendarPath）"
+                    Log "SKIP_NOT_WORKDAY: today is not a workday; skipped (calendar: $CalendarPath)"
                     $result.ok = $true; $result.skipped = $true; $result.reason = 'not-workday'
                     $exitCode = 0
                     return
                 }
             }
-            if (-not (Test-Path $PadSyncPath)) { throw "找不到 pad-sync.ps1：$PadSyncPath" }
-            Log "RUN_START：日期检查通过，开始运行 $FlowName"
+            if (-not (Test-Path $PadSyncPath)) { throw "pad-sync.ps1 not found: $PadSyncPath" }
+            Log "RUN_START: date check passed; starting $FlowName"
             $syncArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PadSyncPath,
                 '-FlowName', $FlowName, '-RunOnly', '-RunTimeoutSec', $RunTimeoutSec,
                 '-LockWaitSec', $LockWaitSec, '-NonInteractive')
             if ($AllowProd) { $syncArgs += '-AllowProd' }
             if ($AcceptanceFile) {
-                if (-not $ConfigFile) { throw '使用 -AcceptanceFile 时必须同时提供 -ConfigFile' }
+                if (-not $ConfigFile) { throw '-AcceptanceFile requires -ConfigFile' }
                 $syncArgs += @('-AcceptanceFile', $AcceptanceFile, '-ConfigFile', $ConfigFile)
             }
             # 边跑边打印，同时留存输出以便解析 PAD_SYNC_RESULT（工单/告警要带上 stage）
@@ -300,10 +300,10 @@ if (-not $NoMain) {
                     -Status $status -SyncResult $sync -LogPath $logPath `
                     -RunId $(if ($sync) { [string]$sync.runId } else { $null })
                 $result.alertLog = $alert.path
-                $tip = if ($exitCode -eq 3) { '流程停在人工确认弹窗（未自动点击），已写入告警日志' }
-                    elseif ($exitCode -eq 4) { '排队超时，本次未执行（可稍后重跑）' }
-                    else { "运行失败（stage=$stage）" }
-                Log "$tip，已写入告警日志：$($alert.path)"
+                $tip = if ($exitCode -eq 3) { 'the flow stopped at a manual-confirmation dialog (not auto-clicked); an alert was written' }
+                    elseif ($exitCode -eq 4) { 'timed out waiting for the queue; this run did not execute (rerun later)' }
+                    else { "run failed (stage=$stage)" }
+                Log "$tip; an alert was written to $($alert.path)"
             }
             # 这里必须 exit，不能 return：return 会跳过脚本末尾的 exit $exitCode，
             # 导致计划任务 LastTaskResult=0 而告警里却是 exitCode=1（口径不一致）
@@ -314,12 +314,12 @@ if (-not $NoMain) {
         if ($List) {
             $result.action = 'list'
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { throw "找不到计划任务：$TaskName（先不带 -List 注册一次）" }
+            if (-not $task) { throw "scheduled task not found: $TaskName (register once without -List first)" }
             $info = Get-ScheduledTaskInfo -TaskName $TaskName
             $result.nextRunTime = $info.NextRunTime
             $result.lastRunTime = $info.LastRunTime
             $result.lastTaskResult = $info.LastTaskResult
-            Log ("下次触发：{0}；上次运行：{1}（结果 {2}）" -f $info.NextRunTime, $info.LastRunTime, $info.LastTaskResult)
+            Log ("next run: {0}; last run: {1} (result {2})" -f $info.NextRunTime, $info.LastRunTime, $info.LastTaskResult)
             $result.ok = $true; $exitCode = 0
             return
         }
@@ -328,10 +328,10 @@ if (-not $NoMain) {
         if ($Remove) {
             $result.action = 'remove'
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { Log "计划任务不存在，无需删除：$TaskName"; $result.ok = $true; $exitCode = 0; return }
-            if ($DryRun) { Log "[DryRun] 将删除计划任务：$TaskName"; $result.ok = $true; $exitCode = 0; return }
+            if (-not $task) { Log "scheduled task does not exist; nothing to delete: $TaskName"; $result.ok = $true; $exitCode = 0; return }
+            if ($DryRun) { Log "[DryRun] would delete the scheduled task: $TaskName"; $result.ok = $true; $exitCode = 0; return }
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-            Log "已删除计划任务：$TaskName"
+            Log "deleted the scheduled task: $TaskName"
             $result.ok = $true; $exitCode = 0
             return
         }
@@ -340,29 +340,29 @@ if (-not $NoMain) {
         if ($RunNow) {
             $result.action = 'run-now'
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { throw "找不到计划任务：$TaskName" }
-            if ($DryRun) { Log "[DryRun] 将立即触发：$TaskName"; $result.ok = $true; $exitCode = 0; return }
+            if (-not $task) { throw "scheduled task not found: $TaskName" }
+            if ($DryRun) { Log "[DryRun] would trigger now: $TaskName"; $result.ok = $true; $exitCode = 0; return }
             Start-ScheduledTask -TaskName $TaskName
-            Log "已触发计划任务：$TaskName（流程运行结果见 business\manifest.jsonl）"
+            Log "triggered the scheduled task: $TaskName (see business\manifest.jsonl for the run result)"
             $result.ok = $true; $exitCode = 0
             return
         }
 
         # ── 注册/更新 ──
-        if (-not $PadSyncPath) { throw 'CONFIG_MISSING: 未提供 PadSyncPath（用 -ConfigPath 或显式参数）' }
-        if (-not (Test-Path $PadSyncPath)) { throw "找不到 pad-sync.ps1：$PadSyncPath" }
+        if (-not $PadSyncPath) { throw 'CONFIG_MISSING: PadSyncPath not provided (use -ConfigPath or an explicit parameter)' }
+        if (-not (Test-Path $PadSyncPath)) { throw "pad-sync.ps1 not found: $PadSyncPath" }
         if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
-            throw '安全熔断：默认只能为 PAD_SYNC_TEST 建计划。生产流程请显式加 -AllowProd。'
+            throw 'safety fuse: only PAD_SYNC_TEST may be scheduled by default. Add -AllowProd explicitly for a production flow.'
         }
         if ($AcceptanceFile -and -not $ConfigFile) {
-            throw '使用 -AcceptanceFile 时必须同时提供 -ConfigFile'
+            throw '-AcceptanceFile requires -ConfigFile'
         }
         $gate = -not $IgnoreCalendar
         # 需要日历的模式（按日历判断 / 仅最后工作日）必须显式给出日历与依赖，不再内置默认路径
         if ($gate -or $LastWorkday) {
-            if (-not $CalendarPath) { throw 'CONFIG_MISSING: 未提供工作日日历文件（用 -ConfigPath 或 -CalendarPath）' }
-            if (-not $PythonExe) { throw 'CONFIG_MISSING: 未提供 PythonExe（用 -ConfigPath 或显式参数）' }
-            if (-not $WorkdayScript) { throw 'CONFIG_MISSING: 未提供 WorkdayScript（用 -ConfigPath 或显式参数）' }
+            if (-not $CalendarPath) { throw 'CONFIG_MISSING: workday calendar file not provided (use -ConfigPath or -CalendarPath)' }
+            if (-not $PythonExe) { throw 'CONFIG_MISSING: PythonExe not provided (use -ConfigPath or an explicit parameter)' }
+            if (-not $WorkdayScript) { throw 'CONFIG_MISSING: WorkdayScript not provided (use -ConfigPath or an explicit parameter)' }
         }
 
         $at = ConvertTo-ScheduleTime $Time
@@ -373,7 +373,7 @@ if (-not $NoMain) {
                 -WorkdayScript $WorkdayScript `
                 -AcceptanceFile $AcceptanceFile -ConfigFile $ConfigFile `
                 -RunTimeoutSec $RunTimeoutSec
-            Log ("触发：每天 {0:HH:mm}，仅本月最后一个工作日运行（日历：{1}）" -f $at, $CalendarPath)
+            Log ("trigger: daily at {0:HH:mm}, run only on the last workday of the month (calendar: {1})" -f $at, $CalendarPath)
         } elseif ($gate) {
             $spec = New-ScheduleActionSpec -ScriptPath $PSCommandPath -FlowName $FlowName `
                 -AllowProd:$AllowProd -WorkdayGate `
@@ -381,17 +381,17 @@ if (-not $NoMain) {
                 -WorkdayScript $WorkdayScript `
                 -AcceptanceFile $AcceptanceFile -ConfigFile $ConfigFile `
                 -RunTimeoutSec $RunTimeoutSec
-            Log ("触发：每天 {0:HH:mm}，运行时按工作日历判断（日历：{1}）" -f $at, $CalendarPath)
+            Log ("trigger: daily at {0:HH:mm}, gated by the workday calendar at run time (calendar: {1})" -f $at, $CalendarPath)
         } else {
             $spec = New-ScheduleActionSpec -ScriptPath $PadSyncPath -FlowName $FlowName -AllowProd:$AllowProd `
                 -AcceptanceFile $AcceptanceFile -ConfigFile $ConfigFile `
                 -RunTimeoutSec $RunTimeoutSec
-            Log ("触发：周一至周五 {0:HH:mm}（IGNORE_CALENDAR：忽略日历，节假日会误跑、调休会漏跑）" -f $at)
+            Log ("trigger: Monday-Friday {0:HH:mm} (IGNORE_CALENDAR: calendar ignored; it will run on holidays and skip make-up workdays)" -f $at)
         }
-        Log "动作：$($spec.exe) $($spec.args)"
+        Log "action: $($spec.exe) $($spec.args)"
 
         if ($DryRun) {
-            Log "[DryRun] 未注册计划任务"
+            Log "[DryRun] the scheduled task was not registered"
             $result.ok = $true; $exitCode = 0
             return
         }
@@ -415,14 +415,14 @@ if (-not $NoMain) {
             -ExecutionTimeLimit (New-TimeSpan -Minutes 180) -MultipleInstances IgnoreNew
         # Interactive = 只有该用户已登录时才运行，正是 attended 的语义
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
-        $desc = "flow-ir：每天 $Time 触发，按工作日历判断后运行 PAD 流程 $FlowName（attended）"
+        $desc = "flow-ir: runs daily at $Time after the workday-calendar check, PAD flow $FlowName (attended)"
 
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
             -Settings $settings -Principal $principal -Force -Description $desc | Out-Null
 
         $info = Get-ScheduledTaskInfo -TaskName $TaskName
         $result.nextRunTime = $info.NextRunTime
-        Log "已注册计划任务：$TaskName；下次触发：$($info.NextRunTime)"
+        Log "registered the scheduled task: $TaskName; next run: $($info.NextRunTime)"
         $result.ok = $true; $exitCode = 0
     }
     catch {
@@ -444,7 +444,7 @@ if (-not $NoMain) {
             }
             $result.alertLog = $alert.path
         }
-        Log "失败于 [$($result.action)]：$msg"
+        Log "failed at [$($result.action)]: $msg"
     }
     finally {
         Write-Output ('PAD_SCHEDULE_RESULT=' + ($result | ConvertTo-Json -Depth 6 -Compress))

@@ -31,11 +31,11 @@ function Get-AlertKindConstants {
 # 每个 kind 的默认文案：必须带一句「下一步怎么办」，供人直接照做
 function Get-AlertDefaultNote([string]$Kind) {
     switch ($Kind) {
-        'deploy-precheck-failed' { return '部署前置检查失败（配置/占位符/路径），本次未注入。下一步：修正 config 或源 .robin 后重试。' }
-        'deploy-inject-failed'   { return '注入画布失败，本次未发布。下一步：确认设计器已打开目标流程且画布可写，再重试。' }
-        'deploy-publish-failed'  { return '发布阶段失败（发布超时或版本冲突）。下一步：关闭并重新打开该流后重试，未自动重试。' }
-        'release-canvas-mismatch' { return '已发布副本与注入内容不一致，发布视为失败。下一步：确认 Workspace 已刷新后重新发布，不要手工改 .robin。' }
-        default { return '本次失败已记录。下一步：查看告警里的 stage 与日志路径，处理后人工重跑，未自动重试。' }
+        'deploy-precheck-failed' { return 'Deploy precheck failed (config/placeholders/paths); nothing was injected. Next step: fix the config or the source .robin, then retry.' }
+        'deploy-inject-failed'   { return 'Failed to inject into the canvas; nothing was published. Next step: make sure the designer has the target flow open and the canvas is writable, then retry.' }
+        'deploy-publish-failed'  { return 'Publish stage failed (publish timeout or version conflict). Next step: close and reopen the flow, then retry; nothing was retried automatically.' }
+        'release-canvas-mismatch' { return 'The published copy does not match the injected content; the publish is treated as failed. Next step: refresh the Workspace and publish again; do not hand-edit the .robin.' }
+        default { return 'This failure has been recorded. Next step: check the stage and log path in the alert, fix it, and rerun manually; nothing was retried automatically.' }
     }
 }
 
@@ -62,30 +62,30 @@ function Get-RunAlertKind {
 
     if ($isHumanConfirm) {
         return [ordered]@{ kind = 'run-needs-human-confirm'; reason = $null
-            note = "流程停在人工确认弹窗「$($SyncResult.dialogTitle)」，未自动点击。下一步：到 PAD 控制台人工确认后重跑，未自动重试。" }
+            note = "The flow stopped at a manual-confirmation dialog '$($SyncResult.dialogTitle)'; it was not clicked. Next step: confirm it in the PAD console and rerun; nothing was retried automatically." }
     }
     if ($isLockTimeout) {
         return [ordered]@{ kind = 'run-lock-timeout'; reason = $null
-            note = '排队超时，本次未执行。下一步：等前一个流程结束后人工重跑，未自动重试。' }
+            note = 'Timed out waiting for the queue; this run did not execute. Next step: wait for the previous flow to finish and rerun manually; nothing was retried automatically.' }
     }
     if ($isCalendarDown) {
         return [ordered]@{ kind = 'calendar-unavailable'; reason = $null
-            note = '工作日历不可用，本次未运行。下一步：修复日历文件后人工重跑。' }
+            note = 'The workday calendar is unavailable; this run did not execute. Next step: fix the calendar file and rerun manually.' }
     }
     if ($isTriggerFailed) {
         $reason = [string]$SyncResult.triggerReason
         if (-not $reason) { $reason = 'unknown' }
         $note = switch ($reason) {
-            'identity-mismatch' { '流程名解析不出 flowId，本次未触发。下一步：在 PAD 控制台确认流程名并至少成功运行一次，未自动重试。' }
-            'no-evidence' { '触发后没有出现运行日志（协议处理器无响应 / flowId 不符 / PAD 报错弹窗）。下一步：人工查看 PAD 控制台，未自动重试。' }
-            'no-robot' { '触发已被接受但机器人未启动（PAD 错误框或确认框被取消）。下一步：人工处理后重跑，未自动重试。' }
-            default { '触发失败（原因未分类）。下一步：人工查看 PAD 控制台，未自动重试。' }
+            'identity-mismatch' { 'The flow name did not resolve to a flowId; this run was not triggered. Next step: confirm the flow name in the PAD console and run it successfully at least once; nothing was retried automatically.' }
+            'no-evidence' { 'No run log appeared after the trigger (protocol handler did not respond / flowId mismatch / PAD error popup). Next step: check the PAD console manually; nothing was retried automatically.' }
+            'no-robot' { 'The trigger was accepted but the robot did not start (PAD error box, or the confirmation dialog was cancelled). Next step: handle it manually and rerun; nothing was retried automatically.' }
+            default { 'Trigger failed (reason not classified). Next step: check the PAD console manually; nothing was retried automatically.' }
         }
         return [ordered]@{ kind = 'trigger-failed'; reason = $reason; note = $note }
     }
     if ($isRunTimeout) {
         return [ordered]@{ kind = 'run-timeout'; reason = $null
-            note = '运行超过超时阈值仍未拿到终止状态。下一步：确认 PAD 中是否仍卡着，人工处理后重跑，未自动重试。' }
+            note = 'The run exceeded the timeout threshold without reaching a terminal state. Next step: check whether PAD is still stuck, handle it manually, and rerun; nothing was retried automatically.' }
     }
     return [ordered]@{ kind = 'run-failed'; reason = $null; note = $null }
 }
@@ -156,7 +156,7 @@ function Write-RunAlert {
         $grade = [ordered]@{
             kind   = 'calendar-stale'
             reason = 'calendar-stale'
-            note   = "日历不覆盖今天（覆盖 $CalendarRange），本次未运行。下一步：更新日历文件后人工重跑。"
+            note   = "The calendar does not cover today (covered $CalendarRange); this run did not execute. Next step: update the calendar file and rerun manually."
         }
     }
 
@@ -168,7 +168,7 @@ function Write-RunAlert {
         elseif ($Kind) { $true }
         elseif ($grade.note) { $true }
         else { $false }
-    if (-not $hasNextStep) { $note = "$note 下一步：查看日志与 PAD 控制台后人工重跑。" }
+    if (-not $hasNextStep) { $note = "$note Next step: check the logs and the PAD console, then rerun manually." }
 
     if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
     $file = Join-Path $Dir 'alerts.jsonl'

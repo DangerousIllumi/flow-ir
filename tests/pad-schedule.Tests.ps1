@@ -185,7 +185,7 @@ Describe 'pad-schedule 纯函数测试' {
             Test-TodayWorkday 'python' $script (Join-Path $TestDrive 'nope.xlsx')
             throw '预期应当抛错，但没有'
         } catch {
-            $_.Exception.Message | Should Match '工作日历文件不存在或读不到'
+            $_.Exception.Message | Should Match 'workday calendar file missing or unreadable'
         }
     }
 
@@ -194,7 +194,7 @@ Describe 'pad-schedule 纯函数测试' {
             Test-TodayWorkday 'python' (Join-Path $TestDrive 'nope.py') (Join-Path $TestDrive 'nope.xlsx')
             throw '预期应当抛错，但没有'
         } catch {
-            $_.Exception.Message | Should Match '工作日判断脚本执行失败'
+            $_.Exception.Message | Should Match 'workday check script failed'
         }
     }
 
@@ -216,20 +216,20 @@ Describe 'pad-schedule 纯函数测试' {
             Test-TodayWorkday $fake $script $cal
             throw '预期应当抛错，但没有'
         } catch {
-            $_.Exception.Message | Should Match '日历不覆盖今天'
-            $_.Exception.Message | Should Match '覆盖 2026-01-01 ~ 2026-10-31'
+            $_.Exception.Message | Should Match 'calendar does not cover today'
+            $_.Exception.Message | Should Match '\(covered 2026-01-01 ~ 2026-10-31\)'
         }
     }
 
     It '日历类失败分类：过期是 exit 5 / calendar-stale，不可用仍是 exit 1' {
         # 分类依据改为异常上的结果码，不再依赖中文消息内容
-        $staleEx = [System.Exception]::new('日历不覆盖今天：今天 2026-11-05（覆盖 2026-01-01 ~ 2026-10-31），判定为日历过期，本次不运行')
+        $staleEx = [System.Exception]::new('CALENDAR_STALE: calendar does not cover today: today 2026-11-05 (covered 2026-01-01 ~ 2026-10-31); treating the calendar as stale; this run did not execute')
         $staleEx.Data['code'] = 'CALENDAR_STALE'
         $stale = Get-CalendarFailure $staleEx
         $stale.exitCode | Should Be 5
         $stale.reason | Should Be 'calendar-stale'
         $stale.stale | Should Be $true
-        $down = Get-CalendarFailure ([System.Exception]::new('工作日历文件不存在或读不到：C:\x\cal.xlsx'))
+        $down = Get-CalendarFailure ([System.Exception]::new('CALENDAR_UNAVAILABLE: workday calendar file missing or unreadable: C:\x\cal.xlsx'))
         $down.exitCode | Should Be 1
         $down.reason | Should Be 'calendar-unavailable'
         $down.stale | Should Be $false
@@ -244,7 +244,7 @@ Describe 'pad-schedule 纯函数测试' {
         $a.record.exitCode | Should Be 5
         $a.record.calendarStale | Should Be $true
         $a.record.calendarRange | Should Be '2026-01-01 ~ 2026-10-31'
-        $a.record.note | Should Match '下一步：更新日历文件后人工重跑。'
+        $a.record.note | Should Match 'Next step: update the calendar file and rerun manually\.'
     }
 
     It '解析 PAD_SYNC_RESULT：取最后一行，缺失时返回空' {
@@ -285,10 +285,10 @@ Describe 'pad-schedule 纯函数测试' {
         $lines.Count | Should Be 2
         $lock = $lines[0] | ConvertFrom-Json
         $lock.kind | Should Be 'run-lock-timeout'
-        $lock.note | Should Match '排队超时，本次未执行。'
+        $lock.note | Should Match 'Timed out waiting for the queue; this run did not execute\.'
         $fail = $lines[1] | ConvertFrom-Json
         $fail.kind | Should Be 'run-failed'
-        $fail.note | Should Match '下一步：查看日志与 PAD 控制台后人工重跑。'
+        $fail.note | Should Match 'Next step: check the logs and the PAD console, then rerun manually\.'
     }
 
     It '告警日志追加写入，不覆盖上一条' {
@@ -311,7 +311,7 @@ Describe 'pad-schedule 纯函数测试' {
             -Status 'NeedsHumanConfirm' -SyncResult $sync -Dir $dir
         $a.record.kind | Should Be 'run-needs-human-confirm'
         $a.record.exitCode | Should Be 3
-        $a.record.note | Should Match '人工确认'
+        $a.record.note | Should Match 'manual-confirmation'
         $a.record.status | Should Be 'NeedsHumanConfirm'
     }
 
@@ -328,7 +328,7 @@ Describe 'pad-schedule 纯函数测试' {
             $g = Get-RunAlertKind -ExitCode 1 -SyncResult $sync
             $g.kind | Should Be 'trigger-failed'
             $g.reason | Should Be $reason
-            $g.note | Should Match '未自动重试'
+            $g.note | Should Match 'nothing was retried automatically'
         }
         # 没带 reason 时兜底为 unknown，但仍然是 trigger-failed，不退回 run-failed
         $g2 = Get-RunAlertKind -ExitCode 1 -SyncResult ([pscustomobject]@{ triggerFailed = $true })
@@ -340,7 +340,7 @@ Describe 'pad-schedule 纯函数测试' {
         $sync = [pscustomobject]@{ runTimeout = $true }
         $g = Get-RunAlertKind -ExitCode 1 -SyncResult $sync
         $g.kind | Should Be 'run-timeout'
-        $g.note | Should Match '仍未拿到终止状态'
+        $g.note | Should Match 'without reaching a terminal state'
     }
 
     It '触发失败写 JSONL 时带 reason 字段，且原有分级不受影响' {
@@ -354,7 +354,7 @@ Describe 'pad-schedule 纯函数测试' {
         $a.record.kind | Should Be 'trigger-failed'
         $a.record.reason | Should Be 'no-robot'
         $a.record.errorCode | Should Be 'TRIGGER_NO_ROBOT'
-        $a.record.note | Should Match '未自动重试'
+        $a.record.note | Should Match 'nothing was retried automatically'
         # 原有三类告警仍在，未被新分类挤掉
         (Write-RunAlert -FlowName 'F' -ExitCode 4 -Stage 'lock' -Dir $dir).record.kind |
             Should Be 'run-lock-timeout'

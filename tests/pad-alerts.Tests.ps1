@@ -40,7 +40,7 @@ Describe 'PadAlerts 失败告警' {
         $rec.status | Should Be 'TriggerFailed'
         $rec.logPath | Should Match 'Actions\.log'
         $rec.ts | Should Not BeNullOrEmpty
-        $rec.note | Should Match '下一步'
+        $rec.note | Should Match 'Next step'
     }
 
     It '同一 runId + 同一 kind 重复调用只写一条' {
@@ -70,7 +70,7 @@ Describe 'PadAlerts 失败告警' {
             -Kind $ak.DeployInjectFailed -Dir $dir
         $r.skipped | Should Be $false
         @(Read-Alerts $dir)[0].kind | Should Be 'deploy-inject-failed'
-        @(Read-Alerts $dir)[0].note | Should Match '下一步'
+        @(Read-Alerts $dir)[0].note | Should Match 'Next step'
     }
 
     It '没有 runId 时按 flow + kind + stage + 当天去重' {
