@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""vbs_text.py — VBS/日志文本的编码探测与安全写回
+"""vbs_text.py — encoding detection and safe write-back for VBS/log text
 
-与 TextEncoding.psm1 使用同一套判定规则：
-  1) 有 BOM 时以 BOM 为准（UTF-8-BOM / UTF-16LE / UTF-16BE）
-  2) 无 BOM 的 UTF-16LE：ASCII 文本每隔一个字节就是 0x00，据此识别
-  3) 无 BOM 且能严格按 UTF-8 解码 → UTF-8；否则 → ANSI（Windows 代码页，中文为 936）
+Uses the same detection rules as TextEncoding.psm1:
+  1) If a BOM is present, trust it (UTF-8-BOM / UTF-16LE / UTF-16BE)
+  2) BOM-less UTF-16LE: in ASCII text every other byte is 0x00, which identifies it
+  3) No BOM and strict UTF-8 decoding succeeds → UTF-8; otherwise → ANSI (the Windows code page, 936 for Chinese)
 
-写回先落到同目录临时文件再原子替换，避免进程中断把 .vbs 写坏；
-未命中替换串时直接返回，不写文件。
+Writes go to a temporary file in the same directory first and are then replaced atomically, so an interrupted
+process cannot corrupt the .vbs file; when the search string is absent, nothing is written at all.
 
-用法：
-  python vbs_text.py probe <文件...>
-  python vbs_text.py replace <文件> --old A --new B [--all]
+Usage:
+  python vbs_text.py probe <files...>
+  python vbs_text.py replace <file> --old A --new B [--all]
 """
 
 import argparse
@@ -24,7 +24,7 @@ from pathlib import Path
 
 
 def ansi_codec() -> str:
-    """本机 ANSI 代码页对应的 Python 编码名（中文 Windows 为 cp936）。"""
+    """Python codec name for the machine's ANSI code page (cp936 on Chinese Windows)."""
     try:
         acp = ctypes.windll.kernel32.GetACP()
         if acp:
@@ -35,7 +35,7 @@ def ansi_codec() -> str:
 
 
 def detect_encoding(data: bytes) -> dict:
-    """探测编码，返回 kind / codec / bom 三项。"""
+    """Detect the encoding and return kind / codec / bom."""
     if data.startswith(b"\xef\xbb\xbf"):
         return {"kind": "utf-8-bom", "codec": "utf-8-sig", "bom": True}
     if data.startswith(b"\xff\xfe"):
@@ -43,7 +43,7 @@ def detect_encoding(data: bytes) -> dict:
     if data.startswith(b"\xfe\xff"):
         return {"kind": "utf-16be", "codec": "utf-16-be", "bom": True}
 
-    # 无 BOM 的 UTF-16LE：奇数位大量 0x00
+    # BOM-less UTF-16LE: most odd-positioned bytes are 0x00
     if len(data) >= 4:
         zeros = sum(1 for i in range(1, len(data), 2) if data[i] == 0)
         if zeros >= int((len(data) // 2) * 0.6):
@@ -57,7 +57,7 @@ def detect_encoding(data: bytes) -> dict:
 
 
 def decode_bytes(data: bytes, info: dict) -> str:
-    """按探测结果解码（带 BOM 的 UTF-16 交给 codec 自动识别字节序）。"""
+    """Decode according to the detection result (UTF-16 with a BOM is left to the codec, which infers byte order)."""
     if info["kind"] == "utf-8-bom":
         return data.decode("utf-8-sig")
     if info["bom"]:
@@ -66,7 +66,7 @@ def decode_bytes(data: bytes, info: dict) -> str:
 
 
 def encode_text(text: str, info: dict) -> bytes:
-    """按探测结果编码，BOM 由这里显式补上，保证写回后仍是同一编码。"""
+    """Encode according to the detection result; the BOM is added explicitly here so the file keeps the same encoding."""
     kind = info["kind"]
     if kind == "utf-8-bom":
         return text.encode("utf-8-sig")
@@ -80,22 +80,22 @@ def encode_text(text: str, info: dict) -> bytes:
 
 
 def read_text(path) -> tuple:
-    """自动识别编码读取，返回 (文本, 编码信息)。"""
+    """Read a file with automatic encoding detection; returns (text, encoding info)."""
     data = Path(path).read_bytes()
     info = detect_encoding(data)
     return decode_bytes(data, info), info
 
 
 def write_text(path, text: str, info: dict = None) -> dict:
-    """保留原编码安全写回（临时文件 + 原子替换）。"""
+    """Write the text back in its original encoding, safely (temporary file + atomic replace)."""
     p = Path(path)
     if info is None:
         info = detect_encoding(p.read_bytes() if p.exists() else b"")
     data = encode_text(text, info)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_bytes(data)
-    # Windows 上目标文件可能被 Defender 或 Excel 等进程短暂占用，
-    # 此时 os.replace 会抛 WinError 5，重试几次再放弃
+    # On Windows the target file may be briefly locked by Defender, Excel or another process;
+    # os.replace then raises WinError 5, so retry a few times before giving up.
     for attempt in range(6):
         try:
             os.replace(str(tmp), str(p))
@@ -109,7 +109,7 @@ def write_text(path, text: str, info: dict = None) -> dict:
 
 
 def replace_text(path, old: str, new: str, count: int = 1) -> tuple:
-    """替换文本并保留编码写回；返回 (替换次数, 编码信息)。未命中不写文件。"""
+    """Replace text and write it back in the original encoding; returns (replacements, encoding info). Nothing is written when there is no match."""
     text, info = read_text(path)
     n = text.count(old)
     if n == 0:

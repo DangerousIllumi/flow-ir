@@ -23,7 +23,7 @@ $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {
     $ver = & node -v
     Write-Ok "Node.js installed: $ver"
-    # 解析主版本号
+    # Extract the major version number
     $major = [int]($ver -replace 'v','' -split '\.')[0]
     if ($major -ge 18) {
         Write-Ok "version meets the requirement (>= 18)"
@@ -52,14 +52,14 @@ Write-Step "Checking Power Automate Desktop"
 $padFound = $false
 $padInfo  = ""
 
-# 方法1：MSIX / Store 安装包（普通用户即可查询，最可靠）
+# Method 1: MSIX / Store package (queryable by a normal user, and the most reliable probe)
 $pkg = Get-AppxPackage -Name "*PowerAutomateDesktop*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($pkg) {
     $padFound = $true
     $padInfo  = "Store/Appx package $($pkg.Name) version $($pkg.Version)"
 }
 
-# 方法2：注册表卸载项（覆盖经典安装版）
+# Method 2: registry uninstall entries (covers the classic installer)
 if (-not $padFound) {
     $regKeys = @(
         "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -78,7 +78,7 @@ if (-not $padFound) {
     }
 }
 
-# 方法3：常见安装 / 配置目录
+# Method 3: common install / configuration directories
 if (-not $padFound) {
     $padDirs = @(
         (Join-Path $env:LOCALAPPDATA "Microsoft\Power Automate Desktop"),
@@ -94,7 +94,7 @@ if (-not $padFound) {
     }
 }
 
-# 方法4：WindowsApps 内可执行文件（尽力而为；普通用户通常无权列出该目录）
+# Method 4: executable inside WindowsApps (best effort; a normal user usually cannot list that directory)
 if (-not $padFound) {
     $wa = Join-Path $env:ProgramFiles "WindowsApps"
     if (Test-Path $wa) {
