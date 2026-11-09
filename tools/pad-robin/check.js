@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * check.js — check-flows.js 的项目本地包装器
+ * check.js — project-local wrapper around check-flows.js
  *
- * 用法：
- *   node check.js <out.robin | 目录>
+ * Usage:
+ *   node check.js <out.robin | directory>
  *
- * 自动定位 KB 和 check-flows.js，对单个 .robin 文件或目录下所有 .robin 做静态校验。
+ * Locates the KB and check-flows.js automatically, then statically validates a single .robin file or every .robin under a directory.
  */
 
 const fs = require("fs");
@@ -18,7 +18,7 @@ if (!target) {
   process.exit(1);
 }
 
-// 定位 KB
+// Locate the KB
 const kbCandidates = [
   path.join(__dirname, "..", "..", "pad-robin-action-kb", "PAD_Robin_ActionKB.json"),
   path.join(process.cwd(), "pad-robin-action-kb", "PAD_Robin_ActionKB.json"),
@@ -29,15 +29,15 @@ if (!kbPath) {
   process.exit(1);
 }
 
-// 定位 check-flows.js
-// 校验器已从 KB 仓库的 marketing/video/tools 迁到本目录（脱离上游 git 结构）
+// Locate check-flows.js
+// The validator moved here from marketing/video/tools in the KB repo, so this no longer depends on the upstream git layout
 const checkFlows = path.join(__dirname, "check-flows.js");
 if (!fs.existsSync(checkFlows)) {
   console.error(`[error] check-flows.js not found (expected: ${checkFlows})`);
   process.exit(1);
 }
 
-// 收集要校验的文件
+// Collect the files to validate
 let files = [];
 const stat = fs.statSync(target);
 if (stat.isDirectory()) {
@@ -63,7 +63,7 @@ for (const f of files) {
   } catch (e) {
     bad = true;
   }
-  // 流程卫生检查：只报 warning，不影响退出码（未读输出 / 未用变量 / IF 嵌套过深）
+  // Flow-hygiene check: warnings only, never affects the exit code (unused output / unused variable / overly nested IF)
   const { warnings } = lintRobin(fs.readFileSync(f, "utf8"));
   for (const w of warnings) {
     console.log(`[lint] ${path.basename(f)}:${w.line} ${w.rule} ${w.message}`);

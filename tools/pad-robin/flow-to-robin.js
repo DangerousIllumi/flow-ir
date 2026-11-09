@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * flow-to-robin.js — 确定性生成器：flow.json → Robin 脚本（查表填空）
+ * flow-to-robin.js — deterministic generator: flow.json → Robin script (fill in the blanks from a lookup table)
  *
- * 用法：
+ * Usage:
  *   node flow-to-robin.js <flow.json> [out.robin] [--kb <kb.json>] [--no-check]
  *
- * 设计原则：
- * - 动作骨架直接取 KB golden_example 的 actionId / 参数名 / 参数顺序 / 输出名，绝不改写
- * - 值来源优先级：flow 节点 params → 句柄自动接上游 Launch → KB default → golden 占位值（告警）
- * - 类型格式化：String/FileObject/FolderObject → $'''…'''；数字/布尔裸写；枚举 → Module.EnumType.Value
- * - 字符串转义：\ 双写、' → \'、单个 % → %%
- * - 引用：{{2.RetrievedEmails}} → 上游输出变量；{{config.X}} / {{variables.X}} → 裸变量 X
- * - 安全闸门：unknown action / 未知参数 / needs_ui_selector / 悬空引用 → 报错并拒绝产出（退出码 1）
+ * Design principles:
+ * - The action skeleton comes straight from the KB golden_example's actionId / parameter names / parameter order / output names and is never rewritten
+ * - Value precedence: flow node params → handle auto-wired to an upstream Launch → KB default → golden placeholder value (with a warning)
+ * - Type formatting: String/FileObject/FolderObject → $'''…''' ; numbers/booleans are bare; enums → Module.EnumType.Value
+ * - String escaping: \ doubled, ' → \', a single % → %%
+ * - References: {{2.RetrievedEmails}} → upstream output variable; {{config.X}} / {{variables.X}} → bare variable X
+ * - Safety gates: unknown action / unknown parameter / needs_ui_selector / dangling reference → error out and refuse to produce anything (exit code 1)
  */
 
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-// ── CLI 参数 ──────────────────────────────────────────────────
+// ── CLI arguments ─────────────────────────────────────────────
 const args = process.argv.slice(2);
 const flowPath = args.shift();
 let outPath = null;
@@ -27,7 +27,7 @@ let noCheck = false;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--kb") kbPath = args[++i];
   else if (args[i] === "--no-check") noCheck = true;
-  else if (args[i].startsWith("--")) { /* 未知选项忽略 */ }
+  else if (args[i].startsWith("--")) { /* ignore unknown options */ }
   else outPath = args[i];
 }
 
@@ -36,7 +36,7 @@ if (!flowPath) {
   process.exit(1);
 }
 
-// ── 加载 KB ───────────────────────────────────────────────────
+// ── Load the KB ───────────────────────────────────────────────
 if (!kbPath) {
   const candidates = [
     path.join(__dirname, "..", "..", "pad-robin-action-kb", "PAD_Robin_ActionKB.json"),
@@ -51,11 +51,11 @@ if (!kbPath || !fs.existsSync(kbPath)) {
 const kb = JSON.parse(fs.readFileSync(kbPath, "utf8"));
 const actionMap = new Map(kb.actions.map((a) => [a.actionId, a]));
 
-// ── 加载 flow ─────────────────────────────────────────────────
+// ── Load the flow ─────────────────────────────────────────────
 const flow = JSON.parse(fs.readFileSync(flowPath, "utf8"));
 
-// edges 一致性闸门：flow.json 同时维护 edges（画图）与 next/branch（生成代码），
-// 生成前先确认两边没漂移，避免 PAD 代码与流程图各说各话
+// edges consistency gate: flow.json maintains both edges (for the diagram) and next/branch (for code generation),
+// so confirm the two sides have not drifted before generating, lest the PAD code and the diagram tell different stories
 try {
   const { checkFlowConsistency } = require(path.join(__dirname, "..", "flow-drawio", "check-flow.js"));
   if (Array.isArray(flow.edges) && flow.edges.length) {
@@ -82,13 +82,13 @@ try {
   }
 }
 
-// 句柄类型 → 上游产出变量名的映射（运行时填充）
+// Handle type → name of the upstream variable that produces it (filled in at runtime)
 const handleVars = {}; // { ExcelInstance: "ExcelInstance", OutlookInstance: "OutlookInstance", ... }
 
-// 所有已定义变量（用于悬空引用检查）
+// Every defined variable (used for the dangling-reference check)
 const definedVars = new Set();
 
-// ── 工具函数 ──────────────────────────────────────────────────
+// ── Helper functions ──────────────────────────────────────────
 const CONTROL_FLOW = new Set(["IF", "LOOP", "SWITCH", "GUARD"]);
 
 function isHandleType(t) {
@@ -100,17 +100,17 @@ function handleBaseName(type) {
   return type.replace(/Handle$/, "");
 }
 
-/** WAIT 节点等待秒数：读 params.Seconds，缺省 60 秒 */
+/** Seconds a WAIT node waits: reads params.Seconds, defaults to 60 seconds */
 function waitSeconds(node) {
   const s = node.params && node.params.Seconds != null ? node.params.Seconds : 60;
   return s;
 }
 
-/** 按类型格式化值 */
+/** Format a value according to its type */
 function formatValue(raw, paramType, action) {
   if (raw == null) return null;
 
-  // 布尔 / 数字裸写
+  // Booleans / numbers are written bare
   if (paramType === "Boolean") {
     if (raw === true || raw === "true" || raw === "True") return "True";
     if (raw === false || raw === "false" || raw === "False") return "False";
@@ -120,28 +120,28 @@ function formatValue(raw, paramType, action) {
     return String(raw);
   }
 
-  // 枚举：全限定 Module.EnumType.Value
+  // Enums: fully qualified Module.EnumType.Value
   if (action && action.input_params) {
     const p = action.input_params.find((x) => x.type === paramType);
     if (p && p.enumValues && p.enumValues.includes(raw)) {
-      // 枚举类型名去掉 Values 后缀，如 RetrieveMessagesMode
+      // Drop the Values suffix from the enum type name, e.g. RetrieveMessagesMode
       const enumType = paramType;
       return `${action.module}.${enumType}.${raw}`;
     }
   }
 
-  // 字符串 / 文件 / 文件夹：$'''…''' + 转义
+  // Strings / files / folders: $'''…''' plus escaping
   if (["String", "FileObject", "FolderObject", "SecureString"].includes(paramType)) {
     return formatString(raw);
   }
 
-  // 变量引用或表达式：裸写
+  // Variable reference or expression: written bare
   return String(raw);
 }
 
 /**
- * 转义字符串字面量内容（不含 $'''…''' 包裹）：\ 双写、' → \'、单个 % → %%
- * %Var% 是 PAD 的变量引用（如 %PadRoot%），必须原样保留，否则会被当成字面百分号转义坏
+ * Escape the contents of a string literal (without the surrounding $'''…'''): \ doubled, ' → \', a single % → %%
+ * %Var% is a PAD variable reference (e.g. %PadRoot%) and must be preserved verbatim, otherwise it would be escaped as a literal percent sign
  */
 function escapeLiteral(s) {
   return String(s)
@@ -152,22 +152,22 @@ function escapeLiteral(s) {
     .join("");
 }
 
-/** 字符串格式化 + 转义 */
+/** String formatting plus escaping */
 function formatString(s) {
   return `$'''${escapeLiteral(s)}'''`;
 }
 
-/** 解析 {{ref}} 引用，返回裸变量名 */
+/** Resolve a {{ref}} reference and return the bare variable name */
 function resolveRef(ref, currentNodeId) {
-  // {{2.RetrievedEmails}} → 节点2 的输出变量 RetrievedEmails
+  // {{2.RetrievedEmails}} → output variable RetrievedEmails of node 2
   const m = ref.match(/^\{\{(\d+)\.(\w+)\}\}$/);
   if (m) {
     const [, srcId, field] = m;
     const srcNode = flow.nodes.find((n) => n.id === srcId);
     if (!srcNode) throw new Error(`node ${currentNodeId} references a non-existent node ${srcId}`);
-    // 1. 节点 output_map 显式指定的变量名
+    // 1. Variable name explicitly given by the node's output_map
     if (srcNode.output_map && srcNode.output_map[field]) return srcNode.output_map[field];
-    // 1b. output_map 的键可能是 KB 输出名（如 Content→FileContents），按 KB 名反查
+    // 1b. output_map keys may be KB output names (e.g. Content→FileContents), so look them up by KB name
     if (srcNode.output_map) {
       const act0 = actionMap.get(srcNode.pad_hint);
       const ops0 = (act0 && act0.output_params) || [];
@@ -177,9 +177,9 @@ function resolveRef(ref, currentNodeId) {
         if (kbName === field) return srcNode.output_map[k];
       }
     }
-    // 2. 优先用 outputs[] 里的绑定名，否则用 KB 默认变量名
+    // 2. Prefer the bound name in outputs[], otherwise the KB default variable name
     if (srcNode.outputs && srcNode.outputs.includes(field)) return field;
-    // 3. 查 KB 输出参数的 defaultVariable
+    // 3. Look up defaultVariable of the KB output parameter
     const action = actionMap.get(srcNode.pad_hint);
     if (action && action.output_params) {
       const op = action.output_params.find((o) => o.name === field);
@@ -187,25 +187,25 @@ function resolveRef(ref, currentNodeId) {
     }
     return field;
   }
-  // {{config.X}} / {{variables.X}} → 裸变量 X
+  // {{config.X}} / {{variables.X}} → bare variable X
   const cm = ref.match(/^\{\{(?:config|variables)\.(\w+)\}\}$/);
   if (cm) return cm[1];
-  // {{X}} → 裸变量 X
+  // {{X}} → bare variable X
   const sm = ref.match(/^\{\{(\w+)\}\}$/);
   if (sm) return sm[1];
   return null;
 }
 
-/** 处理参数值：可能是字面量，也可能含 {{ref}} 内嵌 */
+/** Handle a parameter value: it may be a literal or contain embedded {{ref}} */
 function resolveParamValue(value, paramType, action, nodeId) {
   if (typeof value !== "string") return formatValue(value, paramType, action);
 
-  // 整个值就是一个引用
+  // The whole value is a single reference
   const fullRef = resolveRef(value, nodeId);
   if (fullRef) return fullRef;
 
-  // 字符串内含 {{ref}}：分段处理 —— 字面量段转义，引用段保留为裸 %Var%，
-  // 避免 %Var% 里的 % 被当成字面百分号转义成 %%Var%%
+  // {{ref}} inside a string: process it segment by segment — escape literal segments, keep reference segments as bare %Var%,
+  // so the % in %Var% is not escaped into %%Var%% as a literal percent sign
   if (value.includes("{{")) {
     const segs = [];
     const refRe = /\{\{\d+\.\w+\}\}|\{\{(?:config|variables)\.\w+\}\}|\{\{\w+\}\}/g;
@@ -225,8 +225,8 @@ function resolveParamValue(value, paramType, action, nodeId) {
 }
 
 /**
- * 表达式里的引用替换：{{2.Field}} / {{variables.X}} → 裸变量名
- * 只替换引用片段，表达式本身（比较符、函数调用）原样保留
+ * Reference substitution inside an expression: {{2.Field}} / {{variables.X}} → bare variable name
+ * Only reference fragments are replaced; the expression itself (comparison operators, function calls) is left untouched
  */
 function resolveExpression(s, nodeId) {
   if (typeof s !== "string") return s;
@@ -234,7 +234,7 @@ function resolveExpression(s, nodeId) {
     (m) => resolveRef(m, nodeId) || m);
 }
 
-// ── 安全闸门 ──────────────────────────────────────────────────
+// ── Safety gates ──────────────────────────────────────────────
 const errors = [];
 const warnings = [];
 
@@ -242,12 +242,12 @@ function gate(node, msg) {
   errors.push(`node ${node.id} "${node.label || node.type}": ${msg}`);
 }
 
-// ── 生成变量初始化 ─────────────────────────────────────────────
+// ── Generate variable initializations ─────────────────────────
 const lines = [];
 if (flow.variables && flow.variables.length) {
   for (const v of flow.variables) {
     if (v.comment) lines.push(`# ${v.comment}`);
-    // deployKey：部署时由 pad-deploy 用 config 值替换 {{KEY}}，仓库里不落真实账号/路径
+    // deployKey: at deploy time pad-deploy replaces {{KEY}} with the config value, so no real account/path lands in the repo
     let val;
     if (v.deployKey) {
       val = formatString(`{{${v.deployKey}}}`);
@@ -260,7 +260,7 @@ if (flow.variables && flow.variables.length) {
       lines.push(`SET ${v.name} TO ${val}`);
       definedVars.add(v.name);
     } else {
-      // 无默认值：生成注释提醒
+      // No default value: emit a comment as a reminder
       lines.push(`# TODO: variable ${v.name} (${v.type}) has no default value; set it as an input variable in PAD or supply a value`);
       warnings.push(`variable ${v.name} has no default value`);
     }
@@ -268,13 +268,13 @@ if (flow.variables && flow.variables.length) {
   if (flow.variables.length) lines.push("");
 }
 
-// 被控制流节点「吞掉」的子节点（在主循环中跳过，避免重复生成）
+// Child nodes "swallowed" by control-flow nodes (skipped in the main loop so they are not generated twice)
 const consumed = new Set();
 
 /**
- * 输出一行动作代码。
- * 节点带 on_error="continue" 时，按 PAD 的「出错继续运行→转到下一个操作」生成空处理器：
- *   <动作行>
+ * Emit one line of action code.
+ * When a node has on_error="continue", generate an empty handler the way PAD's "continue on error → go to next action" does:
+ *   <action line>
  *   ON ERROR
  *   END
  */
@@ -287,44 +287,44 @@ function pushActionLine(node, parts) {
   }
 }
 
-// ── 生成节点 ──────────────────────────────────────────────────
+// ── Generate nodes ────────────────────────────────────────────
 for (const node of flow.nodes) {
-  if (consumed.has(node.id)) continue;  // 已被某个控制流节点作为 body 生成
+  if (consumed.has(node.id)) continue;  // already generated as the body of some control-flow node
 
   const padHint = node.pad_hint;
 
-  // 控制流节点
+  // Control-flow node
   if (CONTROL_FLOW.has(padHint)) {
     generateControlFlow(node);
     continue;
   }
 
-  // WAIT 节点：Robin 内建等待语句（与 SET/IF/LOOP 同类，不在 KB 动作表里）
+  // WAIT node: Robin's built-in wait statement (like SET/IF/LOOP, it is not in the KB action table)
   if (node.type === "wait" || padHint === "WAIT") {
     lines.push(`WAIT ${waitSeconds(node)}`);
     continue;
   }
 
-  // 跳出循环节点：Robin 内建 EXIT LOOP（仅出现在 LOOP 体内）
+  // Loop-exit node: Robin's built-in EXIT LOOP (only appears inside a LOOP body)
   if (node.type === "break" || padHint === "EXIT LOOP" || padHint === "EXIT_LOOP") {
     lines.push(`EXIT LOOP`);
     continue;
   }
 
-  // 查 KB
+  // Look up the KB
   const action = actionMap.get(padHint);
   if (!action) {
     gate(node, `unknown action pad_hint="${padHint}" (not found in the KB; refusing to generate)`);
     continue;
   }
 
-  // UI 选择器闸门
+  // UI selector gate
   if (action.needs_ui_selector) {
     gate(node, `action ${padHint} needs a UI selector (needs_ui_selector=true); it cannot be generated automatically, record the element in PAD first`);
     continue;
   }
 
-  // 检查 params 的键是否合法
+  // Check that the keys in params are valid
   const validParamNames = new Set(action.input_params.map((p) => p.name));
   for (const key of Object.keys(node.params || {})) {
     if (!validParamNames.has(key)) {
@@ -332,7 +332,7 @@ for (const node of flow.nodes) {
     }
   }
 
-  // 构建动作行
+  // Build the action line
   const parts = [padHint];
   const params = node.params || {};
 
@@ -341,10 +341,10 @@ for (const node of flow.nodes) {
     let val;
 
     if (rawVal !== undefined && rawVal !== null) {
-      // 1. flow 显式给定
+      // 1. Explicitly given by the flow
       val = resolveParamValue(rawVal, p.type, action, node.id);
     } else if (isHandleType(p.type)) {
-      // 2. 句柄类型：自动接上游 Launch 产出的变量
+      // 2. Handle type: auto-wire the variable produced by an upstream Launch
       const base = handleBaseName(p.type);
       const hv = handleVars[base];
       if (hv) {
@@ -353,22 +353,22 @@ for (const node of flow.nodes) {
         val = p.default;
       } else {
         gate(node, `parameter ${p.name} (type ${p.type}) needs a handle variable, but no Launch action in the flow produces that handle`);
-        val = base; // 占位
+        val = base; // placeholder
       }
     } else if (p.default !== undefined) {
-      // 3. KB 默认值
+      // 3. KB default value
       val = formatValue(p.default, p.type, action);
     } else {
-      // 4. 未提供且无默认值：直接省略该参数（与 KB golden 的写法一致，避免填入占位垃圾）
+      // 4. Not supplied and no default: omit the parameter entirely (same as the KB golden style, so no placeholder junk gets written)
       continue;
     }
 
     parts.push(`${p.name}: ${val}`);
   }
 
-  // 输出绑定
-  // output_skip：节点声明「这些输出不落变量」（清理/打开等只看执行不看结果的动作），
-  // 与 PAD 里把输出留空同义；句柄输出不允许跳过，否则后续动作拿不到句柄
+  // Output binding
+  // output_skip: the node declares "these outputs are not bound to variables" (for cleanup/open actions where only execution matters),
+  // same meaning as leaving the output blank in PAD; handle outputs cannot be skipped, otherwise later actions have no handle
   const skipOutputs = new Set(node.output_skip || []);
   for (const op of action.output_params) {
     if (skipOutputs.has(op.name)) {
@@ -377,11 +377,11 @@ for (const node of flow.nodes) {
       }
       continue;
     }
-    // 句柄类型用类型推导的变量名（OutlookInstance / ExcelInstance），避免都叫 Instance 冲突
+    // Use the type-derived variable name for handle types (OutlookInstance / ExcelInstance) so they do not all collide as Instance
     const outputName = outputVarName(node, action, op);
     parts.push(`${op.name}=> ${outputName}`);
     definedVars.add(outputName);
-    // 记录句柄产出
+    // Record the produced handle
     if (isHandleType(op.type)) {
       handleVars[handleBaseName(op.type)] = outputName;
     }
@@ -390,19 +390,19 @@ for (const node of flow.nodes) {
   pushActionLine(node, parts);
 }
 
-// ── 控制流生成 ─────────────────────────────────────────────────
+// ── Control-flow generation ───────────────────────────────────
 function generateControlFlow(node) {
-  // 收集这个控制流节点「吞掉」的所有子节点 id
+  // Collect every child node id that this control-flow node "swallows"
   const allBody = [];
   let ifTrue = [];
   let ifFalse = [];
   if (node.pad_hint === "IF" && node.branch) {
-    // true 支路：优先 trueBody / body 数组，退化为 branch.true 单节点
+    // true branch: prefer the trueBody / body array, fall back to the single node in branch.true
     if (Array.isArray(node.branch.trueBody)) ifTrue = node.branch.trueBody.slice();
     else if (Array.isArray(node.branch.body)) ifTrue = node.branch.body.slice();
     else if (node.branch.true != null) ifTrue = [String(node.branch.true)];
-    // false 支路：优先 falseBody 数组；退化为 branch.false 单节点，
-    // 且仅当它不在 next（即不是 IF 之后的汇合点）时，才算独立的 else 分支
+    // false branch: prefer the falseBody array; fall back to the single node in branch.false,
+    // and only when it is not in next (i.e. it is not the merge point after the IF) does it count as a standalone else branch
     if (Array.isArray(node.branch.falseBody)) ifFalse = node.branch.falseBody.slice();
     else if (node.branch.false != null) {
       const f = String(node.branch.false);
@@ -417,13 +417,13 @@ function generateControlFlow(node) {
     for (const c of node.switch.cases || []) allBody.push(...(c.body || []));
     if (node.switch.default) allBody.push(...node.switch.default);
   }
-  // guard：副作用守卫（如 DRY_RUN），语义等同 IF + ELSE，但可被准入网关按类型识别
+  // guard: side-effect guard (e.g. DRY_RUN), semantically IF + ELSE, but recognizable by type to the admission gate
   if (node.pad_hint === "GUARD") {
     allBody.push(...(node.body || []), ...(node.elseBody || []));
   }
-  // 子节点生成：已被「内层控制流」吞掉的节点要跳过，否则外层会再输出一遍。
-  // 因此 consumed 的登记放在生成之后：内层先生成并登记自己的子节点，
-  // 外层随后遍历到它们时就会被跳过。
+  // Child generation: nodes already swallowed by an "inner control-flow" must be skipped, otherwise the outer one emits them again.
+  // That is why consumed is registered after generation: the inner one generates and registers its children first,
+  // so when the outer one later walks over them they are skipped.
   const emit = (bid) => {
     if (consumed.has(bid)) return;
     const child = flow.nodes.find((n) => n.id === bid);
@@ -433,9 +433,9 @@ function generateControlFlow(node) {
   if (node.pad_hint === "IF") {
     const cond = node.params && node.params.Condition ? resolveExpression(node.params.Condition, node.id) : "True";
     lines.push(`IF ${cond} THEN`);
-    // true 支路
+    // true branch
     for (const bid of ifTrue) emit(bid);
-    // false 支路：只有存在独立 else 时才输出 ELSE，避免与 next 汇合点重复输出
+    // false branch: emit ELSE only when a standalone else exists, so the merge point after next is not emitted twice
     if (ifFalse.length) {
       lines.push(`ELSE`);
       for (const bid of ifFalse) emit(bid);
@@ -478,22 +478,22 @@ function generateControlFlow(node) {
     lines.push(`END`);
   }
 
-  // 登记本层吞掉的节点，供上层/主循环跳过
+  // Register the nodes swallowed at this level so upper levels / the main loop skip them
   for (const bid of allBody) consumed.add(bid);
 }
 
 function generateNodeInline(node) {
-  // 简化：内联节点不重复走主循环，直接生成一行（控制流嵌套暂时只支持一层）
+  // Simplified: inline nodes do not re-enter the main loop and emit one line directly (nested control flow is only supported one level deep for now)
   if (CONTROL_FLOW.has(node.pad_hint)) {
     generateControlFlow(node);
     return;
   }
-  // WAIT 节点：Robin 内建等待语句
+  // WAIT node: Robin's built-in wait statement
   if (node.type === "wait" || node.pad_hint === "WAIT") {
     lines.push(`WAIT ${waitSeconds(node)}`);
     return;
   }
-  // 跳出循环节点：Robin 内建 EXIT LOOP
+  // Loop-exit node: Robin's built-in EXIT LOOP
   if (node.type === "break" || node.pad_hint === "EXIT LOOP" || node.pad_hint === "EXIT_LOOP") {
     lines.push(`EXIT LOOP`);
     return;
@@ -520,12 +520,12 @@ function generateNodeInline(node) {
     } else if (p.default !== undefined) {
       val = formatValue(p.default, p.type, action);
     } else {
-      // 未提供且无默认值：直接省略该参数（与 KB golden 的写法一致，避免填入占位垃圾）
+      // Not supplied and no default: omit the parameter entirely (same as the KB golden style, so no placeholder junk gets written)
       continue;
     }
     parts.push(`${p.name}: ${val}`);
   }
-  // output_skip：与主循环同口径，跳过的输出不落变量
+  // output_skip: same rule as the main loop — skipped outputs are not bound to variables
   const skipOutputs = new Set(node.output_skip || []);
   for (const op of action.output_params) {
     if (skipOutputs.has(op.name)) {
@@ -541,14 +541,14 @@ function generateNodeInline(node) {
   pushActionLine(node, parts);
 }
 
-/** 从 KB golden_example 读取输出参数的默认变量名（如 ExitCode=> CommandExitCode） */
+/** Read the default variable name of an output parameter from the KB golden_example (e.g. ExitCode=> CommandExitCode) */
 function goldenOutputName(action, outName) {
   const golden = action.golden_example || "";
   const m = golden.match(new RegExp(`${outName}\\s*=>\\s*(\\w+)`));
   return m ? m[1] : null;
 }
 
-/** 计算输出参数绑定的变量名：节点 output_map > KB defaultVariable > golden 默认名 > 句柄类型推导 > 参数名 */
+/** Compute the variable name for an output parameter binding: node output_map > KB defaultVariable > golden default name > handle type derivation > parameter name */
 function outputVarName(node, action, op) {
   const map = node.output_map || {};
   if (map[op.name]) return map[op.name];
@@ -557,8 +557,8 @@ function outputVarName(node, action, op) {
          (isHandleType(op.type) ? handleBaseName(op.type) : op.name);
 }
 
-// ── 悬空引用检查 ───────────────────────────────────────────────
-// （简化：检查所有 {{ref}} 的节点 id 是否存在，字段是否是该节点输出）
+// ── Dangling reference check ──────────────────────────────────
+// (Simplified: check that the node id of every {{ref}} exists and that the field is an output of that node)
 for (const node of flow.nodes) {
   if (!node.params) continue;
   for (const [key, val] of Object.entries(node.params)) {
@@ -574,7 +574,7 @@ for (const node of flow.nodes) {
   }
 }
 
-// ── 输出结果 ──────────────────────────────────────────────────
+// ── Emit the result ───────────────────────────────────────────
 const output = lines.join("\n") + "\n";
 
 if (errors.length) {
@@ -589,7 +589,7 @@ if (warnings.length) {
   for (const w of warnings) console.error("  ! " + w);
 }
 
-// 写文件
+// Write the file
 if (outPath) {
   fs.writeFileSync(outPath, output, "utf8");
   console.error(`Generated: ${outPath} (${flow.nodes.length} nodes)`);
@@ -597,10 +597,10 @@ if (outPath) {
   process.stdout.write(output);
 }
 
-// ── 静态自检 ──────────────────────────────────────────────────
-// 唯一规则来源是仓库内的 tools/pad-robin/check-flows.js。
-// 知识库目录下也有一份上游克隆的副本（marketing/video/tools/check-flows.js），
-// 它是外部仓库的历史产物，两边已经分叉；这里一律不再使用，避免“自检通过但 check.js 失败”。
+// ── Static self-check ─────────────────────────────────────────
+// The single source of truth for the rules is tools/pad-robin/check-flows.js in this repo.
+// The KB directory also holds an upstream-cloned copy (marketing/video/tools/check-flows.js);
+// that is a historical artifact of an external repo and the two have diverged, so it is never used here — otherwise "self-check passes but check.js fails".
 if (!noCheck && outPath) {
   const checkFlows = path.join(__dirname, "check-flows.js");
   if (fs.existsSync(checkFlows)) {

@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 /**
- * compare-robin.js — 断言「生成结果」与「仓库里的生产 .robin」等价
+ * compare-robin.js — asserts that the "generated output" and the "production .robin in the repo" are equivalent
  *
- * 背景：flow.json 是唯一设计源，.robin 是可重建产物但仍入库（发布/审计/回滚要用）。
- * 两者一旦漂移，流程图、校验、发布三者就会各说各话，所以在 CI 里逐行比对。
+ * Background: flow.json is the single design source; the .robin is a rebuildable artifact that still belongs in
+ * the repo because release/audit/rollback need it; once they drift, diagram, checks and release disagree, so CI compares line by line.
  *
- * 规范化规则与 tools/pad-sync/RobinText.psm1 的 ConvertTo-NormalizedRobin 保持一致：
- *   - 反斜杠转义引号（\"…\" 与 \\"…\\"）统一成单个引号
- *   - 去掉行尾/行首空白与空行
- *   - 去掉 @ 元数据行、# 注释行、IMPORT 行
+ * Normalization rules match ConvertTo-NormalizedRobin in tools/pad-sync/RobinText.psm1:
+ *   - backslash-escaped quotes (\"…\" and \\"…\\") collapse to a single quote
+ *   - trailing/leading whitespace and blank lines are dropped
+ *   - @ metadata lines, # comment lines and IMPORT lines are dropped
  *
- * 用法：node compare-robin.js <生成.robin> <生产.robin> [--json]
- * 退出码：0 一致 / 1 不一致 / 2 读取失败
+ * Usage: node compare-robin.js <generated.robin> <production.robin> [--json]
+ * Exit codes: 0 match / 1 mismatch / 2 read failure
  */
 
 const fs = require("fs");
 
-/** 规范化 robin 文本（与 RobinText.psm1 同一口径） */
+/** Normalize robin text (same rules as RobinText.psm1) */
 function normalizeRobin(text) {
   return String(text)
     .replace(/\\+"/g, '"')
@@ -26,7 +26,7 @@ function normalizeRobin(text) {
     .join("\n");
 }
 
-/** 把行归约成「骨架」，用于判断两行是否只是变量名/字面量不同 */
+/** Reduce a line to its "skeleton" so we can tell whether two lines differ only in variable names or literals */
 function skeleton(line) {
   return line
     .replace(/\$'''[\s\S]*?'''/g, "$STR$")
@@ -34,7 +34,7 @@ function skeleton(line) {
     .replace(/[A-Za-z_]\w*/g, "W");
 }
 
-/** 差异分类：先给修复方向，再给行号 */
+/** Classify a diff: the fix direction comes first, the line number second */
 function classify(a, b) {
   if (a === "<missing>" || b === "<missing>") return "line-count-mismatch";
   if (/\{\{/.test(a) !== /\{\{/.test(b)) return "placeholder";
@@ -45,7 +45,7 @@ function classify(a, b) {
   return "other";
 }
 
-/** 逐行比对，返回差异列表（最多 limit 条） */
+/** Compare line by line and return the list of diffs (at most limit entries) */
 function compareRobin(genText, prodText, limit = 20) {
   const la = normalizeRobin(genText).split("\n");
   const lb = normalizeRobin(prodText).split("\n");
@@ -59,7 +59,7 @@ function compareRobin(genText, prodText, limit = 20) {
   return { ok: diffs.length === 0, diffs, genLines: la.length, prodLines: lb.length };
 }
 
-/** 按分类汇总，便于一次看清漂移集中在哪一类 */
+/** Group diffs by kind so you can see at a glance which category the drift concentrates in */
 function summarize(diffs) {
   const byKind = {};
   for (const d of diffs) byKind[d.kind] = (byKind[d.kind] || 0) + 1;

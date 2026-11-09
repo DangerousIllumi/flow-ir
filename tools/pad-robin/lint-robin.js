@@ -1,41 +1,41 @@
-// lint-robin.js — Robin 脚本的「流程卫生」检查（对应 PAD 设计器右上角流检查器的部分规则）
+// lint-robin.js — Robin script "flow hygiene" checks (a subset of the rules in the PAD designer's top-right flow checker)
 //
-// 三条规则，全部只读、只报 warning，不改变 check.js 的退出码：
-//   1) unused-output  动作捕获了输出变量，但后续从未读取
-//   2) unused-var     SET 声明了变量，但后续从未读取
-//   3) nested-if      IF 嵌套过深（阈值默认 3 层，超过即提示）
+// Three rules, all read-only and warning-only; check.js's exit code is never affected:
+//   1) unused-output  an action captured an output variable that nothing reads afterwards
+//   2) unused-var     SET declared a variable that nothing reads afterwards
+//   3) nested-if      IF nesting is too deep (threshold defaults to 3 levels; anything deeper is flagged)
 //
-// 为什么放在离线工具里：设计器里的「应用修复」会直接改画布，使 flow.json 与线上漂移；
-// 这里只给警告，修复仍回到 flow.json 做。
+// Why this lives in an offline tool: the designer's "Apply fix" edits the canvas directly and makes flow.json drift from the live flow;
+// here we only warn, and fixes still go back into flow.json.
 
 const RULE_UNUSED_OUTPUT = "unused-output";
 const RULE_UNUSED_VAR = "unused-var";
 const RULE_NESTED_IF = "nested-if";
 
-// 默认嵌套阈值：IF 层数 > 3 时提示（与设计器实测口径对齐）
+// Default nesting threshold: warn when IF depth exceeds 3 (matches what the designer actually flags)
 const DEFAULT_MAX_IF_DEPTH = 3;
 
-// 把标识符从“定义位置”上抹掉，剩下的文本里若还能找到该标识符，说明被读过
+// Erase an identifier from its definition sites; if it still shows up in the remaining text, it has been read
 function stripDefinitions(text, names) {
   let out = text;
   for (const name of names) {
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // 输出捕获：Xxx=> Name
+    // Output capture: Xxx=> Name
     out = out.replace(new RegExp(`\\w+=>\\s*${esc}\\b`, "g"), "");
-    // 变量声明：SET Name TO / SET Name =
+    // Variable declaration: SET Name TO / SET Name =
     out = out.replace(new RegExp(`^\\s*SET\\s+${esc}\\s+(TO|=)`, "gim"), "");
   }
   return out;
 }
 
 function isUsed(text, name) {
-  // 变量在表达式中出现：%Name% 或 Name.Property 或裸标识符
+  // The variable shows up in an expression: %Name%, Name.Property, or a bare identifier
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^A-Za-z0-9_])${esc}([^A-Za-z0-9_]|$)`, "i").test(text);
 }
 
 /**
- * 分析一段 Robin 文本。
+ * Analyze a piece of Robin text.
  * @param {string} text
  * @param {{maxIfDepth?: number}} [opts]
  * @returns {{warnings: Array<{rule:string,line:number,message:string}>, stats: object}}
@@ -46,7 +46,7 @@ function lintRobin(text, opts = {}) {
   const codeLines = lines.filter((l) => !/^\s*#/.test(l));
   const code = codeLines.join("\n");
 
-  // ── 收集定义 ──────────────────────────────────────────────
+  // ── Collect definitions ────────────────────────────────────
   const outputs = []; // {name, line}
   const declared = []; // {name, line}
   lines.forEach((raw, i) => {
@@ -62,7 +62,7 @@ function lintRobin(text, opts = {}) {
 
   const warnings = [];
 
-  // ── 规则 1：捕获了但没读 ──────────────────────────────────
+  // ── Rule 1: captured but never read ────────────────────────
   const names = [...new Set(outputs.map((o) => o.name))];
   const usageText = stripDefinitions(code, names);
   const seenOutput = new Set();
@@ -78,14 +78,14 @@ function lintRobin(text, opts = {}) {
     }
   }
 
-  // ── 规则 2：声明了但没读 ──────────────────────────────────
+  // ── Rule 2: declared but never read ────────────────────────
   const declNames = [...new Set(declared.map((d) => d.name))];
   const declUsage = stripDefinitions(code, declNames);
   const seenDecl = new Set();
   for (const d of declared) {
     if (seenDecl.has(d.name)) continue;
     seenDecl.add(d.name);
-    // 只在该变量“最后一次声明”之后仍无引用时才算未用
+    // Only counts as unused when there is still no reference after the variable's last declaration
     if (!isUsed(declUsage, d.name)) {
       warnings.push({
         rule: RULE_UNUSED_VAR,
@@ -95,7 +95,7 @@ function lintRobin(text, opts = {}) {
     }
   }
 
-  // ── 规则 3：IF 嵌套过深 ───────────────────────────────────
+  // ── Rule 3: IF nested too deep ──────────────────────────────
   const stack = [];
   let ifDepth = 0;
   const depthHistogram = {};

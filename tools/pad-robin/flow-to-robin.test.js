@@ -1,8 +1,8 @@
-// flow-to-robin.test.js — 生成器单元测试（node --test）
+// flow-to-robin.test.js — unit tests for the generator (node --test)
 //
-// 覆盖 B2 的四类新能力：deployKey 占位符、guard 守卫、任意层嵌套、output_map 显式绑定，
-// 以及 output_skip（不需要的输出不落变量）。
-// 用法：node --test tools/pad-robin/flow-to-robin.test.js
+// Covers four new capabilities from B2: deployKey placeholders, guard nodes, arbitrary-depth nesting and
+// explicit output_map binding, plus output_skip (outputs that are not needed are not bound to a variable).
+// Usage: node --test tools/pad-robin/flow-to-robin.test.js
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
@@ -12,7 +12,7 @@ const { spawnSync } = require("node:child_process");
 
 const GEN = path.join(__dirname, "flow-to-robin.js");
 
-// 最小知识库：只需要 actionId / module / 输入输出参数，够生成动作行
+// Minimal knowledge base: only actionId / module / input and output params are needed to emit action lines
 const KB = {
   actions: [
     { actionId: "Test.Log", module: "Test", input_params: [{ name: "Message", type: "String" }], output_params: [] },
@@ -24,7 +24,7 @@ const KB = {
   ],
 };
 
-/** 在临时目录里跑一次生成，返回退出码、stderr、产物全文 */
+/** Run one generation in a temporary directory and return the exit code, stderr and full output */
 function run(flow) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "f2r-"));
   const flowPath = path.join(dir, "flow.json");
@@ -34,13 +34,13 @@ function run(flow) {
   fs.writeFileSync(kbPath, JSON.stringify(KB), "utf8");
   const r = spawnSync(process.execPath, [GEN, flowPath, outPath, "--kb", kbPath, "--no-check"], { encoding: "utf8" });
   const out = fs.existsSync(outPath) ? fs.readFileSync(outPath, "utf8") : "";
-  // 去掉文件末尾换行产生的空元素，保留中间的空行
+  // Drop the empty element produced by the trailing newline; keep blank lines in the middle
   const lines = out.split(/\r?\n/);
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
   return { status: r.status, stderr: r.stderr || "", text: lines.join("\n") };
 }
 
-test("deployKey 输出双花括号占位符，派生路径里的 %Var% 不被转义", () => {
+test("deployKey emits double-brace placeholders and leaves %Var% in derived paths unescaped", () => {
   const r = run({
     variables: [
       { name: "PadRoot", type: "string", deployKey: "PAD_ROOT" },
@@ -57,7 +57,7 @@ test("deployKey 输出双花括号占位符，派生路径里的 %Var% 不被转
   ].join("\n"));
 });
 
-test("guard 生成 IF/ELSE，body 内可继续嵌套 IF", () => {
+test("guard generates IF/ELSE and its body can nest another IF", () => {
   const r = run({
     variables: [{ name: "DryRun", type: "string", deployKey: "DRY_RUN" }],
     nodes: [
@@ -92,7 +92,7 @@ test("guard 生成 IF/ELSE，body 内可继续嵌套 IF", () => {
   ].join("\n"));
 });
 
-test("LOOP 体内嵌 guard 再嵌 IF，子节点只输出一次", () => {
+test("a LOOP body nests a guard that nests an IF, and child nodes are emitted only once", () => {
   const r = run({
     nodes: [
       { id: "l", type: "loop", pad_hint: "LOOP", loop: { kind: "fromto", index: "I", from: 1, to: 3, step: 1, body: ["g"] } },
@@ -116,7 +116,7 @@ test("LOOP 体内嵌 guard 再嵌 IF，子节点只输出一次", () => {
   ].join("\n"));
 });
 
-test("output_map 显式绑定输出变量，条件里的 {{id.Field}} 解析成该变量", () => {
+test("output_map binds output variables explicitly, and {{id.Field}} in a condition resolves to that variable", () => {
   const r = run({
     nodes: [
       { id: "1", type: "action", pad_hint: "Test.Show", params: { Message: "x" }, output_map: { ButtonPressed: "ConfirmButton" } },
@@ -136,7 +136,7 @@ test("output_map 显式绑定输出变量，条件里的 {{id.Field}} 解析成�
   ].join("\n"));
 });
 
-test("output_skip 声明的输出不落变量（与 PAD 里把输出留空同义）", () => {
+test("outputs declared in output_skip are not bound to variables (same as leaving the output blank in PAD)", () => {
   const r = run({
     nodes: [
       { id: "1", type: "action", pad_hint: "Test.Show", params: { Message: "x" }, output_skip: ["ButtonPressed"] },
@@ -146,7 +146,7 @@ test("output_skip 声明的输出不落变量（与 PAD 里把输出留空同义
   assert.strictEqual(r.text, "Test.Show Message: $'''x'''");
 });
 
-test("未知动作仍被安全闸门拒绝，且不产出文件", () => {
+test("an unknown action is still rejected by the safety gate and no file is produced", () => {
   const r = run({
     nodes: [{ id: "1", type: "action", pad_hint: "No.Such.Action", params: {} }],
   });

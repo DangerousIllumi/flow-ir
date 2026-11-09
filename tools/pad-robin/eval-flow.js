@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 /**
- * eval-flow.js — 设计质量评估集：按需求文本断言 flow.json 的结构
+ * eval-flow.js — design-quality evaluation set: asserts the structure of flow.json against the requirement text
  *
- * 只验结构，不评文案（D6）。两种用法：
- *   node eval-flow.js tests/eval/<name>.cases.json                  # 单个用例文件
- *   node eval-flow.js tests/eval                                   # 目录：跑里面所有 *.cases.json
+ * Structure only, never wording (D6). Two ways to use it:
+ *   node eval-flow.js tests/eval/<name>.cases.json                  # a single case file
+ *   node eval-flow.js tests/eval                                   # a directory: run every *.cases.json inside
  *
- * 用例文件里 `flow` 指向被测 flow.json；目录模式下每个用例文件各自带 flow。
- * 退出码：0 全部通过 / 1 有失败 / 2 输入错误
+ * In a case file, `flow` points at the flow.json under test; in directory mode each case file carries its own flow.
+ * Exit codes: 0 all pass / 1 some failed / 2 input error
  */
 
 const fs = require("fs");
 const path = require("path");
 
-// 节点运行方式的取值集合：自动执行 / 需人工确认 / 只读观察
+// Allowed node run modes: fully automatic / needs human confirmation / read-only observation
 const RUN_MODES = ["auto", "confirm", "observe"];
 
-// 触发声明（trigger）的取值集合。
-// 与 pad-admit 的 TRIGGER 检查共用同一口径：保留值单列，便于给出“支持但未实现”而不是“拼错”的提示。
+// Allowed values for the trigger declaration.
+// Same rules as pad-admit's TRIGGER check: reserved values are listed separately so we can report "supported but not implemented" instead of "typo".
 const TRIGGER_KINDS = ["manual", "schedule", "file"];
 const TRIGGER_RESERVED_KINDS = ["mail", "callback"];
 const TRIGGER_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const TRIGGER_GATES = ["none", "workday", "last-workday"];
-// HH:mm，只接受 24 小时制两位写法（9:00 这类一位写法直接判非法，避免注册时再猜）
+// HH:mm — only the two-digit 24-hour form is accepted; single-digit forms like 9:00 are rejected outright so registration never has to guess
 const TRIGGER_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function isPlainObject(v) {
@@ -33,13 +33,13 @@ function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-// 正整数校验：JSON 里写成字符串或小数一律不认
+// Positive-integer check: a string or a decimal in JSON is rejected outright
 function isPositiveInt(v) {
   return typeof v === "number" && Number.isFinite(v) && v > 0 && Number.isInteger(v);
 }
 
-// 已知不可逆动作：执行后无法撤回，声明 reversible=true 属于事实错误，直接判失败。
-// 发信、删除文件/目录、过账脚本（按 intent 识别，不依赖参数名）。
+// Known-irreversible actions: once done they cannot be taken back, so declaring reversible=true is factually wrong and fails the check.
+// Sending mail, deleting files/directories, posting scripts (recognized by intent, not by parameter name).
 const POSTING_INTENT_RE = /(migo|posting)/i;
 function irreversibleReason(n) {
   const hint = String((n && n.pad_hint) || "");
@@ -51,7 +51,7 @@ function irreversibleReason(n) {
   return null;
 }
 
-// 可逆性声明的完整校验：必须是布尔；false 必须带说明；已知不可逆动作不允许写 true。
+// Full reversibility check: must be a boolean; false requires an explanation; a known-irreversible action may not claim true.
 function reversibleProblems(n) {
   const problems = [];
   if (typeof n.reversible !== "boolean") {
@@ -69,9 +69,9 @@ function reversibleProblems(n) {
 }
 
 /**
- * 校验 trigger 声明，返回 { errors, warnings }，条目形如 { code, detail }。
- * 只做静态契约校验，不查本机注册状态（注册验证属于 pad-trigger / pad-admit -TriggerLive）。
- * 结果码与 docs/trigger-adapter-design.md 第 4.2 节一致。
+ * Validate a trigger declaration; returns { errors, warnings } with entries shaped { code, detail }.
+ * Contract validation only — the local registration state is checked by pad-trigger / pad-admit -TriggerLive.
+ * Result codes match section 4.2 of docs/trigger-adapter-design.md.
  */
 function validateTrigger(flow, trg, opts = {}) {
   const errors = [];
@@ -85,7 +85,7 @@ function validateTrigger(flow, trg, opts = {}) {
   if (!isPlainObject(trg)) {
     return { errors: [{ code: "TRIGGER_INVALID", detail: "trigger must be an object" }], warnings };
   }
-  // 旧形状：只有 type/config 没有 kind，不做静默映射
+  // Legacy shape: type/config only, no kind — never silently map it
   if (!hasOwn(trg, "kind") && hasOwn(trg, "type")) {
     return { errors: [{ code: "TRIGGER_LEGACY_SHAPE", detail: "legacy type/config shape without kind" }], warnings };
   }
@@ -100,7 +100,7 @@ function validateTrigger(flow, trg, opts = {}) {
   }
   const kind = trg.kind;
 
-  // 任务名：显式给出时必须是安全字符，否则计划任务名无法稳定复现
+  // Task name: when supplied it must use safe characters, otherwise the scheduled task name cannot be reproduced reliably
   if (hasOwn(trg, "task_name")) {
     const tn = trg.task_name;
     if (typeof tn !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(tn)) {
@@ -115,7 +115,7 @@ function validateTrigger(flow, trg, opts = {}) {
     return { errors, warnings };
   }
 
-  // schedule / file 共用：时刻、星期、日历门、超时
+  // Shared by schedule / file: time of day, weekday, calendar gate, timeout
   const time = hasOwn(trg, "time") ? trg.time : undefined;
   if (typeof time !== "string" || !TRIGGER_TIME_RE.test(time)) {
     err("TRIGGER_INVALID", `time=${JSON.stringify(time)} (expected HH:mm, e.g. 09:00)`);
@@ -138,7 +138,7 @@ function validateTrigger(flow, trg, opts = {}) {
     err("TRIGGER_INVALID", `timeout_sec=${JSON.stringify(trg.timeout_sec)} (expected a positive integer number of seconds)`);
   }
 
-  // assisted：到点自动启动、中途有人确认；只对 schedule/file 有意义，manual 已在上面拒绝
+  // assisted: start automatically at the scheduled time but let a human confirm midway; only meaningful for schedule/file, manual already rejected it above
   let assisted = false;
   if (hasOwn(trg, "assisted")) {
     if (typeof trg.assisted !== "boolean") {
@@ -160,7 +160,7 @@ function validateTrigger(flow, trg, opts = {}) {
       if (typeof dir !== "string" || !dir) {
         err("TRIGGER_INVALID", "file.dir is required");
       } else if (!/^\{\{config\.\w+\}\}$/.test(dir)) {
-        // 只接受配置引用，禁止把绝对路径写进 flow.json
+        // Only config references are accepted; absolute paths must never be written into flow.json
         err("TRIGGER_PATH_LITERAL", `file.dir=${dir} must be a {{config.<KEY>}} reference, not a literal path`);
       }
       if (typeof f.pattern !== "string" || !f.pattern.trim()) {
@@ -177,16 +177,16 @@ function validateTrigger(flow, trg, opts = {}) {
     }
   }
 
-  // 与节点声明的交叉校验：只对“真实流程”生效；断言里传入的 def 只验声明形状，不拿流程节点做陪衬
+  // Cross-check against node declarations: only applies to a "real flow"; a def passed from an assertion only validates declaration shape and is not paired with flow nodes
   if (!opts.skipCrossCheck) {
     const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
     const confirmNodes = nodes.filter((n) => n && n.run_mode === "confirm");
     if (confirmNodes.length > 0 && assisted !== true) {
       err("TRIGGER_UNATTENDED_CONFIRM", `unattended trigger but nodes require manual confirmation: ${confirmNodes.map((n) => n.id).join(",")}`);
     }
-    // 可逆性收窄：与幂等性是两个正交的轴，不再用 idempotent=false 代表后果风险。
-    //   idempotent = 同一输入重跑是否收敛（重跑安全）
-    //   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
+    // Reversibility is narrowed down: it is orthogonal to idempotency, so idempotent=false no longer stands for consequence risk.
+    //   idempotent = whether re-running the same input converges (safe to rerun)
+    //   reversible = whether the consequence already produced can be undone (deletions can be rebuilt, mail can be corrected, postings can only be reversed)
     const irreversible = nodes.filter((n) => n && n.reversible === false);
     if (irreversible.length > 0) {
       warn("TRIGGER_UNATTENDED_IRREVERSIBLE",
@@ -194,7 +194,7 @@ function validateTrigger(flow, trg, opts = {}) {
           .map((n) => `${n.id}${n.reversibility_note ? `（${n.reversibility_note}）` : ""}`)
           .join("、")}`);
     }
-    // idempotent=false 却没声明 reversible：提示补声明，不默认填充
+    // idempotent=false but no reversible declared: ask for the missing declaration, never fill it in by default
     const missingRev = nodes.filter(
       (n) => n && n.idempotent === false && !hasOwn(n, "reversible"));
     if (missingRev.length > 0) {
@@ -206,14 +206,14 @@ function validateTrigger(flow, trg, opts = {}) {
   return { errors, warnings };
 }
 
-// 输入文件声明（节点级 inputs）的目录写法：与 file 触发器同一口径，只接受 {{config.<KEY>}}，
-// 禁止把真实路径写进 flow.json（公开层与业务层都按这一条校验）
+// Directory form for input-file declarations (node-level inputs): same rule as the file trigger, only {{config.<KEY>}} is accepted,
+// and real paths must never be written into flow.json (both the public layer and the business layer validate this)
 const INPUT_DIR_RE = /^\{\{config\.\w+\}\}$/;
 
 /**
- * 校验节点级输入文件声明，返回 { errors, warnings }，条目形如 { code, detail }。
- * 只验声明形状，不碰文件系统；“目录可读 / 候选文件计数”属于 pad-admit 的 INPUT 检查。
- * 老 flow.json 不写 inputs 时只给一条 INPUT_UNDECLARED 提示，不判失败（向后兼容）。
+ * Validate node-level input-file declarations; returns { errors, warnings } with entries shaped { code, detail }.
+ * Declaration shape only — the filesystem is never touched; "directory readable / candidate file count" belongs to pad-admit's INPUT check.
+ * An old flow.json without inputs gets a single INPUT_UNDECLARED notice instead of a failure (backward compatible).
  */
 function validateInputs(flow, opts = {}) {
   const errors = [];
@@ -247,7 +247,7 @@ function validateInputs(flow, opts = {}) {
       if (typeof it.pattern !== "string" || !it.pattern.trim()) {
         err("INPUT_INVALID", `${at}.pattern is required and must not be empty`);
       }
-      // required 必须显式声明，不默认填充（与 run_mode / idempotent 的必答口径一致）
+      // required must be declared explicitly and is never defaulted (same "must answer" rule as run_mode / idempotent)
       if (typeof it.required !== "boolean") {
         err("INPUT_INVALID", `${at}.required=${JSON.stringify(it.required)} (expected true/false)`);
       }
@@ -260,13 +260,13 @@ function validateInputs(flow, opts = {}) {
   return { errors, warnings };
 }
 
-/** 断言操作表：每个操作返回 { ok, detail } */
+/** Table of assertion operations: each returns { ok, detail } */
 const OPS = {
-  // 节点总数：用于锁住结构不再漂移
+  // Total node count: pins the structure so it cannot drift again
   nodeCount(flow, a) {
     return { ok: flow.nodes.length === a.equals, detail: `${flow.nodes.length} nodes (expected ${a.equals})` };
   },
-  // 通用字段断言：不带 id 查 flow 顶层，带 id 查节点；exists 判有无，equals 判值
+  // Generic field assertion: without id it checks the flow top level, with id it checks the node; exists tests presence, equals tests value
   field(flow, a) {
     const target = a.id ? flow.nodes.find((x) => x.id === a.id) : flow;
     if (!target) return { ok: false, detail: `node ${a.id} not found` };
@@ -281,7 +281,7 @@ const OPS = {
     }
     return { ok, detail: `${a.id ? a.id + "." : ""}${a.name}=${JSON.stringify(v)}` };
   },
-  // 循环：fromto 校验上下界，foreach 校验遍历变量
+  // Loops: fromto checks the bounds, foreach checks the iteration variable
   loop(flow, a) {
     const n = flow.nodes.find((x) => (a.id ? x.id === a.id : x.pad_hint === "LOOP"));
     if (!n) return { ok: false, detail: "loop node not found" };
@@ -302,7 +302,7 @@ const OPS = {
     const ok = (flow.edges || []).some((e) => e.from === a.from && e.to === a.to);
     return { ok, detail: `${a.from} -> ${a.to}` };
   },
-  // 必须有某个动作（可按节点 id 限定）
+  // A given action must exist (optionally narrowed to a node id)
   action(flow, a) {
     const n = flow.nodes.find((x) => x.pad_hint === a.padHint && (!a.id || x.id === a.id));
     return { ok: !!n, detail: `${a.padHint}${a.id ? "@" + a.id : ""}` };
@@ -318,7 +318,7 @@ const OPS = {
     const v = (n.params || {})[a.name];
     return { ok: JSON.stringify(v) === JSON.stringify(a.equals), detail: `${a.name}=${JSON.stringify(v)}` };
   },
-  // 输出绑定（output_map）中某个字段绑到了哪个变量
+  // Which variable a given field of the output binding (output_map) is bound to
   outputMapEquals(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
     if (!n) return { ok: false, detail: `node ${a.id} not found` };
@@ -348,8 +348,8 @@ const OPS = {
     const ok = JSON.stringify(got) === JSON.stringify(want) && (n.switch.default || []).length > 0;
     return { ok, detail: got.join(" | ") };
   },
-  // 节点级必答项：运行方式（auto / confirm / observe）、幂等性与可逆性（布尔）
-  // 设计规则要求「用户没回答就不生成 flow.json」，所以缺字段一律判失败，不做默认填充
+  // Node-level must-answers: run mode (auto / confirm / observe) plus idempotency and reversibility (booleans)
+  // The design rules say "do not generate flow.json before the user answers", so any missing field fails the check and nothing is defaulted
   nodeDeclaration(flow, a) {
     const n = flow.nodes.find((x) => x.id === a.id);
     if (!n) return { ok: false, detail: `node ${a.id} not found` };
@@ -369,8 +369,8 @@ const OPS = {
     }
     return { ok: problems.length === 0, detail: problems.length ? problems.join("; ") : `run_mode=${n.run_mode} idempotent=${n.idempotent}` };
   },
-  // 全流程必答项完整性：每个节点都必须显式声明三项（run_mode / idempotent / reversible），缺一个即失败
-  // reversible 为 false 时还必须有 reversibility_note；已知不可逆动作写 true 属于事实错误，也判失败
+  // Whole-flow completeness of must-answers: every node must explicitly declare all three (run_mode / idempotent / reversible); one missing fails
+  // reversible=false also requires reversibility_note; claiming true for a known-irreversible action is factually wrong and fails too
   declarationsComplete(flow) {
     const missing = [];
     for (const n of flow.nodes) {
@@ -391,8 +391,8 @@ const OPS = {
       detail: missing.length ? `${missing.length} node(s) missing declarations: ${missing.slice(0, 12).join(" | ")}${missing.length > 12 ? "..." : ""}` : `all ${flow.nodes.length} nodes are declared`,
     };
   },
-  // 触发声明断言：a.def 给了就验该对象（只验声明形状），否则验流程自身的 trigger。
-  // a.expect=invalid 时断言“确实不合法且命中 a.code”，避免把反例写成正例。
+  // Trigger assertion: if a.def is given, validate that object (declaration shape only); otherwise validate the flow's own trigger.
+  // With a.expect=invalid it asserts "indeed invalid and hitting a.code", so a counter-example cannot be written as a positive case.
   trigger(flow, a) {
     const inline = hasOwn(a, "def");
     const trg = inline ? a.def : flow.trigger;
@@ -407,7 +407,7 @@ const OPS = {
       detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("; ") : `trigger=${trg.kind} is valid`,
     };
   },
-  // 触发已声明：只看流程自身的 trigger，不接受 def 覆盖
+  // Trigger declared: looks only at the flow's own trigger and does not accept a def override
   triggerComplete(flow) {
     const trg = flow.trigger;
     const { errors } = validateTrigger(flow, trg);
@@ -417,10 +417,10 @@ const OPS = {
       detail: errors.length ? errors.map((x) => `${x.code}: ${x.detail}`).join("; ") : `trigger=${trg.kind} is declared`,
     };
   },
-  // 输入文件声明断言：
-  //   a.def 给了就验该数组（只验声明形状，挂到合成节点 inline）
-  //   a.node 给了就只验该节点，默认验全流程
-  //   a.expect=invalid 断言“确实不合法且命中 a.code”；a.expect=warning 断言命中某条提示码
+  // Input-file declaration assertion:
+  //   if a.def is given, validate that array (declaration shape only, attached to a synthetic node named inline)
+  //   if a.node is given, validate that node only; otherwise the whole flow
+  //   a.expect=invalid asserts "indeed invalid and hitting a.code"; a.expect=warning asserts that a given notice code is hit
   inputs(flow, a) {
     let target = flow;
     let opts = {};
@@ -447,7 +447,7 @@ const OPS = {
         detail: `expected notice ${a.code}, got ${warnings.length ? warnings.map((x) => x.code).join(",") : "no notices"}`,
       };
     }
-    // 未声明的提示不算失败：老 flow.json 不写 inputs 时 op 仍然通过
+    // An undeclared-inputs notice is not a failure: an old flow.json without inputs still passes this op
     return {
       ok: errors.length === 0,
       detail: errors.length
@@ -518,10 +518,10 @@ if (require.main === module) {
       report.push({ flow: s.flowPath, error: e.message, cases: [] });
       continue;
     }
-    // 允许单条用例用 flow 覆盖被测文件：用于「同一份断言集里放正例和反例」，
-    // 例如反例需要一个 run_mode=confirm 的节点，而正例需要一个干净流程。
-    // 每个用例文件的被测流程无条件先跑一次必答项完整性，不再依赖 cases 显式写 expect；
-    // 单条用例用 flow 覆盖的反例（故意缺字段）不受此限，仍按它自己的断言判。
+    // A single case may override the flow under test with its own flow, so one assertion set can hold both a positive and a negative case,
+    // e.g. the negative case needs a node with run_mode=confirm while the positive case needs a clean flow.
+    // The flow under test in every case file unconditionally runs the must-answer completeness check first, no longer relying on cases listing expect explicitly;
+    // negative cases that override the flow (deliberately missing fields) are exempt and are judged by their own assertions.
     const baseDecl = OPS.declarationsComplete(flow);
     const cases = [
       {
