@@ -1,9 +1,9 @@
-﻿# 冒烟脚本：在全新 clone 上验证工具链（不依赖业务目录、指纹基线或 PAD 运行历史）
+﻿# Smoke script: verifies the toolchain on a fresh clone (no business directory, fingerprint baseline or PAD run history needed)
 #
-# 用法：powershell -NoProfile -ExecutionPolicy Bypass -File examples\smoke.ps1
-# 退出码：0 全部步骤通过 / 1 任意步骤失败
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File examples\smoke.ps1
+# Exit codes: 0 all steps passed / 1 any step failed
 #
-# 步骤：画布 → 生成 → check.js → pad-admit → eval-flow
+# Steps: canvas -> generate -> check.js -> pad-admit -> eval-flow
 
 [CmdletBinding()]
 param()
@@ -31,13 +31,13 @@ function Invoke-Step {
     } finally {
         Pop-Location
     }
-    if ($code -ne 0) { throw "$Name 失败（exit=$code）" }
+    if ($code -ne 0) { throw "$Name failed (exit=$code)" }
 }
 
 try {
     New-Item -ItemType Directory -Path $work -Force | Out-Null
-    # check.js 的 KB 查找优先仓库根，其次当前目录；把最小动作表放到当前目录，
-    # 这样没有 pad-robin-action-kb/ 的全新 clone 也能完成静态校验
+    # check.js looks for the knowledge base in the repo root first, then the current directory; putting the minimal
+    # action table in the current directory lets a fresh clone without pad-robin-action-kb/ still pass static checks
     $kbDir = Join-Path $work 'pad-robin-action-kb'
     New-Item -ItemType Directory -Path $kbDir -Force | Out-Null
     Copy-Item -LiteralPath $kb -Destination (Join-Path $kbDir 'PAD_Robin_ActionKB.json') -Force
@@ -46,27 +46,27 @@ try {
     $robin = Join-Path $work 'smoke-flow.robin'
     $admit = Join-Path $repo 'tools\pad-sync\pad-admit.ps1'
 
-    # 全新 clone 可能还没执行 npm install；此时退回仓库自带的确定性 BFS 布局，
-    # 保证「画布」这一步不依赖 node_modules/elkjs
+    # A fresh clone may not have run npm install yet; fall back to the repo's deterministic BFS layout so the
+    # canvas step never depends on node_modules/elkjs
     $drawioScript = Join-Path $repo 'tools\flow-drawio\flow-to-drawio.js'
     if (-not (Test-Path (Join-Path $repo 'node_modules\elkjs'))) {
         $drawioScript = Join-Path $repo 'tools\flow-drawio\flow-to-drawio-bfs.js'
     }
 
-    Invoke-Step '画布' $repo 'node' @($drawioScript, $flow, $drawio)
-    Invoke-Step '生成' $repo 'node' @(
+    Invoke-Step 'canvas' $repo 'node' @($drawioScript, $flow, $drawio)
+    Invoke-Step 'generate' $repo 'node' @(
         (Join-Path $repo 'tools\pad-robin\flow-to-robin.js'), $flow, $robin, '--kb', $kb, '--no-check')
-    Invoke-Step '静态校验' $work 'node' @(
+    Invoke-Step 'static checks' $work 'node' @(
         (Join-Path $repo 'tools\pad-robin\check.js'), $robin)
-    Invoke-Step '准入' $work 'powershell' @(
+    Invoke-Step 'admission' $work 'powershell' @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $admit,
         '-FlowFile', $flow, '-RobinFile', $robin, '-KbPath', $kb)
-    Invoke-Step '结构评估' $repo 'node' @(
+    Invoke-Step 'structural evaluation' $repo 'node' @(
         (Join-Path $repo 'tools\pad-robin\eval-flow.js'), $cases)
 
-    Write-Host '[smoke] 通过（exit 0）'
+    Write-Host '[smoke] passed (exit 0)'
 } catch {
-    Write-Host "[smoke] 失败：$($_.Exception.Message)"
+    Write-Host "[smoke] failed: $($_.Exception.Message)"
     $failed = $true
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
