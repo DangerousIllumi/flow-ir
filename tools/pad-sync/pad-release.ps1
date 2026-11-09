@@ -318,7 +318,11 @@ if (-not $NoMain) {
                 $cmp = Compare-RobinText $deployedText $wsText
                 $result.hashMatch = $cmp.match
                 if (-not $cmp.match) {
-                    throw "已发布版本与画布不一致：第 $($cmp.diffIndex) 行`n  画布：$($cmp.lineA)`n  云端：$($cmp.lineB)"
+                    # 带 Data['code'] 的异常：告警分类按码判断，不解析中文消息
+                    $msg = "已发布版本与画布不一致：第 $($cmp.diffIndex) 行`n  画布：$($cmp.lineA)`n  云端：$($cmp.lineB)"
+                    $ex = [System.Exception]::new($msg)
+                    $ex.Data['code'] = 'RELEASE_CANVAS_MISMATCH'
+                    throw $ex
                 }
                 Log "哈希校验通过：已发布版本与注入内容一致（$($result.sha256.Substring(0,12))…）"
             }
@@ -356,7 +360,7 @@ if (-not $NoMain) {
         if (-not $DryRun) {
             $ak = Get-AlertKindConstants
             $msg = $_.Exception.Message
-            $kind = if ($msg -match '画布不一致') { $ak.ReleaseCanvasMismatch }
+            $kind = if ([string]$_.Exception.Data['code'] -eq 'RELEASE_CANVAS_MISMATCH') { $ak.ReleaseCanvasMismatch }
                 elseif ($result.stage -in @('publish', 'verify')) { $ak.DeployPublishFailed }
                 else { $ak.DeployPrecheckFailed }
             if (Test-Path (Join-Path $script:RepoRoot 'tools')) {

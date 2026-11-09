@@ -391,7 +391,7 @@ try {
                 -Local:($LocalRun -or $NoPublish) -NonInteractive:$NonInteractive
         } catch {
             # 触发前校验失败（流程名解析不出 flowId）也算触发失败，单独分类后退出码仍是 1
-            if ($_.Exception.Message -match '触发前校验失败') {
+            if ([string]$_.Exception.Data['code'] -eq 'TRIGGER_PREFLIGHT_FAILED') {
                 $script:Result.triggerFailed = $true
                 $script:Result.triggerReason = 'identity-mismatch'
             }

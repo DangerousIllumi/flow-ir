@@ -222,11 +222,14 @@ Describe 'pad-schedule 纯函数测试' {
     }
 
     It '日历类失败分类：过期是 exit 5 / calendar-stale，不可用仍是 exit 1' {
-        $stale = Get-CalendarFailure '日历不覆盖今天：今天 2026-11-05（覆盖 2026-01-01 ~ 2026-10-31），判定为日历过期，本次不运行'
+        # 分类依据改为异常上的结果码，不再依赖中文消息内容
+        $staleEx = [System.Exception]::new('日历不覆盖今天：今天 2026-11-05（覆盖 2026-01-01 ~ 2026-10-31），判定为日历过期，本次不运行')
+        $staleEx.Data['code'] = 'CALENDAR_STALE'
+        $stale = Get-CalendarFailure $staleEx
         $stale.exitCode | Should Be 5
         $stale.reason | Should Be 'calendar-stale'
         $stale.stale | Should Be $true
-        $down = Get-CalendarFailure '工作日历文件不存在或读不到：C:\x\cal.xlsx'
+        $down = Get-CalendarFailure ([System.Exception]::new('工作日历文件不存在或读不到：C:\x\cal.xlsx'))
         $down.exitCode | Should Be 1
         $down.reason | Should Be 'calendar-unavailable'
         $down.stale | Should Be $false

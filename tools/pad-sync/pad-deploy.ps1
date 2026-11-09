@@ -239,7 +239,12 @@ try {
         $warnText = if ($warns.Count -gt 0) { "`n⚠️ $($warns -join "; ")" } else { "" }
         $msg = "目标流程：$FlowName`n替换变量：$count 处`n动作行数：$($origLines.Count) → $($newLines.Count)`n$warnText`n`n确定上线？"
         & powershell -NoProfile -ExecutionPolicy Bypass -File $confirm -Title "生产部署确认" -Msg $msg
-        if ($LASTEXITCODE -ne 0) { throw "用户取消上线" }
+        if ($LASTEXITCODE -ne 0) {
+            # 带 Data['code'] 的异常：外层据此跳过「取消」告警，不解析中文消息
+            $ex = [System.Exception]::new('用户取消上线')
+            $ex.Data['code'] = 'DEPLOY_USER_CANCELLED'
+            throw $ex
+        }
         Log "用户已确认上线到 $FlowName"
     }
 
@@ -282,7 +287,7 @@ try {
 catch {
     $result.errors += $_.Exception.Message; Log "部署失败：$($_.Exception.Message)"
     # 用户主动取消不算失败告警；其余前置阶段（配置/占位符/确认）失败各写一条
-    if ($_.Exception.Message -notmatch '用户取消上线') {
+    if ([string]$_.Exception.Data['code'] -ne 'DEPLOY_USER_CANCELLED') {
         $ak = Get-AlertKindConstants
         $st = if ($DryRun) { 'dryrun' } else { 'precheck' }
         Write-DeployAlert $st $ak.DeployPrecheckFailed "部署前置阶段失败：$($_.Exception.Message)。下一步：修正配置或源 .robin 后重新部署。" $null

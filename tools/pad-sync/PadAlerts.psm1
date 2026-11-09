@@ -132,6 +132,9 @@ function Write-RunAlert {
         [string]$Kind,
         # 调用方显式指定的文案；不传时用 kind 对应的默认文案
         [string]$Note,
+        # 调用方显式声明的标记：Note 是否已含「下一步」处置建议。
+        # 默认 true（现有调用方的 Note 都自带下一步）；传空文案时应显式传 $false。
+        [bool]$NoteHasNextStep = $true,
         # 运行标识：有值时按「runId + kind」去重
         [string]$RunId
     )
@@ -158,8 +161,14 @@ function Write-RunAlert {
     }
 
     $note = [string]$grade.note
-    # 兜底：任何一条告警都必须告诉人下一步做什么
-    if ($note -notmatch '下一步') { $note = "$note 下一步：查看日志与 PAD 控制台后人工重跑。" }
+    # 兜底：任何一条告警都必须告诉人下一步做什么。
+    # 是否已附加处置建议用显式标记判断，不再匹配文案里的中文关键字。
+    $hasNextStep = if ($CalendarStale) { $true }
+        elseif ($Note) { $NoteHasNextStep }
+        elseif ($Kind) { $true }
+        elseif ($grade.note) { $true }
+        else { $false }
+    if (-not $hasNextStep) { $note = "$note 下一步：查看日志与 PAD 控制台后人工重跑。" }
 
     if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
     $file = Join-Path $Dir 'alerts.jsonl'

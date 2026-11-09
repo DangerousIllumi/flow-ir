@@ -184,14 +184,19 @@ function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$
     if ($out -match 'CALENDAR_STALE=1') {
         $min = [regex]::Match($out, 'CALENDAR_MIN=([^\r\n]*)').Groups[1].Value.Trim()
         $max = [regex]::Match($out, 'CALENDAR_MAX=([^\r\n]*)').Groups[1].Value.Trim()
-        throw "CALENDAR_STALE: 日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
+        # 带 Data['code'] 的异常：分类按码判断，不解析中文消息
+        $msg = "CALENDAR_STALE: 日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
+        $ex = [System.Exception]::new($msg)
+        $ex.Data['code'] = 'CALENDAR_STALE'
+        throw $ex
     }
     return [ordered]@{ workday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
 
 # 日历类失败的分类：过期（exit 5）与不可用（exit 1）必须分开
-function Get-CalendarFailure([string]$Message) {
-    if ($Message -match '日历不覆盖今天') {
+function Get-CalendarFailure([System.Exception]$Exception) {
+    # 分类依据是异常自带的结果码，不再匹配中文消息
+    if ([string]$Exception.Data['code'] -eq 'CALENDAR_STALE') {
         return [ordered]@{ exitCode = 5; reason = 'calendar-stale'; stale = $true }
     }
     return [ordered]@{ exitCode = 1; reason = 'calendar-unavailable'; stale = $false }
@@ -423,7 +428,7 @@ if (-not $NoMain) {
         $result.errors += $msg
         if ($msg -match '^(CALENDAR_UNAVAILABLE|CALENDAR_SCRIPT_FAILED|CALENDAR_STALE)') {
             # 日历类失败分两种：过期（exit 5 / calendar-stale）与不可用（exit 1）
-            $cal = Get-CalendarFailure $msg
+            $cal = Get-CalendarFailure $_.Exception
             $exitCode = $cal.exitCode
             $result.reason = $cal.reason
             if ($cal.stale) { $result.calendarOk = $null } else { $result.calendarOk = $false }

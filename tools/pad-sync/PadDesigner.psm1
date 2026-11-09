@@ -602,8 +602,12 @@ function Invoke-PadRun {
         # 否则 PAD 只会弹“未找到具有指定 ID 的环境”，外层再把弹窗点掉就误判成跑完。
         $identity = Resolve-PadFlowIdentity -WorkflowName $WorkflowName
         if (-not $identity) {
-            throw ("触发前校验失败：PAD 控制台找不到名为「{0}」的流程（Console\Scripts 下没有可解析的 RunDefinition）。" +
+            # 带 Data['code'] 的异常：调用方按码分类，不解析中文消息
+            $msg = ("触发前校验失败：PAD 控制台找不到名为「{0}」的流程（Console\Scripts 下没有可解析的 RunDefinition）。" +
                 '请先在 PAD 控制台确认流程名并至少运行一次；本次未触发。') -f $WorkflowName
+            $ex = [System.Exception]::new($msg)
+            $ex.Data['code'] = 'TRIGGER_PREFLIGHT_FAILED'
+            throw $ex
         }
         Write-PadDesignerLog ("触发前校验通过：flow={0} flowId={1} environmentId={2}" -f `
             $identity.FlowName, $identity.FlowId, $identity.EnvironmentId)
