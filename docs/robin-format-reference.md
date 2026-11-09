@@ -1,29 +1,35 @@
-# Robin 格式参考手册（v2 · 已校正）
+# Robin format reference (v2 · corrected)
 
-> **权威源已变更**
-> Robin 没有官方文档（robin-language.org 已于 2021 年下线）。本手册的**权威源**是：
-> - `JoeG592/pad-robin-action-kb` —— 1,086 个动作的**粘贴验证** KB（`PAD_Robin_ActionKB.json`）、44 种类型参考（`PAD_Robin_TypeReference.json`）、官方提示词（`PROMPT.md`）、443 条实测语料（`rules/probe-corpus.json`）
-> - 原始规则清单（23 条）：见 KB 仓库 README 的 "Syntax rules PAD enforces"
+> **The authoritative source has changed**
+> Robin has no official documentation (robin-language.org went offline in 2021). The **authoritative sources**
+> for this manual are:
+> - `JoeG592/pad-robin-action-kb` — a **paste-verified** KB of 1,086 actions (`PAD_Robin_ActionKB.json`), a
+>   44-type reference (`PAD_Robin_TypeReference.json`), the official prompt (`PROMPT.md`), and a 443-case
+>   measured corpus (`rules/probe-corpus.json`)
+> - The original rule list (23 rules): see "Syntax rules PAD enforces" in the KB repository README
 >
-> 本文件只是**速查 + 常见陷阱**，不能替代 KB。生成代码时以 KB 的 template / golden_example / input_params 为准。
+> This file is a **quick reference plus common pitfalls only** and cannot replace the KB. When generating code,
+> the KB's template / golden_example / input_params are authoritative.
 >
-> **v1 校正说明**：v1 有若干条错误（尤其是"文件头可粘贴""FUNCTION 可粘贴""%Var% 可作动作参数""WHEN...END 表示 while"），已在文末列出并更正。**这些错误会导致整段粘贴被 PAD 静默丢弃。**
+> **v1 correction note**: v1 contained several errors (notably "file headers are pasteable", "FUNCTION is
+> pasteable", "%Var% can be an action parameter", "WHEN...END means while"). They are listed and corrected at the
+> end of this file. **These errors make PAD silently discard the entire paste.**
 
 ---
 
-## 〇、最重要的一条：粘贴失败的代价
+## 0. The most important point: the cost of a failed paste
 
-**PAD 的粘贴失败大多无声**：画布保持空白，不显示任何错误。**一行坏 → 整脚本报废。**
+**Most PAD paste failures are silent**: the canvas stays blank and no error appears. **One bad line kills the whole script.**
 
-所以：
-- 生成后**必须先静态自检**：`node check-flows.js PAD_Robin_ActionKB.json your_flow.robin`
-- 再粘贴进 Designer，看错误面板
+So:
+- After generating, **always run the static self-check first**: `node check-flows.js PAD_Robin_ActionKB.json your_flow.robin`
+- Then paste into the Designer and read the error panel
 
 ---
 
-## 一、文件结构（`script.robin`）与**哪些内容不能粘**
+## 1. File structure (`script.robin`) and **what must not be pasted**
 
-社区用户从本地 `script.robin` 复制的完整结构：
+The complete structure a community user copies out of a local `script.robin`:
 
 ```
 @@ConnectionString: ''
@@ -42,79 +48,79 @@ LOOP LoopIndex FROM 1 TO 4 STEP 1
 END
 ```
 
-### ⚠️ 关键：哪些**不能**粘进 Designer
+### ⚠️ Key point: what must **not** be pasted into the Designer
 
-| 内容 | 能否粘贴 | 说明 |
+| Content | Pasteable | Note |
 |---|---|---|
-| `@@ConnectionString` / `@@Type` / `@@DisplayName` | ❌ | 文件头，粘贴会**整段被丢弃**。生成代码时**不要产出这些行** |
-| `IMPORT ... AS appmask` / `@SENSITIVE: []` | ❌ | 同上 |
-| `FUNCTION ... END FUNCTION` | ❌ | 子流程定义不能粘。**子流程要在 Designer 里手工创建**，再把每条子流程的正文分别粘进去 |
-| `@@copilotGeneratedAction: 'False'` | ⚠️ | 仅可紧贴在某个动作之前；其他 `@@` 行一律丢弃粘贴 |
-| 动作/控制流语句本身 | ✅ | 这些才是可粘的正文 |
+| `@@ConnectionString` / `@@Type` / `@@DisplayName` | ❌ | File headers; pasting **discards the entire script**. Never emit these lines when generating |
+| `IMPORT ... AS appmask` / `@SENSITIVE: []` | ❌ | Same as above |
+| `FUNCTION ... END FUNCTION` | ❌ | Subflow definitions cannot be pasted. **Create subflows by hand in the Designer** and paste each subflow's body separately |
+| `@@copilotGeneratedAction: 'False'` | ⚠️ | Only valid immediately before an action; every other `@@` line is discarded on paste |
+| Action / control-flow statements themselves | ✅ | This is the pasteable body |
 
-> 因此 Agent B 的产物 = **纯正文脚本**：没有文件头、没有 FUNCTION。
+> So Agent B's output = **a body-only script**: no file header, no FUNCTION.
 
 ---
 
-## 二、语法元素速查（已校正）
+## 2. Syntax elements quick reference (corrected)
 
-| 元素 | 语法 | 示例 |
+| Element | Syntax | Example |
 |---|---|---|
-| 动作调用 | `Module.ActionName` 或 `Module.ActionName.Selector` | `Excel.LaunchExcel.LaunchAndOpen` |
-| 命名参数 | `ParameterName: value` | `Path: $'''C:\file.xlsx'''` |
-| 输出赋值 | `=> VariableName` | `Instance=> ExcelInstance` |
-| 字符串（插值，最安全） | `$'''text'''` | `Message: $'''Hello %Name%'''` |
-| 字符串（非插值） | `'''text'''` | `Name: '''Sheet1'''` |
-| 空字符串 | `$''''''` | — |
-| 变量引用（**仅字符串内**） | `%Name%` | `Url: $'''…/page=%LoopIndex%'''` |
-| 变量/表达式（字符串外，**裸写**） | 直接写名字 | `Instance: ExcelInstance`、`SET Total TO Price * Qty` |
-| 枚举 | `Module.EnumType.Value`（**必须带模块名**） | `Text.StandardDelimiter.NewLine` |
-| 布尔 / 数字 | `True` / `False`；裸数字 | `Visible: True`、`Row: 2` |
-| 注释 | `# 文本` | `# 这是注释` |
-| 区域 | `**REGION Name` / `**ENDREGION` | 注意：`REGION` / `END REGION` 会丢弃粘贴 |
-| 禁用某行 | `DISABLE ` 前缀 | — |
-| 数据表字面量 | `{ ... }` | `InputTable: { ^['Name'], [$'''v1'''] }` |
-| 条件分支 | `IF ... THEN ... ELSE ... END` | 见第四节 |
-| 循环 | `LOOP ... END` | 见第四节 |
-| 开关 | `SWITCH ... CASE ... DEFAULT ... END` | 见第四节 |
-| 等待 | `WAIT 5` | 秒 |
-| 退出 | `EXIT Code: 0` | — |
+| Action call | `Module.ActionName` or `Module.ActionName.Selector` | `Excel.LaunchExcel.LaunchAndOpen` |
+| Named parameter | `ParameterName: value` | `Path: $'''C:\file.xlsx'''` |
+| Output assignment | `=> VariableName` | `Instance=> ExcelInstance` |
+| String (interpolated, safest) | `$'''text'''` | `Message: $'''Hello %Name%'''` |
+| String (non-interpolated) | `'''text'''` | `Name: '''Sheet1'''` |
+| Empty string | `$''''''` | — |
+| Variable reference (**inside a string only**) | `%Name%` | `Url: $'''…/page=%LoopIndex%'''` |
+| Variable / expression (outside a string, **bare**) | write the name directly | `Instance: ExcelInstance`, `SET Total TO Price * Qty` |
+| Enum | `Module.EnumType.Value` (**module name required**) | `Text.StandardDelimiter.NewLine` |
+| Boolean / number | `True` / `False`; bare numbers | `Visible: True`, `Row: 2` |
+| Comment | `# text` | `# this is a comment` |
+| Region | `**REGION Name` / `**ENDREGION` | Note: `REGION` / `END REGION` are discarded on paste |
+| Disable a line | `DISABLE ` prefix | — |
+| Data-table literal | `{ ... }` | `InputTable: { ^['Name'], [$'''v1'''] }` |
+| Conditional branch | `IF ... THEN ... ELSE ... END` | See section 4 |
+| Loop | `LOOP ... END` | See section 4 |
+| Switch | `SWITCH ... CASE ... DEFAULT ... END` | See section 4 |
+| Wait | `WAIT 5` | seconds |
+| Exit | `EXIT Code: 0` | — |
 
-**大小写不敏感**：变量名、关键字、动作 id、枚举值、参数名在粘贴时都不区分大小写。
-
----
-
-## 三、值语法硬规则（来自 KB 的实测规则，逐条都会"一行坏全废"）
-
-1. 字符串 `$'''value'''`；布尔 `True`/`False` 裸写；数字裸写；空串 `$''''''`。
-2. 变量/表达式**裸写**：`Instance: ExcelInstance`、`SET Total TO Price * Qty`、`IF Files.Count = 0 THEN`、`Items[Items.Count - 1]`、`Items[-1]`、`Row['Amount']`、`Obj.a.b`。
-3. **`%...%` 只能出现在字符串内部**：`$'''Saved %Count% files'''`、`$'''Total %Price * Qty%'''`。
-   写在字符串外会**整段丢弃**：`SET X TO %N + 1%`、`IF %N% = 5`、`Text: %Msg%`、`WAIT %N%` ❌
-4. 枚举**必须全限定**，且值必须是该输入 `enumValues` 里列出的：`File.IfExists` 只有 `DoNothing` / `Overwrite` 两个值。
-5. 输出写作 `Name=> Variable`。
-6. **字符串内反斜杠是转义符**：`\'` 是一个单引号，`\\` 是一个反斜杠。**所有单引号都要写成 `\'`**：
-   `$'''Joe\'s report'''`、`$'''WHERE Name = \'Joe\''''`。裸 `'` 会丢弃整段粘贴 —— 注意 SQL / XPath / JS。
-   （`%...%` 表达式内部的单引号不受影响：`$'''%Row['Name']%'''` ✅）
-7. **紧跟变量或结尾引号之前的反斜杠要双写**：`$'''C:\Reports\\%Month%'''`、`$'''%Root%\\%Name%'''`、`$'''C:\Temp\\'''`。
-   普通字母前的单个反斜杠原样保留：`$'''%Folder%\Report.xlsx'''` ✅。**不要写 `\%`**（PAD 会丢掉百分号）。
-8. **UNC 路径要四个反斜杠**：`$'''\\\\<host>\<share>'''`。写两个能粘但会被读成 `\<host>\<share>`。
-9. **字面百分号写 `%%`**：`$'''100%% done'''`。单个 `%` 丢弃整段粘贴。
-10. 字符串可跨多行，包括空行和以 `END`/`#`/`IF` 开头的行。
-11. **PAD 关键字不能作变量名或属性名**（否则丢弃整段）：
-    `From` `To` `Step` `End` `In` `Then` `If` `Else` `Loop` `Foreach` `While` `Set` `Wait` `Next` `Exit` `Label` `Goto` `Call` `Case` `Default` `Switch` `Block` `Error` `On` `Not` `And` `Or` `Mod` `True` `False` `Global` `Disable` `Function` `Throw`。
-    邮件属性是常见坑：写 `Mail['From']` / `Mail['To']`，**不要** `Mail.From`；`Subject`/`Count`/`Name`/`Text`/`Value`/`Body` 是安全的。
-12. 变量名**以字母开头**：`SET 1abc TO 1` 丢弃整段；Unicode 字母可以（`SET Café TO 1`）。
-13. 变量必须先在流程里被 `SET`、被动作输出、被循环、或被就地列表动作（如 `Variables.AddItemToList List:`）产生，否则报"Variable 'X' doesn't exist"。
-14. 一行一条语句；一行两条丢弃整段。缩进只是视觉；行尾 `# 备注` 会变成独立的注释行。
-15. `CASE` 只接受比较式（`CASE = 1` / `CASE <> 3` / `CASE > 5`）；`CASE Contains ...` 丢弃整段。
-16. 条件动作（kind=Condition）写成 `IF (Action ...) THEN`；**`ELSE IF (Action ...) THEN` 丢弃整段**，要写成 `ELSE` 内嵌 `IF (Action ...) THEN ... END`。
-17. PAD 2.72 移除的 id 会报 "Unknown action"：裸 `Database.Connect`（要用 `Database.Connect.Connect` / `.ConnectOracle`）、裸 `Scripting.RunPythonScript`（要用 `.RunPythonScript` / `.RunPythonScript34` / `.RunPythonScriptCPython`）。
+**Case-insensitive**: variable names, keywords, action ids, enum values and parameter names are all case-insensitive on paste.
 
 ---
 
-## 四、控制流（Robin 内建，不在 KB 的动作表里）
+## 3. Hard rules for value syntax (measured KB rules, each of which "one bad line kills everything")
 
-内置语句清单（一行一条）：
+1. Strings are `$'''value'''`; booleans are bare `True`/`False`; numbers are bare; the empty string is `$''''''`.
+2. Variables/expressions are **bare**: `Instance: ExcelInstance`, `SET Total TO Price * Qty`, `IF Files.Count = 0 THEN`, `Items[Items.Count - 1]`, `Items[-1]`, `Row['Amount']`, `Obj.a.b`.
+3. **`%...%` may only appear inside a string**: `$'''Saved %Count% files'''`, `$'''Total %Price * Qty%'''`.
+   Outside a string it **discards the whole script**: `SET X TO %N + 1%`, `IF %N% = 5`, `Text: %Msg%`, `WAIT %N%` ❌
+4. Enums **must be fully qualified**, and the value must appear in that input's `enumValues`: `File.IfExists` has only `DoNothing` / `Overwrite`.
+5. Outputs are written as `Name=> Variable`.
+6. **Inside a string a backslash is an escape character**: `\'` is one apostrophe and `\\` is one backslash. **Every apostrophe must be written `\'`**:
+   `$'''Joe\'s report'''`, `$'''WHERE Name = \'Joe\''''`. A bare `'` discards the whole paste — watch out in SQL / XPath / JS.
+   (Apostrophes inside a `%...%` expression are unaffected: `$'''%Row['Name']%'''` ✅)
+7. **A backslash immediately before a variable or before the closing quotes must be doubled**: `$'''C:\Reports\\%Month%'''`, `$'''%Root%\\%Name%'''`, `$'''C:\Temp\\'''`.
+   A single backslash before an ordinary letter is kept as-is: `$'''%Folder%\Report.xlsx'''` ✅. **Never write `\%`** (PAD drops the percent sign).
+8. **UNC paths need four backslashes**: `$'''\\\\<host>\<share>'''`. Two backslashes paste but are read as `\<host>\<share>`.
+9. **A literal percent sign is written `%%`**: `$'''100%% done'''`. A single `%` discards the whole paste.
+10. A string may span multiple lines, including blank lines and lines starting with `END`/`#`/`IF`.
+11. **PAD keywords cannot be used as variable or property names** (otherwise the whole paste is discarded):
+    `From` `To` `Step` `End` `In` `Then` `If` `Else` `Loop` `Foreach` `While` `Set` `Wait` `Next` `Exit` `Label` `Goto` `Call` `Case` `Default` `Switch` `Block` `Error` `On` `Not` `And` `Or` `Mod` `True` `False` `Global` `Disable` `Function` `Throw`.
+    Mail properties are a common trap: write `Mail['From']` / `Mail['To']`, **never** `Mail.From`; `Subject`/`Count`/`Name`/`Text`/`Value`/`Body` are safe.
+12. Variable names **start with a letter**: `SET 1abc TO 1` discards the whole paste; Unicode letters are allowed (`SET Café TO 1`).
+13. A variable must first be produced in the flow by a `SET`, an action output, a loop, or an in-place list action (such as `Variables.AddItemToList List:`), otherwise PAD reports "Variable 'X' doesn't exist".
+14. One statement per line; two statements on one line discards the whole script. Indentation is visual only; a trailing `# note` becomes a separate comment line.
+15. `CASE` accepts comparison expressions only (`CASE = 1` / `CASE <> 3` / `CASE > 5`); `CASE Contains ...` discards the whole script.
+16. Condition actions (kind=Condition) are written `IF (Action ...) THEN`; **`ELSE IF (Action ...) THEN` discards the whole script**, so write it as `ELSE` containing `IF (Action ...) THEN ... END`.
+17. Ids removed in PAD 2.72 report "Unknown action": bare `Database.Connect` (use `Database.Connect.Connect` / `.ConnectOracle`) and bare `Scripting.RunPythonScript` (use `.RunPythonScript` / `.RunPythonScript34` / `.RunPythonScriptCPython`).
+
+---
+
+## 4. Control flow (built into Robin, not in the KB action table)
+
+List of built-in statements (one per line):
 
 ```
 SET x TO value
@@ -126,8 +132,8 @@ LOOP WHILE (A) < (B) / END
 EXIT LOOP / NEXT LOOP / LABEL Name / GOTO Name / WAIT 5 / EXIT Code: 0
 ```
 
-条件运算符：`=` `<>` `>` `<` `>=` `<=`、`AND`、`OR`、`NOT(...)`，以及
-`IsEmpty(x)`、`IsNotEmpty(x)`、`Contains(x, $'''y''', False)`、`NotContains`、`StartsWith`、`EndsWith`。
+Conditional operators: `=` `<>` `>` `<` `>=` `<=`, `AND`, `OR`, `NOT(...)`, plus
+`IsEmpty(x)`, `IsNotEmpty(x)`, `Contains(x, $'''y''', False)`, `NotContains`, `StartsWith`, `EndsWith`.
 
 ### IF / ELSE
 
@@ -155,11 +161,11 @@ END
 
 ```
 LOOP FOREACH CurrentItem IN ItemList
-    # 处理 CurrentItem
+    # process CurrentItem
 END
 
 LOOP LoopIndex FROM 1 TO 10 STEP 1
-    # 用 %LoopIndex%
+    # use %LoopIndex%
 END
 
 SET Counter TO 0
@@ -168,51 +174,51 @@ LOOP WHILE (Counter) < (10)
 END
 ```
 
-### 错误处理
+### Error handling
 
 ```
-# 一组动作的容错
+# fault tolerance for a group of actions
 BLOCK ReadFiles
 ON BLOCK ERROR
     SET Failed TO True
 END
-    # ... 动作 ...
+    # ... actions ...
 END
 
-# 单个动作的容错
+# fault tolerance for a single action
 Text.ToNumber Text: Raw Number=> Amount
 ON ERROR REPEAT 2 TIMES WAIT 5
     SET Amount TO 0
 END
 ```
 
-- 错误处理器里**只允许** `SET` / `CALL` / `GOTO` / `THROW ERROR`；其他动作报 "The statement isn't allowed inside exception handling"；处理器里放 `IF` 会丢弃整段粘贴。做法：在处理器里置标志位，出块后再判断。
-- `REPEAT` 只能用在动作的 `ON ERROR` 上。`ERROR => LastError` 读最近一次错误。
-- 云端触发时，给"不可能报错的动作"加 `ON ERROR` 会让流程加载被拒（控制台运行不受影响）。
+- An error handler **may contain only** `SET` / `CALL` / `GOTO` / `THROW ERROR`; any other action reports "The statement isn't allowed inside exception handling", and an `IF` inside a handler discards the whole paste. Workaround: set a flag inside the handler and test it after the block.
+- `REPEAT` is valid only on an action's `ON ERROR`. `ERROR => LastError` reads the most recent error.
+- For cloud triggers, adding `ON ERROR` to "an action that cannot fail" makes the flow load be rejected (console runs are unaffected).
 
 ---
 
-## 五、动作 id 格式与已验证样本
+## 5. Action id format and verified samples
 
-### 5.1 动作 id 是**选择器全限定三段式**（重要更正）
+### 5.1 Action ids are **fully qualified three-part selectors** (important correction)
 
 ```
 Module.Action.Selector
 ```
 
-例如：`Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments`
+For example: `Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments`
 
-- 同一个 `Module.Action` 下有**多个 selector**（KB 的 `sibling_selectors`），**每个 selector 的参数集不同**。
-- 用错 selector → `Unknown argument`，或被 PAD 直接丢弃。
-- 选法：**你需要哪些参数，就选列出了这些参数的那个 selector**。
+- The same `Module.Action` has **several selectors** (the KB's `sibling_selectors`), and **each selector has its own parameter set**.
+- The wrong selector produces `Unknown argument`, or is discarded by PAD outright.
+- How to choose: **pick the selector that lists the parameters you need**.
 
-> KB 里共 **1086 条动作 / 48 个模块**，全部是这种三段式。
-> 写成两段（如 `Outlook.RetrieveEmailMessages`）会被 `check.js` 直接报 `unknown action`。
-> 此前的 v2 手册在这点上含糊，是错误来源。
+> The KB has **1,086 actions / 48 modules**, all in this three-part form.
+> Writing it in two parts (such as `Outlook.RetrieveEmailMessages`) makes `check.js` report `unknown action` directly.
+> The earlier v2 manual was vague here, which is a source of errors.
 
-### 5.2 已验证样本（逐条取自 KB 的 `golden_example`，粘贴零错误）
+### 5.2 Verified samples (each taken from the KB's `golden_example`, zero paste errors)
 
-### Outlook（邮件）
+### Outlook (mail)
 
 ```
 Outlook.Launch Instance=> OutlookInstance
@@ -224,11 +230,11 @@ Outlook.SaveOutlookEmailMessages.SaveEmails Instance: OutlookInstance Account: $
 Outlook.Close Instance: OutlookInstance
 ```
 
-要点：
-- 检索输出是 `Messages=> RetrievedEmails`（不是 `RetrievedEmails=>`）。
-- 发邮件收件人参数是 **`SendTo`**（不是 `To`），HTML 开关是 **`IsBodyHtml`**（不是 `BodyIsHtml`）。
-- 检索模式枚举是全限定的 `Outlook.RetrieveMessagesMode.All`（不是 `Outlook.RetrieveMode.UnreadOnly`）。
-- 存附件是**独立 selector** `RetrieveEmailsAndSaveAttachments` + 参数 `SaveAttachmentsInto`；没有 `Attachments: Outlook.MailAttachments.Save` 这种写法。
+Key points:
+- The retrieval output is `Messages=> RetrievedEmails` (not `RetrievedEmails=>`).
+- The recipient parameter for sending mail is **`SendTo`** (not `To`), and the HTML switch is **`IsBodyHtml`** (not `BodyIsHtml`).
+- The retrieval-mode enum is the fully qualified `Outlook.RetrieveMessagesMode.All` (not `Outlook.RetrieveMode.UnreadOnly`).
+- Saving attachments is its **own selector** `RetrieveEmailsAndSaveAttachments` plus the parameter `SaveAttachmentsInto`; there is no such form as `Attachments: Outlook.MailAttachments.Save`.
 
 ### Excel
 
@@ -240,7 +246,7 @@ Excel.SetColor.SetColorRangePredefined Instance: ExcelInstance EndRow: 1 StartRo
 Excel.CloseExcel.CloseAndSave Instance: ExcelInstance
 ```
 
-要点：没有 `ReadAsText` 参数；判读模式是 `GetCellContentsMode`（枚举全限定）；读取输出是 `RangeValue`。
+Key points: there is no `ReadAsText` parameter; the reading mode is `GetCellContentsMode` (fully qualified enum); the read output is `RangeValue`.
 
 ### Web
 
@@ -249,9 +255,9 @@ WebAutomation.LaunchChrome.LaunchChrome Url: $'''example''' WindowState: WebAuto
 Web.DownloadFromWeb.DownloadToFile UserAgent: $'''example''' Url: $'''example''' ConnectionTimeout: 30 AcceptUntrustedCertificates: False ClearCookies: False FilePath: $'''C:\temp\test.xlsx''' FollowRedirection: True Encoding: Web.Encoding.AutoDetect DownloadedFile=> DownloadedFile
 ```
 
-> 引用录制的 UI 元素的动作（KB 中 `needs_ui_selector: true`，**114 条**）示例不能照搬运行；需在 Designer 里录制元素，再填成 `appmask['<屏幕>']['<元素>']`。
+> Sample actions that reference recorded UI elements (marked `needs_ui_selector: true` in the KB, **114 actions**) cannot be run as copied; record the element in the Designer first, then fill in `appmask['<screen>']['<element>']`.
 
-### 脚本执行（SAP / VBS / PowerShell）
+### Script execution (SAP / VBS / PowerShell)
 
 ```
 SAP.AttachToRunning.AttachToRunningSapByActiveSession SapInstance=> SapInstance
@@ -263,9 +269,9 @@ Scripting.RunPowershellScript.RunScript Script: $'''''' ScriptOutput=> Powershel
 Scripting.RunDOSCommand.RunDOSCommand DOSCommandOrApplication: $'''C:\temp\test.xlsx''' WorkingDirectory: $'''C:\temp''' StandardOutput=> CommandOutput StandardError=> CommandErrorOutput ExitCode=> CommandExitCode
 ```
 
-要点：VBS 是 `Scripting.RunVBScript.RunVBScript`（**不是** `Scripting.RunPythonScript`，KB 里无此 id）；DOS 命令是 `Scripting.RunDOSCommand.RunDOSCommand`（**不是** `System.RunDOSCommand`）。SAP 有原生动作，**不必**退回 VBS。
+Key points: VBS is `Scripting.RunVBScript.RunVBScript` (**not** `Scripting.RunPythonScript`, which does not exist in the KB); DOS commands are `Scripting.RunDOSCommand.RunDOSCommand` (**not** `System.RunDOSCommand`). SAP has native actions, so **there is no need** to fall back to VBS.
 
-### 文件与变量
+### Files and variables
 
 ```
 File.ReadTextFromFile.ReadText File: $'''C:\temp\test.xlsx''' Encoding: File.TextFileEncoding.UTF8 Content=> FileContents
@@ -277,102 +283,99 @@ SET Counter TO 0
 SET FilePath TO $'''C:\Users\Desktop\\%VarName%.xlsx'''
 ```
 
-要点：编码枚举是 `File.TextFileEncoding.UTF8`（读）/ `File.FileEncoding.Unicode`（写），不是 `File.Encoding.UTF8`；写文件的 id 是 `File.WriteText`（不是 `File.WriteTextToFile.WriteText`）；路径里变量前的反斜杠要**双写**（见 5.3）。
+Key points: the encoding enums are `File.TextFileEncoding.UTF8` (read) / `File.FileEncoding.Unicode` (write), not `File.Encoding.UTF8`; the id for writing a file is `File.WriteText` (not `File.WriteTextToFile.WriteText`); a backslash before a variable inside a path must be **doubled** (see 5.3).
 
-### 5.3 字符串里的路径与变量（最容易踩的坑）
+### 5.3 Paths and variables inside strings (the easiest trap)
 
 ```
-SET FilePath TO $'''C:\Users\Desktop\\%VarName%.xlsx'''    # 变量前双反斜杠
-SET Unc     TO $'''\\\\<host>\<share>\file.xlsx'''        # UNC 四个反斜杠
-SET Pct     TO $'''完成度 100%%'''                           # 字面百分号双写
-SET Owner   TO $'''Joe\'s report'''                          # 单引号转义
+SET FilePath TO $'''C:\Users\Desktop\\%VarName%.xlsx'''    # double backslash before the variable
+SET Unc     TO $'''\\\\<host>\<share>\file.xlsx'''        # UNC needs four backslashes
+SET Pct     TO $'''completion 100%%'''                    # literal percent sign is doubled
+SET Owner   TO $'''Joe\'s report'''                        # escaped apostrophe
 ```
 
 ---
 
-## 六、常见句柄类型（`PAD_Robin_TypeReference.json` 摘要）
+## 6. Common handle types (summary of `PAD_Robin_TypeReference.json`)
 
-| 类型 | 写法 | 由谁产生 |
+| Type | Written as | Produced by |
 |---|---|---|
-| `ExcelInstanceHandle` | 裸名 `ExcelInstance` | `Excel.LaunchExcel.LaunchAndOpen` / `Excel.Attach` |
-| `WebBrowserInstanceHandle` | 裸名 `Browser` | `WebAutomation.LaunchEdge.LaunchEdge` |
-| `OutlookInstanceHandle` | 裸名 `OutlookInstance` | `Outlook.Launch` |
-| `SapInstanceHandle` | 裸名 `SapInstance` | `SAP.SapLogin.SapLogInOptionTerminate` |
-| `List`1` | 裸名 `FileList` | `SET` / `CreateNewList` |
-| `DataTable` | 裸名 `DataTable` | `CreateNewDatatable` 或动作输出 |
+| `ExcelInstanceHandle` | bare `ExcelInstance` | `Excel.LaunchExcel.LaunchAndOpen` / `Excel.Attach` |
+| `WebBrowserInstanceHandle` | bare `Browser` | `WebAutomation.LaunchEdge.LaunchEdge` |
+| `OutlookInstanceHandle` | bare `OutlookInstance` | `Outlook.Launch` |
+| `SapInstanceHandle` | bare `SapInstance` | `SAP.SapLogin.SapLogInOptionTerminate` |
+| `List`1` | bare `FileList` | `SET` / `CreateNewList` |
+| `DataTable` | bare `DataTable` | `CreateNewDatatable` or an action output |
 | `String` | `$'''…'''` | — |
-| `Int32` / `Int64` / `Decimal` | 裸数字 | — |
+| `Int32` / `Int64` / `Decimal` | bare number | — |
 | `Boolean` | `True` / `False` | — |
-| `UIControl` / `WebControl` | `$'''selector'''`（来自录制） | 录制 UI 元素 |
+| `UIControl` / `WebControl` | `$'''selector'''` (from recording) | recording a UI element |
 | `_ENUM_RULE` | `Module.EnumType.Value` | — |
 
-原则：**开什么就关什么**（Launch 对应 Close）；变量必须先由上游动作产生再使用。
+Principle: **close what you open** (Launch pairs with Close); a variable must be produced by an upstream action before it is used.
 
 ---
 
-## 七、粘贴前自检清单（替换 v1 的自造清单）
+## 7. Self-check list before pasting (replaces v1's invented list)
 
-- [ ] 脚本**不含** `@@` 文件头、`IMPORT`、`@SENSITIVE`
-- [ ] 脚本**不含** `FUNCTION ... END FUNCTION`
-- [ ] `%…%` 只出现在字符串内部
-- [ ] 字符串里的单引号都写成 `\'`
-- [ ] 紧跟变量/结尾引号前的反斜杠已双写；UNC 用四个反斜杠
-- [ ] 字面百分号写成 `%%`
-- [ ] 枚举都写成 `Module.EnumType.Value`，且值在 `enumValues` 内
-- [ ] 没把 PAD 关键字当变量名/属性名（邮件用 `Mail['From']`）
-- [ ] 一行一语句；IF/LOOP/SWITCH 都有对应 `END`
-- [ ] 每个变量都有上游来源；开闭成对
-- [ ] 跑过 `node tools/pad-robin/check.js output.robin` 且 0 违规（由生成器自动执行，也可单跑）
+- [ ] The script does **not** contain `@@` file headers, `IMPORT` or `@SENSITIVE`
+- [ ] The script does **not** contain `FUNCTION ... END FUNCTION`
+- [ ] `%…%` appears only inside strings
+- [ ] Every apostrophe inside a string is written `\'`
+- [ ] A backslash right before a variable or the closing quotes is doubled; UNC uses four backslashes
+- [ ] Literal percent signs are written `%%`
+- [ ] Every enum is written `Module.EnumType.Value` and its value is in `enumValues`
+- [ ] No PAD keyword is used as a variable or property name (mail uses `Mail['From']`)
+- [ ] One statement per line; every IF/LOOP/SWITCH has its matching `END`
+- [ ] Every variable has an upstream source; every handle is opened and closed in pairs
+- [ ] `node tools/pad-robin/check.js output.robin` was run with 0 violations (the generator runs it automatically, or you can run it standalone)
 
 ---
 
-## 八、从 flow.json 生成 Robin（确定性工具链）
+## 8. Generating Robin from flow.json (the deterministic toolchain)
 
-不需要手工拼脚本了。整条链路都是确定性工具，**模型只用在 Agent A 理解需求和显式的 AI 步骤**。
+There is no need to assemble scripts by hand any more. The whole chain is deterministic, and **the model is used
+only for Agent A understanding the requirement and for explicit AI steps**.
 
-| 步骤 | 命令 | 产物 |
+| Step | Command | Product |
 |---|---|---|
-| 设计 → 画布 | `node tools/flow-drawio/flow-to-drawio.js <flow.json> <flow.drawio>` | 可拖拽/改名的 draw.io 画布 |
-| 画布 → 回读 | `node tools/flow-drawio/drawio-to-flow.js <flow.drawio> <flow.json> <new.json>` | 回读人工改动 + 变更摘要 |
-| 生成脚本 | `node tools/pad-robin/flow-to-robin.js <flow.json> output.txt` | Robin 正文（并自动跑 check-flows） |
-| 静态校验 | `node tools/pad-robin/check.js <output.txt \| 目录>` | 违规清单（0 = 可粘贴） |
+| Design → canvas | `node tools/flow-drawio/flow-to-drawio.js <flow.json> <flow.drawio>` | A draggable, renamable draw.io canvas |
+| Canvas → read back | `node tools/flow-drawio/drawio-to-flow.js <flow.drawio> <flow.json> <new.json>` | Manual changes read back + change summary |
+| Generate the script | `node tools/pad-robin/flow-to-robin.js <flow.json> output.txt` | The Robin body (and check-flows runs automatically) |
+| Static checks | `node tools/pad-robin/check.js <output.txt \| directory>` | Violation list (0 = pasteable) |
 
-### 生成器规则（`flow-to-robin.js`）
+### Generator rules (`flow-to-robin.js`)
 
-- **骨架来自 KB**：动作 id、参数名、参数顺序、输出名一律取该动作的 `golden_example`，只填值。
-- **值来源优先级**：① flow 节点 `params` 显式给定 → ② 句柄类型（`*Handle`）自动接上游 Launch 的变量
-  → ③ KB `input_params` 的 `default` → ④ 沿用 golden 占位值（并打印告警）。
-- **类型格式化**：`String/FileObject/FolderObject/EncryptableObject` → `$'''…'''`；数字/布尔裸写；
-  枚举裸值自动补成 `Module.EnumType.Value`（`Module` 取 actionId 首段）。
-- **字符串转义**（防静默丢弃）：`\` → `\\`、`'` → `\'`、字面 `%` → `%%`。
-- **引用**：`{{2.RetrievedEmails}}` → 上游节点绑定到的输出变量；`{{config.X}}` / `{{variables.X}}` → 裸变量 `X`；
-  字符串里内嵌引用 → `$'''…%X%…'''`。
-- **分支**：带 `branch` 的节点生成 `IF <condition> THEN`；true 支路终点若正好汇合到 false 目标，
-  只生成 `IF … END`（不带 ELSE），否则生成 `IF/ELSE/END`。
-- **变量初始化**：flow `variables[]` → 顶部 `SET` 行（脚本自包含，便于过静态校验；已是 PAD 输入变量可删）。
-- **安全闸门**（报错并 `exit 1`，拒绝产出）：`pad_hint` 不在 KB / 参数名不在 `input_params` /
-  命中 `needs_ui_selector: true` / `{{引用}}` 指向不存在的节点或输出。
+- **The skeleton comes from the KB**: action id, parameter names, parameter order and output names are all taken from that action's `golden_example`; only values are filled in.
+- **Value source precedence**: ① `params` given explicitly on the flow node → ② handle types (`*Handle`) are wired automatically to the upstream Launch variable
+  → ③ the KB's `input_params` `default` → ④ keep the golden placeholder value (and print a warning).
+- **Type formatting**: `String/FileObject/FolderObject/EncryptableObject` → `$'''…'''`; numbers/booleans bare;
+  bare enum values are expanded automatically to `Module.EnumType.Value` (`Module` comes from the first segment of the actionId).
+- **String escaping** (against silent discards): `\` → `\\`, `'` → `\'`, a literal `%` → `%%`.
+- **References**: `{{2.RetrievedEmails}}` → the output variable bound by the upstream node; `{{config.X}}` / `{{variables.X}}` → the bare variable `X`;
+  a reference embedded in a string → `$'''…%X%…'''`.
+- **Branches**: a node with `branch` generates `IF <condition> THEN`; when the end of the true path rejoins the false target,
+  only `IF … END` is generated (no ELSE), otherwise `IF/ELSE/END`.
+- **Variable initialization**: flow `variables[]` → `SET` lines at the top (the script stays self-contained, which helps the static checks; delete them if they are PAD input variables).
+- **Safety gates** (report an error and `exit 1`, refusing to produce): `pad_hint` not in the KB / a parameter name not in `input_params` /
+  a hit on `needs_ui_selector: true` / a `{{reference}}` pointing at a node or output that does not exist.
 
-> 与 PROMPT.md「模板填空器」范式完全一致：**动作骨架零改写，只填值**。
-> 手工修改产物会重新引入参数名/顺序错误——要改就改 `flow.json` 再重跑。
+> Fully consistent with the "template filler" paradigm in PROMPT.md: **the action skeleton is never rewritten; only values are filled in**.
+> Hand-editing the product reintroduces parameter name/order errors — to change something, change `flow.json` and rerun.
 
-### 规范化比对（发布校验与指纹比对共用）
+### Normalized comparison (shared by publish verification and fingerprint comparison)
 
-`tools/pad-sync/RobinText.psm1::ConvertTo-NormalizedRobin` 在比对前只做这些处理：
+`tools/pad-sync/RobinText.psm1::ConvertTo-NormalizedRobin` does only the following before comparing:
 
-1. 显式剥掉文件头的 `U+FEFF`（BOM），避免首行多出一个不可见字符；
-2. `\"` → `"`；
-3. 按行拆分并 `Trim()`，丢弃空行、`#` 开头的注释行、`@` 开头的元数据行、`IMPORT ` 行；
-4. 丢弃 `**REGION` / `**ENDREGION` 折叠区标记行（PAD 落盘可能保留也可能丢弃）；
-5. 用 LF 重新拼接。
+1. Explicitly strip the `U+FEFF` (BOM) file header so the first line does not gain an invisible character;
+2. `\"` → `"`;
+3. Split into lines and `Trim()`, dropping blank lines, lines starting with `#`, metadata lines starting with `@`, and `IMPORT ` lines;
+4. Drop `**REGION` / `**ENDREGION` folded-region marker lines (PAD may or may not keep them when writing to disk);
+5. Join again with LF.
 
-**已知边界**：多行字符串内部的空行、缩进差异、以 `#` / `@` 开头的行会被上述按行规则一并吸收，
-两份实际有差异的定义可能被判成一致（假通过）。现阶段不写字符串感知解析器、不加 `-Strict`，
-接受这个风险。出现真实误判时：先用 `compare-robin.js` 逐行核对定位差异，
-确认后把该内容改成显式可见的写法（例如字符串里用 `\n` 代替空行），
-不要为此放宽或收紧规范化规则。
+**Known boundary**: blank lines inside multi-line strings, indentation differences, and lines starting with `#` / `@` are absorbed by those line rules, so two definitions that really differ may be judged identical (a false pass). For now we do not write a string-aware parser and do not add `-Strict`, and accept that risk. If a real misjudgement appears: first use `compare-robin.js` to compare line by line and locate the difference, then rewrite that content into an explicitly visible form (for example use `\n` instead of a blank line inside the string); never loosen or tighten the normalization rules for it.
 
-### 端到端已验证（示例）
+### Verified end to end (example)
 
 ```
 node tools/flow-drawio/flow-to-drawio.js tools/flow-drawio/example-flow.json tools/flow-drawio/example-flow.drawio
@@ -382,21 +385,23 @@ node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json tools/
     -> 静态自检: 通过（10 行动作，0 处违规）
 ```
 
+(the `->` lines above are tool output, quoted as emitted)
+
 ---
 
-## 九、v1 错误更正表
+## 9. v1 error correction table
 
-| v1 原文 | 问题 | 更正 |
+| v1 wording | Problem | Correction |
 |---|---|---|
-| 在文件示例里把 `@@ConnectionString`/`IMPORT`/`@SENSITIVE` 当作可粘贴内容 | 粘贴会**整段丢弃** | 这些是 `.robin` 文件头，**不能粘**；Agent B 不产出 |
-| 把 `FUNCTION ... END FUNCTION` 当可粘贴 | 粘贴会**整段丢弃** | 子流程须在 Designer 手工建，正文分别粘 |
-| "变量引用用 `%VariableName%` 格式"（泛化） | 字符串外会**整段丢弃** | 字符串内用 `%Name%`；字符串外裸写变量名 |
-| `WHEN Counter < 10 … END` 表示 while | 语法错误 | `LOOP WHILE (Counter) < (10) … END` |
-| 未强调单引号转义 / `%%` / 反斜杠双写 / UNC 四斜杠 | 常见静默失败 | 见第三节 6–9 条 |
-| "变量引用用 `%...%`" + "动作参数直接用变量名"混用 | 造成 `Text: %Msg%` 类错误 | 明确：参数里裸写 `Text: Msg` 或裸名句柄 |
-| 未提枚举必须全限定 | 漏模块名即报错 | `Module.EnumType.Value` |
-| 未提"一行一语句""关键字禁用" | 静默失败 | 见第三节 11、14 条 |
+| Treating `@@ConnectionString`/`IMPORT`/`@SENSITIVE` in file examples as pasteable content | Pasting **discards the entire script** | These are `.robin` file headers and **must not be pasted**; Agent B does not emit them |
+| Treating `FUNCTION ... END FUNCTION` as pasteable | Pasting **discards the entire script** | Subflows must be created by hand in the Designer and their bodies pasted separately |
+| "Variable references use the `%VariableName%` format" (generalized) | Outside a string it **discards the entire script** | Inside a string use `%Name%`; outside a string write the bare variable name |
+| `WHEN Counter < 10 … END` expressing a while loop | Syntax error | `LOOP WHILE (Counter) < (10) … END` |
+| Not stressing apostrophe escaping / `%%` / doubled backslashes / UNC four backslashes | Common silent failures | See section 3, rules 6–9 |
+| Mixing "variable references use `%...%`" with "action parameters take variable names directly" | Produces errors such as `Text: %Msg%` | Be explicit: inside parameters write `Text: Msg` bare, or a bare handle name |
+| Not mentioning that enums must be fully qualified | A missing module name raises an error | `Module.EnumType.Value` |
+| Not mentioning "one statement per line" and "keywords are forbidden" | Silent failures | See section 3, rules 11 and 14 |
 
 ---
 
-> 参考：`JoeG592/pad-robin-action-kb`（CC BY 4.0）· `jonathan-haubrich/power-automate-flows`（架构参考）· 微软官方动作参考 · Power Platform 社区
+> References: `JoeG592/pad-robin-action-kb` (CC BY 4.0) · `jonathan-haubrich/power-automate-flows` (architecture reference) · Microsoft's official action reference · the Power Platform community

@@ -1,33 +1,37 @@
-# 安全说明
+# Security
 
-## 报告问题
+## Reporting a problem
 
-请**不要**在公开 Issue 里贴漏洞细节、真实账号、邮件内容或 SAP 数据。
+**Do not** post vulnerability details, real accounts, mail content or SAP data in a public issue.
 
-- 首选：仓库的 **Security → Report a vulnerability**（GitHub Security Advisories，私有可见）
-- 次选：邮件联系维护者（在仓库主页的 Contact 里）
+- Preferred: the repository's **Security → Report a vulnerability** (GitHub Security Advisories, privately visible)
+- Alternative: contact the maintainer by email (via Contact on the repository home page)
 
-请在报告里包含：影响的文件/命令、复现步骤、期望行为与实际行为、是否涉及凭据泄露。
-我们会在确认后修复，并在发布说明里致谢（除非你要求匿名）。
+Please include: the affected file/command, reproduction steps, expected versus actual behaviour, and whether
+credentials are exposed. We fix confirmed reports and credit reporters in the release notes (unless you ask
+to stay anonymous).
 
-## 范围
+## Scope
 
-本仓库是**本地工具链**，不提供服务端。以下情况属于安全问题：
+This repository is a **local toolchain** and provides no server. The following count as security issues:
 
-- 生成的 `.robin` 会执行计划外的副作用（例如在 `DRY_RUN=1` 下仍然发信或过账）
-- 准入网关 / 静态校验可以被绕过（例如改节点 label 或变量名就跳过 deny 规则）
-- 发布流水线把未确认的内容发到生产（确认后文件被替换而不报错）
-- 日志或产物里落入了不该落盘的凭据
+- A generated `.robin` performs side effects that were not planned (for example, it still sends mail or posts
+  documents while `DRY_RUN=1`)
+- The admission gate or static checks can be bypassed (for example, renaming a node label or variable skips a deny rule)
+- The publishing pipeline ships unconfirmed content to production (the file is swapped after confirmation without an error)
+- Credentials that should never land on disk end up in logs or artifacts
 
-以下情况一般不算安全问题，但欢迎提 Issue：
+The following are generally not security issues, but issues are still welcome:
 
-- 需要本地管理员权限才能实现的操作
-- 依赖 PAD / SAP GUI 自身缺陷导致的行为
-- 使用真实业务凭据时的配置失误（请改用 `business/config/*.example.json` 复现）
+- Anything that requires local administrator rights to accomplish
+- Behaviour caused by defects in PAD / SAP GUI itself
+- Configuration mistakes when using real business credentials (please reproduce with `business/config/*.example.json` instead)
 
-## 已知设计边界
+## Known design boundaries
 
-- 策略只约束 PAD 动作与工具入口，**管不到 VBS 内部的 SAP 操作和文件写入**
-- 验收判据只证明"产物存在且格式正确"，不证明业务金额/批次正确
-- 告警只写本地 `business/logs/alerts.jsonl`，不会外发
-- 真实配置、知识库、运行产物都不入库；请勿在 PR 里提交它们
+- The policy constrains PAD actions and tool entry points only; it **cannot govern SAP operations or file writes
+  inside VBS**
+- Acceptance criteria prove only that "the artifact exists and has the right format", not that business amounts
+  or batches are correct
+- Alerts are written only to the local `business/logs/alerts.jsonl` and are never sent out
+- Real configuration, the knowledge base and run artifacts are never committed; please do not submit them in a PR

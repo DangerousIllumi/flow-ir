@@ -1,64 +1,70 @@
-# 文档语言规范
+# Documentation language policy
 
-> 这份文档回答一个问题：**仓库里的每一处文字该用哪种语言**。
-> 判据是「谁读它」，不是手感；同时用两条硬规则挡住两种最常见的坑——同一事实写多处导致的漂移，
-> 以及把中文文案当成机器可匹配的标识。
+> This document answers one question: **which language should each piece of text in this repository use?**
+> The criterion is "who reads it", not personal taste. Two hard rules guard against the two most common traps:
+> the same fact written in several places drifting apart, and Chinese prose being treated as a
+> machine-matchable identifier.
 
-## 1. 按读者分层
+## 1. Language by audience
 
-| 读者 | 载体 | 语言 |
+| Audience | Carriers | Language |
 |---|---|---|
-| 仓库外首次到访者、搜索引擎与爬虫、公开库访客 | `README.md`、`llms.txt` | **英文** |
-| 要动手生成 / 校验 / 发布 / 排障的人与 AI 助手 | `AGENTS.md`、`docs/*.md`、`skills/*.md` | **中文** |
-| 读源码的人 | `tools/`、`tests/` 等目录下的代码注释 | **中文** |
-| 指针类说明 | `CLAUDE.md`、`.github/copilot-instructions.md` | **中文** |
-| 程序而不是人消费的东西 | 标识符、参数名、规则 id、退出码、JSON 键、CLI 开关 | **英文** |
+| Anyone reading the repository: external visitors, search engines and crawlers, maintainers, AI assistants | `README.md`, `llms.txt`, `AGENTS.md`, `CLAUDE.md`, `docs/*.md`, `skills/*.md`, `.github/copilot-instructions.md` | **English** |
+| People reading source code | code comments under `tools/`, `tests/` and the rest of the repository | **English** |
+| Programs rather than people | identifiers, parameter names, rule ids, exit codes, JSON keys, CLI switches | **English** |
+| The business layer, which is never committed and lives only on the operator's machine | flow definitions, configuration, notes and human-facing explanation fields such as `idempotency_note` under `business/` | **Chinese** |
+| Tool output quoted inside documentation | real error strings the tools emit | kept verbatim as emitted, marked as tool output |
 
-为什么这样分：
+Why this split:
 
-- `README.md` 与 `llms.txt` 是仓库的门面，读者可能不读中文，也可能只是抓取摘要；英文能让项目被
-  更广的工具和人群直接消费。
-- 运行手册、设计规则、脚本红线是**本仓库使用者**的操作依据，读者是本仓库的维护者和 AI 助手，
-  中文表达更精确、也更容易和代码注释保持一致。
-- 代码注释随用户既有规则统一用中文；但**代码本身**的标识符不跟着中文走——它们要被编译器、脚本、
-  测试和日志消费，必须保持英文。
+- Everything outside `business/` is English so external readers, search engines and AI assistants can consume the
+  repository directly, without depending on the reader understanding another language.
+- `business/` is never committed and never published. Its text is written by and for the operator running the
+  flows, so it stays in the language that operator works in; business-layer content is outside the public surface.
+- The layer boundaries do not move with language: identifiers, parameter names, rule ids, exit codes and JSON keys
+  are consumed by compilers, scripts, tests and logs, so they stay English regardless of the prose around them.
 
-## 2. 硬规则一：一份文档只用一种语言，不做双语镜像
+## 2. Hard rule one: one language per document, no bilingual mirrors
 
-- 每份文档的正文只允许一种语言：`README.md`、`llms.txt` 是英文入口，其余文档一律中文。
-- **不新增双语副本**：中文文档不另出英文翻译，英文入口也不附中文对照。除这对英文入口外，
-  仓库里不存在第二份表达同一事实的正文；需要跨语言指路时，给**链接**，不给**复述**。
+- A document body uses exactly one language. No document gets a translated twin, and no document gets an
+  appendix in another language.
+- **Never add a bilingual copy**: when the same fact is needed elsewhere, give a **link**, not a **restatement**.
 
-理由：同一事实写多处必然漂移。本仓库刚发生过一次真实漂移：一次改动把准入检查从 15 项增加到
-16 项，但另一处文档里的编号没同步，于是同一个仓库里同时存在「15 项」和「16 项」两种说法，
-读者无法判断哪个是当前行为。维护两份语言版本会把这类漂移乘以语言数——多一种语言，
-就多一处需要人肉同步的副本。
+Rationale: a fact written in several places inevitably drifts. This repository has already seen a real drift:
+one change raised the admission checks from 15 to 16, but the numbering in another document was not updated,
+so the same repository simultaneously said "15 checks" and "16 checks" and a reader could not tell which one
+described the current behaviour. Maintaining two language versions multiplies that kind of drift by the number
+of languages — one more language means one more copy that a human has to keep in sync.
 
-## 3. 硬规则二：被机器消费的输出必须留 ASCII 锚点
+## 3. Hard rule two: machine-consumed output must keep an ASCII anchor
 
-凡是被**测试断言**、被 **CI 注解**、被**脚本正则匹配**的输出，必须保留一条 ASCII 锚点
-（错误码、固定英文标识、路径或数字）；中文文案只作附带说明，**不能作为唯一匹配依据**。
+Any output that is **asserted by tests**, **annotated by CI**, or **matched by script regular expressions** must
+keep an ASCII anchor (an error code, a fixed English identifier, a path or a number). Prose in any other
+language is supplementary only and **must not be the sole matching basis**.
 
-真实证据：本仓库曾用中文文案做 Pester 的正则断言，7 个测试文件里共 13 条用例在 CI runner 上
-集体变红，而同一份代码在本地一直全绿。根因是 runner 的控制台代码页（可能是 437 这类非 UTF-8
-代码页）与子进程输出的 UTF-8 字节不一致，中文在进入 `Should Match` 之前就被解码成了 `?`——
-断言匹配的是一个已经不存在的字符串。最后是靠 CI 里那条 ASCII 兜底行
-（`FAILED_CASE_FILE <相对路径> LINE <行号> NAME <用例名>`）才把失败定位到具体文件和用例。
-ASCII 落在这个解码歧义之外，所以它才是可靠的锚点。
+Real evidence: this repository once used non-ASCII prose in Pester regex assertions. On the CI runner, 13 cases
+across 7 test files failed together while the same code kept passing locally. The root cause was that the
+runner's console code page (possibly a non-UTF-8 page such as 437) disagreed with the UTF-8 bytes emitted by
+child processes, so the non-ASCII text had been decoded into `?` before it reached `Should Match` — the assertion
+was matching a string that no longer existed. The failure was finally traced to specific files and cases only
+through the ASCII fallback line in CI
+(`FAILED_CASE_FILE <relative path> LINE <line number> NAME <case name>`). ASCII falls outside that decoding
+ambiguity, which is why it is the reliable anchor.
 
-落地做法：
+How to apply it:
 
-- 断言优先匹配错误码或规则 id（例如 `ADMIT_AMBIGUOUS_FLOW`、`-FlowFile`）；需要校验中文文案时，
-  把它作为**附加**条件，而不是唯一条件。
-- 测试与 CI 的定位信息（文件、行号、用例名）保持 ASCII，中文只出现在给人看的说明里。
-- 新增规则 id 时，id 用英文并同步给中文描述；不要把中文句子直接当 id。
-- 中文文案可以随版本措辞调整；被断言的那部分必须稳定。
+- Assertions prefer error codes or rule ids (for example `ADMIT_AMBIGUOUS_FLOW`, `-FlowFile`); when prose must
+  be checked, make it an **additional** condition, never the only one.
+- Test and CI location information (file, line, case name) stays ASCII; non-ASCII text appears only in
+  human-facing explanation.
+- New rule ids are English and get a separate human description; never use a prose sentence as an id.
+- Prose wording may change between versions; the part that is asserted must stay stable.
 
-## 4. 动文档前的检查清单
+## 4. Checklist before touching documentation
 
-- [ ] 这份文档的读者是谁？按第 1 节确定语言，不混排。
-- [ ] 有没有在别处复制了同一段事实？删掉副本，改成链接。
-- [ ] 新写的输出、日志、断言里有没有 ASCII 锚点？
-- [ ] 数字与代码是否一致：准入 16 项、公开样例 16 个（10 个流程 + 6 个 trigger）、`*.cases.json` 11 个、
-      CI 步骤顺序与名称。
-- [ ] 代码注释是否仍是中文（用户既有规则），标识符是否仍是英文。
+- [ ] Who is the reader of this document? Pick the language per section 1 and do not mix languages.
+- [ ] Is any fact restated from somewhere else? Delete the copy and replace it with a link.
+- [ ] Do newly added outputs, logs and assertions carry an ASCII anchor?
+- [ ] Do the numbers match the code: 16 admission checks, 16 public samples (10 flows + 6 triggers),
+      11 `*.cases.json` files, the CI step order and names.
+- [ ] Are identifiers, parameter names, rule ids and exit codes still English?

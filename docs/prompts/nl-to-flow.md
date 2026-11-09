@@ -1,38 +1,41 @@
-# 直接把这段发给你的 AI 助手
+# Paste this to your AI assistant
 
-> 用法：在 IDE 里打开本仓库（或你 fork 的副本），把下面整段复制给 AI，末尾写上你的需求。
+> How to use: open this repository (or your fork) in an IDE, copy the whole block below to the AI, and append
+> your requirement at the end.
 
 ```text
-我在用 flow-ir 这个仓库。请按仓库里的 AGENTS.md 帮我做一条 PAD 工作流。
+I am working in the flow-ir repository. Please build a PAD workflow for me by following the AGENTS.md in the repository.
 
-步骤：
-1. 先读仓库根目录的 AGENTS.md；如果需要，执行 .\setup.ps1 和 .\tools\check-env.ps1（只做一次）。
-2. 按 skills/pad-flow-designer 的规则，把我的需求写成 business/flows/<name>.json。
-   - pad_hint 必须是 pad-robin-action-kb 里真实存在的 actionId，不许编。
-   - params 只能用该动作的真实参数名。
-   - 必须有 budget；脚本类节点必须有 intent；发信/过账/删文件放进 guard。
-3. 依次执行，并把每一步结果贴给我：
+Steps:
+1. Read AGENTS.md in the repository root first; run .\setup.ps1 and .\tools\check-env.ps1 if needed (once only).
+2. Following the rules in skills/pad-flow-designer, turn my requirement into business/flows/<name>.json.
+   - pad_hint must be an actionId that really exists in pad-robin-action-kb; never invent one.
+   - params may only use the real parameter names of that action.
+   - budget is mandatory; script-type nodes must carry intent; sending mail / posting documents / deleting files go inside guard.
+3. Run the following in order and paste the result of each step back to me:
    node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
    node tools\pad-robin\check.js out.robin
    .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<name>.json -RobinFile out.robin
-4. 任何一步失败，都改 business\flows\<name>.json 后重跑，不要改生成器、不要手改 out.robin。
+4. If any step fails, fix business\flows\<name>.json and rerun. Do not change the generator and do not hand-edit out.robin.
 
-交付要求：
-- 业务文件只写进 business\（该目录被 .gitignore 忽略，也不会被推到公开库）。
-- 生成 0 error、check.js 0 errors、准入 0 fail（warn 可以，但要说明原因）。
-- 告诉我 out.robin 的完整路径、粘贴进 PAD 的步骤，以及哪些地方必须我手工补（UI 元素、VBS、账号）。
+Delivery requirements:
+- Write business files only under business\ (that directory is ignored by .gitignore and is never pushed to the public repository).
+- Generation must report 0 errors, check.js 0 errors, and admission 0 fails (warnings are acceptable but must be explained).
+- Tell me the full path of out.robin, the steps to paste it into PAD, and everything I have to fill in by hand (UI elements, VBS, accounts).
 
-我的需求：
-<在这里写你的需求，例如：每天把某个目录下的 CSV 归档到另一个目录，同名覆盖，结束后弹窗提示>
+My requirement:
+<write your requirement here, e.g. every day archive the CSVs in one directory to another directory, overwriting same-name files, then show a popup with the count>
 ```
 
-## 如果你的 AI 说"找不到文件"
+## If your AI says it cannot find the files
 
-- 确认当前工作目录就是仓库根（能看到 `AGENTS.md` 和 `tools\`）。
-- 让它先列一下仓库根目录，再读 `AGENTS.md`。
-- 第一次使用必须先跑 `.\setup.ps1`，否则没有 `pad-robin-action-kb/`，生成器会直接拒绝。
+- Make sure the current working directory is the repository root (where `AGENTS.md` and `tools\` are visible).
+- Ask it to list the repository root first, then read `AGENTS.md`.
+- The first run must start with `.\setup.ps1`; otherwise `pad-robin-action-kb/` is missing and the generator
+  refuses to produce anything.
 
-## 可参考的现成样例
+## Ready-made samples you can copy
 
-`tests/eval/fixtures/` 里有 9 个可直接抄的 `flow.json`：
-foreach 遍历、switch 三路、guard 发信、有界循环+break、文件读写、Excel 读写、HTTP 调用、多条件 AND、无匹配提前结束。
+`tests/eval/fixtures/` contains 9 copy-ready `flow.json` files:
+foreach iteration, a three-way switch, guard plus mail, a bounded loop with break, file read/write, Excel
+read/write, an HTTP call, multi-condition AND, and early exit with no match.

@@ -1,54 +1,60 @@
-# pad-robin-coder（Agent B：代码生成器）
+# pad-robin-coder (Agent B: code generator)
 
 ## When To Use
-当需要把 `flow.json` 翻译成可粘贴到 Power Automate Desktop 的 Robin 脚本时。
-典型触发："生成 PAD 代码"、"翻译成 Robin"、"/generate"、"读取 flow.json 生成代码"。
+When a `flow.json` must be turned into a Robin script that can be pasted into Power Automate Desktop.
+Typical triggers: "generate PAD code", "translate to Robin", "/generate", "read flow.json and generate code".
 
-## 核心原则
-你是**模板填空器**，不是代码生成器。
-- 动作骨架直接取 KB `golden_example`，绝不改写
-- 只换参数值，不增删参数、不改参数顺序
-- 查表填空由确定性工具 `flow-to-robin.js` 完成，你不手抄
+## Core principle
+You are a **template filler**, not a code generator.
+- Take the action skeleton directly from the KB's `golden_example` and never rewrite it
+- Only substitute parameter values; never add or remove parameters, never reorder them
+- The table-driven filling is done by the deterministic tool `flow-to-robin.js`; you never copy it by hand
 
-## 前置参考
-- `pad-robin-action-kb/PAD_Robin_ActionKB.json` — 动作库
-- `pad-robin-action-kb/PAD_Robin_TypeReference.json` — 44 种类型写法
-- `pad-robin-action-kb/PROMPT.md` — 红线清单（出错时对照）
+## Reference material
+- `pad-robin-action-kb/PAD_Robin_ActionKB.json` — the action library
+- `pad-robin-action-kb/PAD_Robin_TypeReference.json` — 44 type forms
+- `pad-robin-action-kb/PROMPT.md` — the red-line list (consult it when something fails)
 
-## 工作流程
+## Workflow
 
-### 1. 跑生成器（一步到位）
+### 1. Run the generator (one step)
 ```bash
 node tools/pad-robin/flow-to-robin.js business/flows/<name>.json output.txt
 ```
-生成器会：查 KB → 取 golden_example → 按类型填值 → 解析引用 → 生成 IF/ELSE → 自动跑仓库内 `tools/pad-robin/check-flows.js` 自检。
+The generator: looks up the KB → takes `golden_example` → fills values by type → resolves references →
+generates IF/ELSE → automatically runs the repository's own `tools/pad-robin/check-flows.js` self-check.
 
-### 2. 处理生成器输出
-- **生成期错误**（unknown action / 未知参数 / 需 UI 选择器 / 悬空引用 / 缺句柄）→ 这是 flow.json 的缺陷，让 Agent A 修正后重跑，**不要手工绕过**
-- **警告**（沿用 KB 占位值 / 变量无默认值）→ 如实转达用户，指出需在 PAD 里补什么
-- **自检不通过**：按报错行号和 PROMPT.md 红线修正**生成器的输入**（flow.json），而不是改产物
+### 2. Handle the generator output
+- **Generation errors** (unknown action / unknown parameter / UI selector required / dangling reference /
+  missing handle) → these are defects in flow.json; have Agent A fix them and rerun, **do not work around them by hand**
+- **Warnings** (KB placeholder values still in use / a variable has no default) → relay them to the user verbatim
+  and point out what still has to be filled in inside PAD
+- **Self-check failure**: fix the **generator input** (flow.json) according to the reported line and the
+  PROMPT.md red lines, not the artifact
 
-### 3. 输出
-- 写 `output.txt`（纯 Robin，无 markdown、无解释）
-- 对话里给预览 + 注意事项
-- 提示用户："记事本打开 output.txt → 全选复制 → PAD 画布 Ctrl+V"
+### 3. Output
+- Write `output.txt` (pure Robin, no markdown, no explanation)
+- Give a preview plus caveats in the conversation
+- Tell the user: "open output.txt in Notepad → select all and copy → paste into the PAD canvas with Ctrl+V"
 
-## 常用命令
+## Common commands
 ```bash
-# 生成 + 自检
+# Generate + self-check
 node tools/pad-robin/flow-to-robin.js business/flows/<name>.json output.txt
 
-# 单独跑静态校验
+# Run the static check on its own
 node tools/pad-robin/check.js output.txt
 ```
 
-## 红线（违反即粘贴失败）
-- ❌ 不手写 `@@` 文件头、`FUNCTION...END`、`IMPORT`（生成器产物本身不含；PAD 允许的 `@@copilotGeneratedAction` 是唯一例外）
-- ❌ `%Var%` 只能在字符串 `$'''…'''` 内部，字符串外必须裸写
-- ❌ 不用 `WHEN...END`，用 `LOOP WHILE (...) ... END`
-- ❌ 不凭记忆写动作名，以 KB 为准
-- ❌ 不手工增删参数
+## Red lines (violating any of them makes the paste fail)
+- ❌ Never hand-write the `@@` file header, `FUNCTION...END` or `IMPORT` (the generator's own output contains none;
+  the PAD-permitted `@@copilotGeneratedAction` is the only exception)
+- ❌ `%Var%` may only appear inside the string `$'''…'''`; outside a string it must be written bare
+- ❌ Never use `WHEN...END`; use `LOOP WHILE (...) ... END`
+- ❌ Never write action names from memory; the KB is authoritative
+- ❌ Never add or remove parameters by hand
 
-## 类型格式化速查
-逐类型写法以 `pad-robin-action-kb/PAD_Robin_TypeReference.json` 为准（44 种），本文不再抄表。
-高频易错只有三处：`%Var%` 只能在 `$'''…'''` 内部；UNC 路径写成 `$'''\\\\<host>\<share>'''`；字面百分号写成 `%%`。
+## Type formatting quick reference
+Per-type syntax is defined by `pad-robin-action-kb/PAD_Robin_TypeReference.json` (44 types); this document does
+not copy the table. Only three high-frequency mistakes exist: `%Var%` may only appear inside `$'''…'''`; UNC paths
+are written as `$'''\\\\<host>\<share>'''`; a literal percent sign is written as `%%`.

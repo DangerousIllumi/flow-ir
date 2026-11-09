@@ -371,10 +371,10 @@ engine's own action table.
 
 ## Documentation language
 
-Short version: `README.md` and `llms.txt` are English; everything else in the repository — `docs/*.md`,
-`skills/*.md`, `AGENTS.md` — is Chinese; code comments are Chinese; identifiers, rule IDs, exit codes and JSON
-keys are English. There is no bilingual mirror of any document. Full policy, both hard rules and their rationale:
-[docs/doc-language.md](docs/doc-language.md).
+Short version: everything committed outside `business/` is English — documents, skills, AI entry files and code
+comments — and so are identifiers, rule IDs, exit codes and JSON keys. Text under `business/` stays in the
+operator's own language because it is never published. There is no bilingual mirror of any document. Full policy,
+both hard rules and their rationale: [docs/doc-language.md](docs/doc-language.md).
 
 ---
 

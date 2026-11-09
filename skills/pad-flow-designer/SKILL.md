@@ -1,89 +1,106 @@
-# pad-flow-designer（Agent A：流程设计器）
+# pad-flow-designer (Agent A: flow designer)
 
 ## When To Use
-当用户用自然语言描述一个要在 Power Automate Desktop 上跑的业务流程时。
-典型触发："做一个流程"、"设计流程"、"从邮箱读…然后…"、"/design"。
+When the user describes, in natural language, a business process that should run on Power Automate Desktop.
+Typical triggers: "build me a flow", "design a flow", "read from the mailbox … then …", "/design".
 
-## 你的职责
+## Your responsibilities
 
-1. 接收自然语言需求
-2. 生成结构化流程定义 `flow.json`（唯一权威源）
-3. 为每个节点标注 PAD 候选动作（`pad_hint`，必须是 KB 里真实的三段式 actionId）
-4. 生成可拖拽评审的 `.drawio` 流程图
-5. 用户调整后回读改动
-6. 只做设计与校验，不执行任何真实业务
+1. Take a natural-language requirement
+2. Produce the structured flow definition `flow.json` (the single authoritative source)
+3. Annotate every node with a candidate PAD action (`pad_hint`, which must be a real three-part actionId from the KB)
+4. Generate a `.drawio` diagram for drag-and-drop review
+5. Read back the user's edits after they adjust the diagram
+6. Do design and validation only; never execute any real business action
 
-## 工作流程
+## Workflow
 
-### 1. 理解需求
-提取：触发方式、涉及系统、步骤顺序、条件分支、循环、需 AI 的特殊步骤。
+### 1. Understand the requirement
+Extract: how it is triggered, which systems are involved, the step order, conditional branches, loops, and any
+step that needs special AI assistance.
 
-### 2. 标注 pad_hint（必须查表，不许编造）
-先查 KB 确认动作存在：
+### 2. Annotate pad_hint (look it up in the table, never invent)
+Look the action up in the KB first to confirm it exists:
 ```bash
 node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json'); console.log(kb.actions.find(a=>a.actionId==='Module.Action.Selector')?'OK':'MISS')"
 ```
-易错点：`Outlook.Close*` 一律禁用（会连带关掉用户已打开的主窗口）；其余动作以 KB 查表结果为准，不在文档里抄清单。
+Pitfall: `Outlook.Close*` is always forbidden (it also closes the main window the user already has open).
+For every other action, the KB lookup result is the authority; do not copy action lists into documents.
 
-**句柄必须成对开闭**：Launch 产出 → 后续引用 → Close 收尾。
-唯一例外是 Outlook：**只 Launch 不 Close**，否则会把用户已打开的主窗口一起关掉。
+**Handles must be opened and closed in pairs**: Launch produces the handle → later steps reference it → Close
+finishes it. The single exception is Outlook: **Launch only, never Close**, otherwise the user's already-open
+main window is closed too.
 
-### 3. 生成 flow.json 之前的必答项（硬门槛）
+### 3. Mandatory answers before generating flow.json (hard gate)
 
-**下面这些问题必须逐节点问到答案，没有答案就不许生成 `flow.json`。**
-不许用「默认自动」「默认安全」替用户回答；用户只说整体流程时，要按节点拆开追问。
+**The questions below must be answered node by node; without answers you may not generate `flow.json`.**
+Never answer on the user's behalf with "automatic by default" or "safe by default"; when the user only describes
+the overall process, split it into nodes and ask again.
 
-> **本工具链不做自动重试。** 运行失败一律「告警 + 人工重跑」，没有任何自动重试路径；
-> 因此 `idempotent` 不用于放行任何自动化行为，只用于告诉人「点运行之前需要知道什么」。
+> **This toolchain does no automatic retry.** A failed run always means "alert + manual rerun"; there is no
+> automatic retry path. `idempotent` therefore never unlocks automated behaviour; it only tells a human what
+> they need to know before pressing Run.
 
-| # | 必答项 | 取值 | 落到 flow.json 的字段 |
+| # | Mandatory answer | Values | Field written to flow.json |
 |---|---|---|---|
-| 1 | 这个节点怎么运行 | `auto` 自动执行 / `confirm` 需人工确认 / `observe` 只读观察 | 节点级 `run_mode` |
-| 2 | 重跑会发生什么（重跑安全性） | `true` 重跑结果一致 / `false` 重跑会改变状态或丢失输入 | 节点级 `idempotent`；为 `false` 时必须再写 `idempotency_note` |
-| 2b | 后果能不能回退（可逆性） | `true` 删掉可重建、可改回（保存附件/导出文件/核对文件/标记已读）/ `false` 发信、过账等不可撤回 | 节点级 `reversible`；为 `false` 时必须再写 `reversibility_note`（说清回退办法，如"过账需冲销凭证"） |
-| 3 | 多文件落盘 + 需清理旧文件时，怎么区分「本次产物」 | `是` 采用运行时间目录 / `否` 说明用什么可靠标记 | 本次落盘目录 + 清理节点的选取条件 |
-| 4 | 这一步开始前需要哪些输入文件 | `无` / 每个文件给出：目录（配置键）、文件名通配符、`true` 必需 / `false` 可选 | 节点级 `inputs[]`（见下方「输入文件声明」） |
-| 5 | 这个流程怎么触发 | `manual` / `schedule`（`time` + `days` + `gate=workday|last-workday`）/ `file`（`dir` 必须是 `{{config.<KEY>}}`） | 顶层 `trigger`，字段与取值见 `docs/trigger-adapter-design.md`；`assisted=true` 必须带 `timeout_sec` |
+| 1 | How does this node run | `auto` runs automatically / `confirm` needs human confirmation / `observe` read-only observation | node-level `run_mode` |
+| 2 | What happens on a rerun (rerun safety) | `true` a rerun gives the same result / `false` a rerun changes state or loses input | node-level `idempotent`; when `false`, `idempotency_note` is also required |
+| 2b | Can the consequence be undone (reversibility) | `true` deleting rebuilds it or it can be reverted (saved attachment / exported file / reconciliation file / marked as read) / `false` sending mail, posting documents and similar cannot be undone | node-level `reversible`; when `false`, `reversibility_note` is also required (state how to revert, e.g. "a posting needs a reversal document to be undone") |
+| 3 | With multiple files written to disk and old files to clean up, how do you tell "this run's artifacts" apart | `yes` use a run-timestamp directory / `no` describe which reliable marker you use instead | this run's output directory + the selection condition of the cleanup node |
+| 4 | Which input files must exist before this step starts | `none` / for each file: directory (config key), filename wildcard, `true` required / `false` optional | node-level `inputs[]` (see "Input file declarations" below) |
+| 5 | How is this flow triggered | `manual` / `schedule` (`time` + `days` + `gate=workday|last-workday`) / `file` (`dir` must be `{{config.<KEY>}}`) | top-level `trigger`; fields and values in `docs/trigger-adapter-design.md`; `assisted=true` requires `timeout_sec` |
 
-判定口径：
-- **`idempotent` 与 `reversible` 是两个正交的轴，不能互相代替**：
-  `idempotent` 回答「同一输入重跑会不会叠加」，`reversible` 回答「已经产生的后果能不能撤回」。
-- **`idempotent` 的语义是「重跑安全性」**：回答「人工点运行之前需要知道什么」，不是「是否允许自动重试」。
-- **`reversible=false` 的节点必须能说出回退办法**（如「提交后需冲销才能撤回」「邮件已发出，只能再发一封说明」），
-  说不出来就说明这个副作用不该放进无人值守流程。
-- **控制节点（SET / IF / LOOP / SWITCH / GUARD）也要标注**，不能只标业务动作。
-- 发信、过账、删文件、改状态这类副作用节点，默认要问清楚；问不出重跑后果就按 `idempotent=false`。
-- `idempotency_note` 必须是一到两句**给人看的中文**，写清「重跑会发生什么 / 要注意什么」，
-  例如「保存附件后重跑会取不到邮件，请先恢复未读状态」「每重跑一次会再发一封提醒邮件」。
-- **第 3 项只在流程同时满足「一次落盘多个文件」和「需要删除旧文件」时必答**：
-  默认采用**运行时间目录**（每次运行新建 `YYYYMMDD-HHmmss` 子目录，本次所有文件只进该目录，
-  清理按目录名保留最近 N 个），详见 `docs/script-standards.md` 的「运行时间目录」一节。
-  若用户坚持不用，必须说出**具体且可验证的新旧标记**（如文件名里由流程自己写入的序号/批次号）；
-  **不接受「用文件修改时间」「按改时间谁新留谁」这类未经验证的答案**，因为常见客户端保存附件会
-  继承附件原始时间，覆盖同名文件时连创建时间一起改写，时间戳无法区分新旧。问不出可靠标记就不生成 `flow.json`。
-- 反例必须记住：
-  - **导出类脚本可重跑**：每次生成新的带时间戳导出文件，`idempotent=true`。
-  - **过账类脚本不可重跑**：重复执行会产生重复凭证，必须 `idempotent=false`，
-    `idempotency_note` 写明人工前置检查（如「重跑前必须确认状态账本完整」）；
-    且 `reversible=false`，`reversibility_note` 写「提交后需冲销才能撤回」。
+Decision criteria:
+- **`idempotent` and `reversible` are two orthogonal axes; neither substitutes for the other**:
+  `idempotent` answers "does rerunning with the same input pile up side effects", `reversible` answers
+  "can the consequences already produced be withdrawn".
+- **The semantics of `idempotent` are "rerun safety"**: it answers "what a human must know before pressing Run",
+  not "is automatic retry allowed".
+- **A node with `reversible=false` must be able to state how to revert** (e.g. "a submission needs a reversal
+  document to be withdrawn", "the mail has been sent, so all we can do is send another explanation").
+  If no revert path can be stated, the side effect does not belong in an unattended flow.
+- **Control nodes (SET / IF / LOOP / SWITCH / GUARD) must be annotated too**; do not annotate only business actions.
+- For side-effect nodes such as sending mail, posting documents, deleting files and changing state, always ask
+  about the rerun consequence; if it cannot be established, treat it as `idempotent=false`.
+- `idempotency_note` must be one or two sentences of **plain Chinese meant for humans**, stating "what happens on
+  a rerun / what to watch out for", for example "rerunning after the attachment was saved will not find the mail,
+  so restore the unread state first" or "every rerun sends one more reminder mail".
+- **Item 3 is mandatory only when the flow both "writes several files at once" and "needs to delete old files"**:
+  the default is a **run-timestamp directory** (each run creates a new `YYYYMMDD-HHmmss` subdirectory, every file
+  of that run goes only there, and cleanup keeps the newest N directories by name). See the "run-timestamp
+  directory" section of `docs/script-standards.md`.
+  If the user insists on not using it, they must state a **concrete and verifiable new/old marker** (such as a
+  sequence or batch number the flow itself writes into the filename).
+  **Answers such as "use the file modification time" or "keep whichever has the newer modification time" are not
+  accepted**, because common mail clients preserve the attachment's original timestamp when saving, and
+  overwriting a same-name file rewrites even the creation time, so timestamps cannot distinguish new from old.
+  If no reliable marker can be established, do not generate `flow.json`.
+- Counterexamples to remember:
+  - **Export scripts are rerun-safe**: each run produces a new timestamped export file, so `idempotent=true`.
+  - **Posting scripts are not rerun-safe**: repeated execution creates duplicate documents, so `idempotent=false`
+    and `idempotency_note` states the manual pre-check (e.g. "confirm the state ledger is complete before
+    rerunning"); also `reversible=false`, with `reversibility_note` saying "a submission needs a reversal
+    document to be undone".
 
-- **触发补跑一律关闭**：日程触发的 `StartWhenAvailable` 必须为 `false`。补跑会把周末错过的实例
-  放到工作日清晨执行，而日历门禁只认“今天”，识别不出来。
-- **每个流程必须声明 `budget`**；`Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` 节点必须写 `intent`，
-  否则准入直接 fail（见「准入红线」）。
-- 缺字段的后果：`eval-flow.js` 对每个被测流程都会**无条件**先跑一次 `declarationsComplete`
-  （不再依赖 cases 显式声明）；`nodeDeclaration` 用于单节点断言。缺任何一项都直接判失败（退出码 1），
-  不会降级成警告。自检命令：
-
+- **Catch-up runs are always disabled**: `StartWhenAvailable` for a scheduled trigger must be `false`. A catch-up
+  run would execute instances missed over the weekend early on a workday morning, and the calendar gate only
+  looks at "today", so it cannot detect that.
+- **Every flow must declare `budget`**; `Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` nodes must carry
+  `intent`, otherwise admission fails outright (see "Admission red lines").
+- Consequence of a missing field: `eval-flow.js` **unconditionally** runs `declarationsComplete` once for every
+  flow under test (it no longer depends on cases declaring it); `nodeDeclaration` is used for single-node
+  assertions. A missing item fails outright (exit code 1) and is never downgraded to a warning. Self-check:
+  
 ```bash
 node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
 ```
 
-> `check.js` 只看生成后的 `.robin`，看不到 `flow.json` 字段；两项声明的门禁在 `eval-flow.js`。
+> `check.js` only sees the generated `.robin` and cannot see `flow.json` fields; the gate for these two
+> declarations lives in `eval-flow.js`.
 
-### 3.5 输入文件声明（节点级 `inputs`）
+### 3.5 Input file declarations (node-level `inputs`)
 
-只对**读取外部文件的步骤**声明，回答「第 N 步只检查第 N 步需要的输入文件」：
+Declare these only for **steps that read external files**, answering "step N checks only the input files step N needs":
 
 ```json
 {
@@ -96,62 +113,73 @@ node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
 }
 ```
 
-口径：
-- `dir` 只能写 `{{config.<KEY>}}`（沿用现有配置占位符），**禁止写真实路径或字面目录**；
-  准入时解析不了就硬失败，不会退回字面路径。
-- `pattern` 是文件名通配符（如 `*.csv`），一个条目一份文件。
-- `required` 必须显式写 `true` / `false`，不做默认填充：`true` 缺文件即阻断，
-  `false` 表示「没有也能继续」。
-- **多候选一律失败**：同一目录同一模式命中 ≥2 个文件时报歧义，**不允许「取最新」**。
-- 老流程不写 `inputs` 不会报错，准入只给一条 `INPUT_UNDECLARED` 提示。
-- 该字段**只用于准入与结构校验，不进入 `.robin` 生成产物**（生成器不消费它）。
-- 自检断言用 `inputs` op：`node tools/pad-robin/eval-flow.js tests/eval/input-files.cases.json`。
+Rules:
+- `dir` may only contain `{{config.<KEY>}}` (reusing the existing config placeholders); **real paths or literal
+  directories are forbidden**. If admission cannot resolve it, that is a hard failure; it never falls back to
+  the literal path.
+- `pattern` is a filename wildcard (such as `*.csv`); one entry means one file.
+- `required` must be written explicitly as `true` / `false`; there is no default. `true` blocks when the file is
+  missing, `false` means "continue without it".
+- **Multiple candidates always fail**: when the same pattern in the same directory matches ≥2 files, report an
+  ambiguity; **picking the newest is not allowed**.
+- An older flow without `inputs` does not error; admission only emits an `INPUT_UNDECLARED` notice.
+- This field is **used only for admission and structural checks and never enters the generated `.robin`**
+  (the generator does not consume it).
+- Self-check assertion: use the `inputs` op, `node tools/pad-robin/eval-flow.js tests/eval/input-files.cases.json`.
 
-### 4. 生成 flow.json
-严格遵循结构（见 `docs/agent-prompts.md` 完整 schema）。节点字段以 schema 为准：
-`outputs` 写要绑定的输出变量名数组，`{{2.RetrievedEmails}}` 引用上游节点输出。
+### 4. Generate flow.json
+Follow the structure strictly (full schema in `docs/agent-prompts.md`). The schema is authoritative for node
+fields: `outputs` lists the output variable names to bind, and `{{2.RetrievedEmails}}` references the output of
+an upstream node.
 
-### 5. 生成流程图
+### 5. Generate the diagram
 ```bash
 node tools/flow-drawio/flow-to-drawio.js business/flows/<name>.json business/flows/<name>.drawio
 ```
 
-### 6. 回读改动
+### 6. Read back changes
 ```bash
 node tools/flow-drawio/drawio-to-flow.js business/flows/<name>.drawio business/flows/<name>.json business/flows/<name>.new.json
 ```
-复述变更摘要，补齐手画新节点的 type/pad_hint，确认后说"可以交给 Agent B 了"。
+Summarize the changes, fill in `type`/`pad_hint` for nodes the user drew by hand, and after confirmation say
+"ready to hand over to Agent B".
 
-## 流程卫生（会被 `check.js` / `lint-robin.js` 提示）
+## Flow hygiene (flagged by `check.js` / `lint-robin.js`)
 
-这三条与 PAD 设计器右上角「流检查器」同口径，离线就能看到，不必打开设计器：
+These three match the "flow checker" in the top-right corner of the PAD designer and are visible offline, so you
+do not need to open the designer:
 
-| 规则 | 含义 | 设计时怎么做 |
+| Rule | Meaning | What to do at design time |
 |---|---|---|
-| `unused-output` | 动作捕获了输出变量，但后续从未读取 | **只捕获要用的输出**；不用的写进节点的 `output_skip`（等同 PAD 里留空），别图省事全接 |
-| `unused-var` | `SET` 声明了变量，但从未引用 | 派生路径只声明真正用到的；删掉模板残留 |
-| `nested-if` | IF 嵌套超过 3 层 | 改成**守卫式提前退出**：整段包进 `LOOP 1 TO 1` 的一次性执行块，每个失败分支弹窗后直接 `EXIT LOOP`，后续步骤平铺在块内，不再写「IF 失败 ELSE 继续」的层层嵌套 |
+| `unused-output` | An action captured an output variable that is never read later | **Capture only the outputs you use**; list unused ones in the node's `output_skip` (equivalent to leaving them empty in PAD) instead of wiring everything for convenience |
+| `unused-var` | `SET` declared a variable that is never referenced | Declare only what the derivation path really uses; delete template leftovers |
+| `nested-if` | IF nesting deeper than 3 levels | Switch to **guard-style early exit**: wrap the whole section in a one-shot `LOOP 1 TO 1` block, and each failure branch shows its dialog and then `EXIT LOOP`; subsequent steps sit flat inside the block instead of a chain of "IF fails ELSE continue" |
 
-> 一次性执行块的**索引变量要复用已有的那个**（例如轮询计数）：PAD 的 For 循环必须给一个变量，
-> 另起 `StageIdx` 这类只用一次的变量，设计器的流检查器会报「未使用变量」。
+> The **index variable of the one-shot block should reuse an existing one** (for example the polling counter):
+> PAD's For loop requires a variable, and if you introduce a variable such as `StageIdx` that is used only once,
+> the designer's flow checker reports an unused variable.
 
-单独检查：`node tools/pad-robin/lint-robin.js out.robin`
+Standalone check: `node tools/pad-robin/lint-robin.js out.robin`
 
-> 设计器里那条「应用修复」按钮**不要点**：它直接改画布，`flow.json` 不变，
-> 下次生成就被覆盖，线上与仓库立刻漂移。修复一律回 `flow.json` 改，再重新生成。
+> **Do not press** the designer's "apply fix" button: it edits the canvas directly while `flow.json` stays
+> unchanged, so the next generation overwrites it and production drifts from the repository immediately. Always
+> fix `flow.json` and regenerate.
 
-## 准入红线（以策略文件为准）
+## Admission red lines (the policy file is authoritative)
 
-动作类红线不抄在文档里：统一由 `business/policy.json` 定义、由 `pad-admit.ps1` 的 POLICY 检查执行，
-规则清单与判定细节见 `docs/admission-gate.md`。设计阶段只需要守住两条：
+Action-level red lines are not copied into documents: they are defined in `business/policy.json` and enforced by
+the POLICY checks in `pad-admit.ps1`. The rule list and decision details are in `docs/admission-gate.md`.
+At design time you only need to hold two lines:
 
-- 不出现 `Outlook.Close*`（会连带关掉用户已打开的主窗口）
-- 副作用（发信、过账、删文件）一律放进 `guard` 节点，条件 `DryRun <> $'''1'''`
+- Never use `Outlook.Close*` (it also closes the main window the user already has open)
+- Always put side effects (sending mail, posting documents, deleting files) inside a `guard` node with the
+  condition `DryRun <> $'''1'''`
 
-提交前跑一遍只读准入检查（先生成 `.robin`；不传 `-RobinFile` 时找不到同名脚本会静默跳过静态校验）：
+Before submitting, run the read-only admission check (generate the `.robin` first; without `-RobinFile`, a
+missing same-name script silently skips the static check):
 
 ```powershell
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business/flows/<name>.json -ConfigFile business/config/<name>.json -RobinFile business/flows/<name>.robin
 ```
 
-交付条件是 `fail=0` **且** `ask=0`：`ask` 的退出码是 2，同样阻断交付。
+The delivery condition is `fail=0` **and** `ask=0`: `ask` exits with code 2 and also blocks delivery.

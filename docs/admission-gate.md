@@ -1,127 +1,134 @@
-# 准入网关检查清单（草案）
+# Admission gate checklist (draft)
 
-> 目标：在生成、部署、运行之前，用确定性检查器判断“这份流程/这次运行是否被允许”。
-> 参考 GraphARC 的 admission gate 思路，但只保留适合 PAD RPA 的部分。
+> Goal: before generating, deploying or running anything, a deterministic checker decides
+> "is this flow / this run allowed?"
+> Inspired by the admission gate idea in GraphARC, but keeping only the parts that fit PAD RPA.
 
-## 1. 不变量
+## 1. Invariants
 
-1. **检查期间不执行任何动作**：不启动 PAD、不连 SAP、不发邮件、不写产物。
-2. **一次返回全部问题**：所有检查都跑完，不因第一条失败提前退出。
-3. **不降级、不截断**：不允许“删掉一半分支先跑”，不允许把被拒的边降级为允许。
-4. **每条失败带证据**：`code` + 人话 + 具体节点/参数/行号。
-5. **批准绑定指纹**：只有与当前 `robin + config + acceptance` 哈希绑定的批准才有效。
-6. **无人值守时 ask = deny**：定时任务没有人工，遇到 `ask` 一律阻断。
+1. **No action is executed during the check**: PAD is not started, SAP is not contacted, no mail is sent, no artifact is written.
+2. **All problems are returned in one pass**: every check runs to completion; the first failure does not abort the run.
+3. **No downgrading, no truncation**: "delete half the branches to get it running" is not allowed, and a rejected edge is never downgraded to an allowed one.
+4. **Every failure carries evidence**: `code` + human wording + the specific node/parameter/line.
+5. **Approvals are bound to fingerprints**: only an approval bound to the current `robin + config + acceptance` hashes is valid.
+6. **For unattended runs, ask = deny**: no human is present for a scheduled task, so `ask` always blocks.
 
-## 2. 检查项
+## 2. Checks
 
-| # | 检查 | 输入 | 通过条件 | 失败码 | 现有实现 |
+| # | Check | Input | Pass condition | Failure code | Current implementation |
 |---|---|---|---|---|---|
-| 1 | REGISTRY | `flow.json` 节点的 `pad_hint` | 每个动作都存在于 KB | `UNKNOWN_ACTION` | `flow-to-robin.js` 安全闸门 |
-| 2 | ARGS | 节点 `params` | 参数名存在、必填项齐全、类型符合 | `UNKNOWN_PARAM` / `MISSING_PARAM` / `TYPE_MISMATCH` | `flow-to-robin.js` |
-| 3 | SELECTOR | 动作元数据 | 需要 UI 选择器的动作必须显式白名单 | `UI_SELECTOR` | `flow-to-robin.js` |
-| 4 | STATIC | `.robin` | `check-flows.js` 0 errors | `STATIC_SYNTAX` | `tools/pad-robin/check.js` |
-| 5 | EDGE | `flow.json` | `edges` 覆盖 `next/branch` 推导、无悬空/重复 | `EDGE_DRIFT` / `EDGE_DANGLING` / `EDGE_DUPLICATE` | `tools/flow-drawio/check-flow.js` |
-| 6 | BOUNDED | `flow.json` | 循环有明确上界，无无界 `LOOP WHILE` | `UNBOUNDED_LOOP` | 部分（人工检查） |
-| 7 | POLICY | `business/policy.json` + 运行上下文 | 无 `deny`；`ask` 有有效批准 | `POLICY_DENY` / `POLICY_ASK` | 新增 |
-| 8 | BUDGET | 预算声明 + 预检结果 | 最坏情况在预算内；未声明按超限处理 | `BUDGET_EXCEEDED` / `BUDGET_UNKNOWN` | `pad-admit.ps1`（`flow.budget`，未声明即 fail） |
-| 9 | ACCEPTANCE | `*.acceptance.json` | JSON 合法、检查类型已知、占位符可解析 | `ACCEPTANCE_INVALID` | `PadAcceptance.psm1` |
-| 10 | CONFIG | `business/config/*.json` + schema | schema 校验通过 | `CONFIG_INVALID` | `pad-deploy.ps1` |
-| 11 | PREFLIGHT | 机器环境 | PAD/Python/SAP/Outlook/目录齐全 | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
-| 12 | FINGERPRINT | 三个文件的 SHA256 + 基线 | 与批准记录或 `business/fingerprints/<流程名>.json` 一致 | `pass` / `FINGERPRINT_*`（见 2.1） | `PadFingerprint.psm1`（不一致 fail；缺基线在报告模式 warn、`-Unattended` fail） |
-| 13 | SCRIPT_FINGERPRINT | 流程引用脚本 + 基线 `scripts`/`external` 段 | 与基线一致 | `FINGERPRINT_*` / `SCRIPT_FINGERPRINT_LEGACY` | `PadFingerprint.psm1`（缺基线、旧基线一律 warn，由 FINGERPRINT 先行把关） |
-| 14 | INTENT | 节点 `intent` / `tags` | `RunDOSCommand`、`RunVBScript` 这类通用动作必须有语义标签，策略按标签匹配 | `MISSING_INTENT` | `pad-admit.ps1`（缺 intent 即 fail；策略支持 `when.intent`） |
-| 15 | TRIGGER | `flow.json` 的 `trigger` 块 | kind 取值域、必填字段、目录必须走配置引用、无人值守不得要求人工确认 | `TRIGGER_*`（见 2.2） | `pad-admit.ps1`（观察期未声明记 warn） |
-| 16 | INPUT | 节点级 `inputs` 声明 + `config` | 目录必须走配置引用；`required` 显式声明；必需文件 0 候选即失败；候选 ≥2 一律判歧义 | `INPUT_*`（见 2.3） | `pad-admit.ps1`（未声明记 warn，向后兼容） |
+| 1 | REGISTRY | Node `pad_hint` in `flow.json` | Every action exists in the KB | `UNKNOWN_ACTION` | `flow-to-robin.js` safety gate |
+| 2 | ARGS | Node `params` | Parameter names exist, required ones present, types match | `UNKNOWN_PARAM` / `MISSING_PARAM` / `TYPE_MISMATCH` | `flow-to-robin.js` |
+| 3 | SELECTOR | Action metadata | Actions needing a UI selector must be explicitly allowlisted | `UI_SELECTOR` | `flow-to-robin.js` |
+| 4 | STATIC | `.robin` | `check-flows.js` reports 0 errors | `STATIC_SYNTAX` | `tools/pad-robin/check.js` |
+| 5 | EDGE | `flow.json` | `edges` covers everything derived from `next/branch`, with no dangling or duplicate edges | `EDGE_DRIFT` / `EDGE_DANGLING` / `EDGE_DUPLICATE` | `tools/flow-drawio/check-flow.js` |
+| 6 | BOUNDED | `flow.json` | Loops have an explicit upper bound; no unbounded `LOOP WHILE` | `UNBOUNDED_LOOP` | Partial (manual review) |
+| 7 | POLICY | `business/policy.json` + run context | No `deny`; any `ask` has a valid approval | `POLICY_DENY` / `POLICY_ASK` | New |
+| 8 | BUDGET | Budget declaration + preflight result | The worst case fits the budget; an undeclared budget is treated as over budget | `BUDGET_EXCEEDED` / `BUDGET_UNKNOWN` | `pad-admit.ps1` (`flow.budget`; undeclared means fail) |
+| 9 | ACCEPTANCE | `*.acceptance.json` | Valid JSON, known check types, resolvable placeholders | `ACCEPTANCE_INVALID` | `PadAcceptance.psm1` |
+| 10 | CONFIG | `business/config/*.json` + schema | Schema validation passes | `CONFIG_INVALID` | `pad-deploy.ps1` |
+| 11 | PREFLIGHT | Machine environment | PAD/Python/SAP/Outlook/directories all present | `PREFLIGHT_MISSING` | `PadPreflight.psm1` |
+| 12 | FINGERPRINT | SHA256 of three files + baseline | Matches the approval record or `business/fingerprints/<flow name>.json` | `pass` / `FINGERPRINT_*` (see 2.1) | `PadFingerprint.psm1` (mismatch is fail; a missing baseline is warn in report mode and fail with `-Unattended`) |
+| 13 | SCRIPT_FINGERPRINT | Scripts referenced by the flow + the baseline `scripts`/`external` sections | Matches the baseline | `FINGERPRINT_*` / `SCRIPT_FINGERPRINT_LEGACY` | `PadFingerprint.psm1` (a missing or legacy baseline is always warn; FINGERPRINT gates first) |
+| 14 | INTENT | Node `intent` / `tags` | Generic actions such as `RunDOSCommand` and `RunVBScript` must carry a semantic tag that policy can match | `MISSING_INTENT` | `pad-admit.ps1` (a missing intent is fail; policy supports `when.intent`) |
+| 15 | TRIGGER | The `trigger` block in `flow.json` | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation | `TRIGGER_*` (see 2.2) | `pad-admit.ps1` (an undeclared trigger is warn during the observation period) |
+| 16 | INPUT | Node-level `inputs` declaration + `config` | Directory must come from a config reference; `required` declared explicitly; a required file with 0 candidates fails; ≥2 candidates is always ambiguous | `INPUT_*` (see 2.3) | `pad-admit.ps1` (undeclared is warn, for backward compatibility) |
 
-### 2.1 指纹（FINGERPRINT）结果码
+### 2.1 Fingerprint (FINGERPRINT) result codes
 
-机制全部在 `tools/pad-sync/PadFingerprint.psm1`，对所有 `flow.json` 一视同仁；
-基线数据只在业务层 `business/fingerprints/<流程名>.json`（含流程名、flowGuid、environmentId、
-机器名与真实路径），不入库、不进公开层。
+The whole mechanism lives in `tools/pad-sync/PadFingerprint.psm1` and treats every `flow.json` the same way.
+Baseline data lives only in the business layer, in `business/fingerprints/<flow name>.json` (containing the flow
+name, flowGuid, environmentId, machine name and real paths); it is never committed and never enters the public layer.
 
-| 结果码 | 含义 | 证据字段 `evidence` |
+| Result code | Meaning | Evidence field `evidence` |
 |---|---|---|
-| `pass` | 与批准记录或基线一致 | 命中的批准记录/基线路径 |
-| `FINGERPRINT_MISMATCH` | 与批准记录不一致（始终 fail） | `approve=` + 当前三哈希 |
-| `FINGERPRINT_UNKNOWN` | 读不到 `.robin`、解析不到流程身份，或环境/机器与基线不符 | `robin=` / `scriptsRoot=` / 身份差异 |
-| `FINGERPRINT_NO_BASELINE` | 还没有基线（未发布流程的正常状态） | `baseline=` + 当前三哈希 + `fix=`（可直接执行的播种命令） |
-| `FINGERPRINT_FLOW_STALE` | 基线对应的 flowGuid 已变化 | 基线与当前 flowGuid |
-| `FINGERPRINT_SOURCE_MISMATCH` | 源 `.robin` 与基线不一致 | 基线路径 + 当前/基线哈希前缀 |
-| `FINGERPRINT_CONFIG_STALE` | 部署配置与基线不一致 | 同上 |
-| `FINGERPRINT_BASELINE_CORRUPT` | 基线 JSON 损坏或缺 `flow`/`hashes.robin` | `baseline=` |
-| `AMBIGUOUS` | Workspace 命中多个候选修订，无法确定本次发布对应哪一份 | 候选修订目录名 |
+| `pass` | Matches the approval record or the baseline | The matched approval record / baseline path |
+| `FINGERPRINT_MISMATCH` | Does not match the approval record (always fail) | `approve=` + the three current hashes |
+| `FINGERPRINT_UNKNOWN` | `.robin` cannot be read, the flow identity cannot be parsed, or the environment/machine does not match the baseline | `robin=` / `scriptsRoot=` / identity differences |
+| `FINGERPRINT_NO_BASELINE` | No baseline yet (the normal state of a flow that has never been published) | `baseline=` + the three current hashes + `fix=` (the seeding command, ready to run) |
+| `FINGERPRINT_FLOW_STALE` | The flowGuid behind the baseline has changed | Baseline and current flowGuid |
+| `FINGERPRINT_SOURCE_MISMATCH` | The source `.robin` does not match the baseline | Baseline path + current/baseline hash prefixes |
+| `FINGERPRINT_CONFIG_STALE` | The deployment config does not match the baseline | Same as above |
+| `FINGERPRINT_BASELINE_CORRUPT` | The baseline JSON is corrupt or missing `flow`/`hashes.robin` | `baseline=` |
+| `AMBIGUOUS` | The Workspace matched several candidate revisions, so it cannot be determined which one this publish corresponds to | Candidate revision directory names |
 
-### 2.2 触发声明（TRIGGER）结果码
+### 2.2 Trigger declaration (TRIGGER) result codes
 
-机制在设计稿 `docs/trigger-adapter-design.md` 中定义；本项只做**静态**校验，不查本机计划任务注册状态。
+The mechanism is defined in the design doc `docs/trigger-adapter-design.md`; this check is **static** only and
+does not query the local scheduled-task registration state.
 
-| 结果码 | 判级 | 含义 |
+| Result code | Level | Meaning |
 |---|---|---|
-| `TRIGGER_MISSING` | warn（观察期） | 没有 `trigger` 块，启动方式仍靠口头约定 |
-| `TRIGGER_LEGACY_SHAPE` | warn（观察期） | 只有旧 `type/config`，没有 `kind` |
-| `TRIGGER_UNKNOWN_KIND` | fail | `kind` 不在 `manual/schedule/file` |
-| `TRIGGER_KIND_UNSUPPORTED` | fail | `kind` 是保留值（`mail`/`callback`），v1 无注册器 |
-| `TRIGGER_INVALID` | fail | 缺必填、`time` 非 `HH:mm`、`days`/`gate` 非法、`file.pattern` 为空、`assisted` 非布尔或 `manual` 声明 `assisted` |
-| `TRIGGER_ASSISTED_NO_TIMEOUT` | fail | `assisted=true` 但未显式声明 `timeout_sec` |
-| `TRIGGER_PATH_LITERAL` | fail | `file.dir` 写死路径，未用 `{{config.<KEY>}}` 引用 |
-| `TRIGGER_UNATTENDED_CONFIRM` | fail | 非 `manual` 触发且存在 `run_mode=confirm` 节点，但未声明 `assisted=true` |
-| `TRIGGER_UNATTENDED_IRREVERSIBLE` | warn | 非 `manual` 触发且存在 `reversible=false` 节点（后果不可回退）；证据列节点 id 与 `reversibility_note` |
-| `TRIGGER_MISSING_REVERSIBILITY` | warn | 节点 `idempotent=false` 但未声明 `reversible`，要求补声明（不默认填充） |
-| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn（兼容别名，**已收窄**） | 仅当存量用例/调用方仍引用旧码时保留名称；判定不再由 `idempotent=false` 触发，改由上面两条可逆性规则触发 |
-| `TRIGGER_NO_GATE` | warn | `schedule` 未声明 `gate`，节假日会照跑 |
-| `TRIGGER_AMBIGUOUS` | fail | 任务名已被 `business/flows` 下其他流程占用 |
-| `TRIGGER_NOT_REGISTERED` | warn | 仅 `-TriggerLive`（本次未实现） |
-| `TRIGGER_DRIFT` | fail | 仅 `-TriggerLive`（本次未实现） |
+| `TRIGGER_MISSING` | warn (observation period) | No `trigger` block; the launch method still relies on verbal agreements |
+| `TRIGGER_LEGACY_SHAPE` | warn (observation period) | Only the old `type/config`, no `kind` |
+| `TRIGGER_UNKNOWN_KIND` | fail | `kind` is not one of `manual/schedule/file` |
+| `TRIGGER_KIND_UNSUPPORTED` | fail | `kind` is a reserved value (`mail`/`callback`); v1 has no registrar for it |
+| `TRIGGER_INVALID` | fail | Missing required field, `time` not `HH:mm`, illegal `days`/`gate`, empty `file.pattern`, non-boolean `assisted`, or `manual` declaring `assisted` |
+| `TRIGGER_ASSISTED_NO_TIMEOUT` | fail | `assisted=true` without an explicit `timeout_sec` |
+| `TRIGGER_PATH_LITERAL` | fail | `file.dir` hard-codes a path instead of using a `{{config.<KEY>}}` reference |
+| `TRIGGER_UNATTENDED_CONFIRM` | fail | A non-`manual` trigger with a `run_mode=confirm` node, without `assisted=true` |
+| `TRIGGER_UNATTENDED_IRREVERSIBLE` | warn | A non-`manual` trigger with a `reversible=false` node (the consequence cannot be withdrawn); evidence lists the node id and `reversibility_note` |
+| `TRIGGER_MISSING_REVERSIBILITY` | warn | A node has `idempotent=false` but declares no `reversible`; the declaration must be added (never filled in by default) |
+| `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn (compatibility alias, **narrowed**) | The name is kept only while existing cases/callers still reference the old code; the decision is no longer triggered by `idempotent=false` but by the two reversibility rules above |
+| `TRIGGER_NO_GATE` | warn | `schedule` without `gate`; it would still run on holidays |
+| `TRIGGER_AMBIGUOUS` | fail | The task name is already taken by another flow under `business/flows` |
+| `TRIGGER_NOT_REGISTERED` | warn | Only with `-TriggerLive` (not implemented yet) |
+| `TRIGGER_DRIFT` | fail | Only with `-TriggerLive` (not implemented yet) |
 
-切换顺序：先让存量流程补齐 `trigger`，观察期 `$script:TriggerMode` 保持 `warn`，
-确认无漏报后再单独提交改为 `fail`。
+Switch-over order: first let existing flows add `trigger` while `$script:TriggerMode` stays `warn` during the
+observation period, then flip to `fail` in a separate commit once no reports are missed.
 
-`FINGERPRINT_NO_BASELINE` 表示「还没播种」，不是「被篡改」：`pad-admit` 报告模式降为 `warn`，
-并在报文里直接给出可执行的播种命令（含 `-FlowName` / `-FlowFile` / `-ConfigFile` /
-`-AcceptanceFile` / `-Set` / `-Confirm`）。`-Unattended`（`pad-release` / `pad-deploy` / 定时运行）
-仍判 `fail`，生产门禁不松。
+`FINGERPRINT_NO_BASELINE` means "not seeded yet", not "tampered with": `pad-admit` downgrades it to `warn` in
+report mode and puts the ready-to-run seeding command directly in the message (including `-FlowName` /
+`-FlowFile` / `-ConfigFile` / `-AcceptanceFile` / `-Set` / `-Confirm`). `-Unattended` (`pad-release` /
+`pad-deploy` / scheduled runs) still reports `fail`, so the production gate stays strict.
 
-切换顺序（硬要求）：先上线写入侧（`pad-release` / `pad-rollback`）与
-`pad-fingerprint.ps1 -Set`，把存量流基线播种出来，初始级别保持 warn；
-等真实运行观察无误后，再单独提交把 `pad-admit.ps1` 里的 `$script:FingerprintMode` 改为 `fail`。
-本机已完成播种并将默认级别切换为 fail；缺基线按上一段分级处理。
-播种必须人工确认：`-Set` 只打印定位结果（修订目录、Workspace 路径、mtime、三个哈希），
-加 `-Confirm` 才写；`-DryRun` 永远不写；多候选直接报 `AMBIGUOUS` 停下。
+Switch-over order (a hard requirement): first ship the write side (`pad-release` / `pad-rollback`) and
+`pad-fingerprint.ps1 -Set`, seed baselines for existing flows, and keep the initial level at warn; after real runs
+have been observed without problems, flip `$script:FingerprintMode` in `pad-admit.ps1` to `fail` in a separate
+commit. This machine has already been seeded and the default level is now fail; a missing baseline is graded as
+described in the previous paragraph.
+Seeding requires human confirmation: `-Set` only prints what it located (revision directory, Workspace path,
+mtime, the three hashes), and writes only with `-Confirm`; `-DryRun` never writes; several candidates report
+`AMBIGUOUS` and stop immediately.
 
-### 2.3 输入文件声明（INPUT）结果码
+### 2.3 Input file declaration (INPUT) result codes
 
-节点级 `inputs` 声明回答「第 N 步只检查第 N 步需要的输入文件」，用于**准入与结构校验**。
-字段：`dir`（必须是 `{{config.<KEY>}}`）、`pattern`（文件名通配符）、`required`（显式布尔）。
-**该能力不改变 `.robin` 生成产物**：`flow-to-robin.js` 不读取 `inputs`，也不会把它写进脚本；
-`eval-flow.js` 只校验声明形状，目录可读与候选计数由本项在准入时只读核对。
+The node-level `inputs` declaration answers "step N checks only the input files step N needs" and is used for
+**admission and structural validation**.
+Fields: `dir` (must be `{{config.<KEY>}}`), `pattern` (filename wildcard), `required` (explicit boolean).
+**This capability does not change the generated `.robin`**: `flow-to-robin.js` does not read `inputs` and never
+writes it into the script; `eval-flow.js` validates only the shape of the declaration, while directory readability
+and candidate counting are checked read-only by this check at admission time.
 
-| 结果码 | 判级 | 含义 |
+| Result code | Level | Meaning |
 |---|---|---|
-| `INPUT_UNDECLARED` | warn | 没有任何节点声明 `inputs`（存量流程兼容，只提示） |
-| `INPUT_INVALID` | fail | `inputs` 不是非空数组、条目不是对象、缺 `dir`/`pattern`、`required` 未显式声明 |
-| `INPUT_PATH_LITERAL` | fail | `dir` 写死字面路径，未用 `{{config.<KEY>}}` 引用 |
-| `INPUT_CONFIG_UNRESOLVED` | fail | 未提供 config、配置缺键或值为空，目录无法解析（不退回字面路径） |
-| `INPUT_DIR_UNREADABLE` | fail | 必需输入的目录不存在或不可读 |
-| `INPUT_FILE_MISSING` | fail | 必需输入在目录里 0 个候选 |
-| `INPUT_FILE_AMBIGUOUS` | fail | 候选 ≥2，一律判歧义，**绝不「取最新」**；可选输入同样适用 |
+| `INPUT_UNDECLARED` | warn | No node declares `inputs` (backward compatible for existing flows; informational only) |
+| `INPUT_INVALID` | fail | `inputs` is not a non-empty array, an entry is not an object, `dir`/`pattern` is missing, or `required` is not declared explicitly |
+| `INPUT_PATH_LITERAL` | fail | `dir` hard-codes a literal path instead of using a `{{config.<KEY>}}` reference |
+| `INPUT_CONFIG_UNRESOLVED` | fail | No config was supplied, a key is missing, or the value is empty, so the directory cannot be resolved (no fallback to the literal path) |
+| `INPUT_DIR_UNREADABLE` | fail | The directory of a required input does not exist or is unreadable |
+| `INPUT_FILE_MISSING` | fail | A required input has 0 candidates in the directory |
+| `INPUT_FILE_AMBIGUOUS` | fail | ≥2 candidates is always ambiguous; **never "take the newest"**; the same applies to optional inputs |
 
-判定分级说明：
-- 未声明只提示（warn），保住存量 `flow.json` 的向后兼容；
-- 一旦声明，形状/配置/文件核对一律 fail-closed：宁可阻断，也不假装核对过；
-- `required=false` 只放宽「0 候选」，不放宽「多候选」（多候选仍是歧义）。
+Level rationale:
+- Not declaring is a notice (warn), preserving backward compatibility for existing `flow.json` files;
+- Once declared, shape/config/file checks are all fail-closed: better to block than to pretend the check passed;
+- `required=false` relaxes only "0 candidates", not "multiple candidates" (several candidates are still ambiguous).
 
-## 3. 执行阶段
+## 3. Execution stages
 
-| 阶段 | 跑哪些检查 | 触发点 |
+| Stage | Which checks run | Trigger point |
 |---|---|---|
-| 离线（生成前） | 1–16（`pad-admit` 一次跑完；缺输入时该项给 warn） | `pad-admit` / `flow-to-robin` / CI |
-| 运行前 | 复用 7、8、11、12、16 | `pad-sync` 注入前 |
-| 运行后 | 验收判据 | `pad-sync` 运行后（G6） |
+| Offline (before generating) | 1–16 (`pad-admit` runs them in one pass; missing inputs make the corresponding check warn) | `pad-admit` / `flow-to-robin` / CI |
+| Before a run | Reuses 7, 8, 11, 12, 16 | `pad-sync`, before injection |
+| After a run | Acceptance criteria | `pad-sync`, after the run (G6) |
 
-冒烟样例见 `examples/`（1 条中性流程、2 条结构断言）：`examples/smoke.ps1` 在全新 clone 上
-依次跑 画布 → 生成 → `check.js` → `pad-admit` → `eval-flow`，任意一步非 0 即整体退出码 1。
+The smoke sample is in `examples/` (1 neutral flow, 2 structural assertions): `examples/smoke.ps1` runs
+canvas → generate → `check.js` → `pad-admit` → `eval-flow` in order on a fresh clone, and any non-zero step makes
+the overall exit code 1.
 
-## 4. 输出契约
+## 4. Output contract
 
 ```json
 {
@@ -147,173 +154,190 @@
 }
 ```
 
-退出码：
+(`message` values above are tool output: the checker emits them in their original language.)
 
-| 码 | 含义 |
+Exit codes:
+
+| Code | Meaning |
 |---|---|
-| 0 | 全部通过 |
-| 1 | 存在 `fail` |
-| 2 | 仅存在 `ask`（等待批准，不等于失败） |
+| 0 | Everything passed |
+| 1 | At least one `fail` |
+| 2 | Only `ask` (awaiting approval, not a failure) |
 
-## 5. 策略评估语义
+## 5. Policy evaluation semantics
 
-- 评估顺序固定：**deny → ask → allow**。
-- 同一层内按 `business/policy.json` 的书写顺序取第一条命中。
-- 全部未命中时按 `defaultEffect`（当前为 `deny`）。
-- `match` 匹配动作 kind（`pad_hint`）或工具名，**不匹配节点 id/label**，改名不能绕过。
-- 通用动作（`Scripting.RunDOSCommand` / `RunVBScript`）建议给节点加 `intent`（如 `sap-posting`），策略按 `intent` 匹配；否则只能靠参数里的变量名（如 `%PostingVbsPath%`）识别，变量改名就失效。
-- `when.env`：`PAD_SYNC_TEST` = `test`，其余 = `prod`。
-- `when.dryRun`：取 config 的 `DRY_RUN`。
-- `when.paramsMatch`：对动作参数做 glob 匹配（如过账脚本的 `DOSCommandOrApplication`）。
-- `ask` 必须带 `approver`；无人值守场景按 `deny` 处理。
+- Evaluation order is fixed: **deny → ask → allow**.
+- Within the same layer, the first hit in the order it is written in `business/policy.json` wins.
+- When nothing matches, `defaultEffect` applies (currently `deny`).
+- `match` matches the action kind (`pad_hint`) or the tool name, and **never the node id/label**, so renaming cannot bypass it.
+- For generic actions (`Scripting.RunDOSCommand` / `RunVBScript`), add an `intent` to the node (such as `sap-posting`) and let policy match on `intent`; otherwise identification relies on the variable name inside the parameters (such as `%PostingVbsPath%`), which breaks as soon as the variable is renamed.
+- `when.env`: `PAD_SYNC_TEST` = `test`, everything else = `prod`.
+- `when.dryRun`: taken from the config's `DRY_RUN`.
+- `when.paramsMatch`: glob matching against action parameters (such as the posting script's `DOSCommandOrApplication`).
+- `ask` must carry an `approver`; unattended scenarios treat `ask` as `deny`.
 
-## 6. 预算草案（本流程）
+## 6. Budget draft (for this flow)
 
-| 项 | 上限 | 依据 |
+| Item | Limit | Basis |
 |---|---|---|
-| 轮询次数 | 7 | `.robin` 的 `LOOP 1 TO 7` |
-| 单次运行时长 | 75 分钟 | 6 次 `WAIT 600`（60 分钟）+ 导出/过账/核对约 5–15 分钟 |
-| 过账行数 | `<PLAN_FILE>` 的待过账行数 | 执行前预检 |
-| 发送邮件 | 1 封 | 提醒分支 |
-| 报表附件 | 1 个（按报表文件名匹配） | 签名内联图片不计数 |
-| 业务产物修改 | 报表、导出文件、状态账本 | 不含附件目录里的签名图片 |
+| Poll count | 7 | `LOOP 1 TO 7` in the `.robin` |
+| Single run duration | 75 minutes | Six `WAIT 600` (60 minutes) + roughly 5–15 minutes for export/posting/reconciliation |
+| Posting line count | The pending line count in `<PLAN_FILE>` | Preflight before execution |
+| Mail sent | 1 message | The reminder branch |
+| Report attachments | 1 (matched by report filename) | Inline signature images are not counted |
+| Business artifacts modified | Report, export file, state ledger | Signature images in the attachment directory are not included |
 
-任一预算无法从预检得到时，按 `BUDGET_UNKNOWN` 拒绝，不按“默认安全”放行。
+If any budget item cannot be obtained from preflight, reject with `BUDGET_UNKNOWN`; never let it through as
+"safe by default".
 
-> **超时口径**：已统一为 4200 秒（`pad-schedule`、`pad-release`、`pad-deploy`）；`pad-sync` 的测试默认仍为 300 秒。快速验证时可以显式传更小的 `-RunTimeoutSec`。
+> **Timeout convention**: unified at 4200 seconds (`pad-schedule`, `pad-release`, `pad-deploy`); the `pad-sync`
+> test default remains 300 seconds. For quick verification you may pass a smaller `-RunTimeoutSec` explicitly.
 
-## 7. 明确不检查的内容（Limits）
+## 7. What is explicitly not checked (Limits)
 
-- 静态检查不能证明业务逻辑正确。
-- 验收判据只检查产物，不证明 SAP 凭证、金额、批次在业务上正确。
-- 策略只约束 PAD 动作与工具入口，**管不到 VBS 内部**的 SAP 操作和文件写入。
-- `resource: artifact` 的允许根由网关解析：`{{PAD_ROOT}}`、`{{REPO_ROOT}}`、`{{TEMP}}`；不在这些根下的写入一律拒绝。
-- **保存附件动作会把邮件签名里的内联图片一起落盘，数量不可控**；预算与验收不能按“文件个数”判断业务完整性，只能按报表文件名匹配。
-- 不做运行时动态重新规划：业务步骤必须固定，模型不能临场加步骤。
+- Static checks cannot prove business logic is correct.
+- Acceptance criteria check artifacts only; they do not prove that SAP documents, amounts or batches are
+  business-correct.
+- Policy constrains PAD actions and tool entry points only and **cannot govern SAP operations or file writes
+  inside VBS**.
+- The allowed roots for `resource: artifact` are resolved by the gate: `{{PAD_ROOT}}`, `{{REPO_ROOT}}`, `{{TEMP}}`; writes outside those roots are always rejected.
+- **The save-attachment action also persists inline images from the mail signature, so the count is not
+  controllable**; budgets and acceptance cannot judge business completeness by "number of files", only by
+  matching the report filename.
+- No runtime dynamic re-planning: business steps must be fixed and the model may not add steps on the fly.
 
-## 8. 落地顺序
+## 8. Rollout order
 
-1. **只读版**：新增 `pad-admit.ps1`，跑完全部检查项只输出报告，不阻断任何现有流程。
-2. **接入**：把 `pad-sync` 注入前、`pad-deploy` 部署前改为硬门禁。
-3. **披露**：在 Agent A 的设计提示词里给出一条指向 `business/policy.json` 与本文的指针，不复制规则清单（复制必然漂移）。
-4. **指纹批准**：确认框显示三个哈希，发布前复核，支持“批准记录”文件。
+1. **Read-only version**: add `pad-admit.ps1`; it runs every check and only prints a report, blocking no existing flow.
+2. **Wiring in**: make it a hard gate before `pad-sync` injection and before `pad-deploy` deployment.
+3. **Disclosure**: put one pointer to `business/policy.json` and this document in Agent A's design prompt;
+   never copy the rule list (a copy always drifts).
+4. **Fingerprint approval**: the confirmation dialog shows the three hashes, they are re-checked before
+   publishing, and an "approval record" file is supported.
 
-## 9. 推送前门禁（public-safe）
+## 9. Pre-push gate (public-safe)
 
-> 这是「推送公开库」流程的第 0 步，与 `pad-admit` 同级：`pad-admit` 判断流程能不能跑，
-> 本门禁判断**这些文件能不能推**。按文件名白名单放行不够——文件本身合规，注释里的业务名、
-> 真实路径仍会泄漏，所以这一层拦的是**内容**。
+> This is step 0 of the "publish to the public repository" process and sits at the same level as `pad-admit`:
+> `pad-admit` decides whether a flow may run, this gate decides **whether these files may be pushed**.
+> A filename allowlist is not enough — a file can be compliant while comments still leak business names and
+> real paths, so this layer blocks **content**.
 
-### 9.1 跑法
+### 9.1 How to run it
 
 ```powershell
-# 在 PowerShell 里直接调用（-Files 是数组，相对仓库根或绝对路径均可）
+# Call it directly from PowerShell (-Files is an array; relative to the repository root or absolute)
 .\tools\publish\check-public-safe.ps1 -Files @(
   'tools\pad-sync\pad-sync.ps1',
   'docs\admission-gate.md'
 ) -Verbose
 
-# 需要子进程时用 -Command，数组表达式才会被求值（-File 会把 @(...) 当字面量拆开）
+# With a child process, use -Command so the array expression is evaluated (-File would split @(...) into literals)
 powershell -NoProfile -ExecutionPolicy Bypass -Command `
   "& '.\tools\publish\check-public-safe.ps1' -Files @('tools\pad-sync\pad-sync.ps1','docs\admission-gate.md') -Verbose"
 ```
 
-- 每条命中输出一行 `文件:行号:命中词`（走 `Write-Output`，可直接管道处理）；
-- `-Verbose` 打印词表来源、每个文件的编码判定、二进制文件提示；`-Quiet` 只输出命中行；
-- 退出码：`0` 全部干净；`1` 有命中；`2` 门禁自身出错（清单为空、文件不存在、词表缺失或没有启用规则）。
+- Each hit prints one line `file:line:hit term` (through `Write-Output`, so it can be piped directly);
+- `-Verbose` prints the denylist sources, the encoding decision per file, and binary-file notices; `-Quiet` prints only hit lines;
+- Exit codes: `0` everything clean; `1` at least one hit; `2` the gate itself failed (empty file list, missing file, missing denylist or no enabled rules).
 
-### 9.2 词表
+### 9.2 Denylist
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| `tools/publish/public-safe.denylist.json` | 入库的结构化规则：UNC 路径、PAD 根目录、内网域名后缀、邮箱/手机号；**只放占位与正则，不含真实业务字样** |
-| `tools/publish/public-safe.denylist.local.json` | 本地覆盖：真实业务名、真实流程名、真实路径、账号；已被 `.gitignore` 忽略，脚本自动合并 |
+| `tools/publish/public-safe.denylist.json` | Structured rules that are committed: UNC paths, PAD root directories, intranet domain suffixes, email/mobile numbers; **only placeholders and regexes, no real business terms** |
+| `tools/publish/public-safe.denylist.local.json` | Local overlay: real business names, real flow names, real paths, accounts; ignored by `.gitignore` and merged automatically by the script |
 
-- **敏感信息声明**：词表本身即敏感信息。`public-safe.denylist.local.json` 的真实版本仅存在于本机、不入库，**永远不得推送到公开库**。
-- 规则字段：`id`、`pattern`、`regex`（false 为字面量、true 为正则）、`caseSensitive`（默认 false）、`enabled`（默认 true）、`reason`；分类由 `categories` 的键给出（`businessName` / `realPath` / `flowName` / `accountOrServer` / `privateIdentifier`）。
-- 路径、主机名、账号这类写不全的模式用正则；具体业务词用字面量（脚本会自动转义，避免正则元字符误伤）。
+- **Sensitive by nature**: the denylist itself is sensitive. The real version of `public-safe.denylist.local.json` exists only on the local machine and is never committed, and **must never be pushed to the public repository**.
+- Rule fields: `id`, `pattern`, `regex` (false means literal, true means regular expression), `caseSensitive` (default false), `enabled` (default true), `reason`; the category is given by the `categories` key (`businessName` / `realPath` / `flowName` / `accountOrServer` / `privateIdentifier`).
+- Patterns that cannot be written in full (paths, host names, accounts) use regexes; concrete business terms use literals (the script escapes them automatically so regex metacharacters do not cause false hits).
 
-### 9.3 失败后的处置
+### 9.3 Handling a failure
 
-1. 按 `文件:行号` 回到源码定位；
-2. 业务名改写为通用说法（“示例流程”“长时间 SAP 下载”），真实路径改为占位符（如 `<PAD_ROOT>`）；
-3. **不要删词、不要注释掉命中行、不要放宽整条词表**；
-4. 确属误报时改结构化规则（例如把匹配范围收窄到具体目录前缀），并在提交说明里写清原因；
-5. 重跑到退出码 0，再进入原有推送步骤。
+1. Go back to the source by `file:line` and locate it;
+2. Rewrite the business name with a generic phrase ("sample flow", "long-running SAP download") and replace real paths with placeholders (such as `<PAD_ROOT>`);
+3. **Never delete a rule, never comment out the matching line, never relax the whole denylist**;
+4. For a genuine false positive, change the structured rule (for example narrow the match to a specific directory prefix) and explain why in the commit message;
+5. Rerun until the exit code is 0, then continue with the normal push steps.
 
-### 9.4 业务目录是「绝不入库」区
+### 9.4 The business directory is a "never committed" zone
 
-`business/` 被 `.gitignore` 整体忽略，`git status --short` 不会显示其中的文件；
-推送门禁还会做一道硬拦截：任何被列入 `-Files` 的 `business/` 路径直接判错（退出码 `2`），
-不会静默跳过，避免「把业务文件当候选推上去」这类不可见风险。
+`business/` is ignored as a whole by `.gitignore`, and `git status --short` does not show files there. The push
+gate adds a hard stop on top: any `business/` path passed in `-Files` is rejected outright (exit code `2`) rather
+than silently skipped, which closes the invisible risk of "shipping a business file as a candidate".
 
-### 9.5 我是 clone / fork 的用户，业务文件放哪里？
+### 9.5 I am a clone/fork user — where do business files go?
 
-1. **放哪里**：真实流程、配置、内部文档、日志、产物统一放进仓库根的 `business/` 子目录，
-   例如 `business/flows/my-flow.json`、`business/config/my-flow.json`。
-   生成器、部署脚本的默认路径也都是按 `business/` 约定的。
-2. **为什么传不上去**：`.gitignore` 有一行 `business/`，Git 默认忽略整个目录；
-   即使你手动 `git add -f`，推送前的 `check-public-safe.ps1` 也会以退出码 `2` 拒绝。
-3. **怎么确认**（在仓库根依次执行，可直接抄）：
+1. **Where**: put real flows, configuration, internal documents, logs and artifacts under the `business/`
+   subdirectory of the repository root, for example `business/flows/my-flow.json` and
+   `business/config/my-flow.json`. The generator and deployment scripts also default to the `business/` convention.
+2. **Why it cannot be pushed**: `.gitignore` contains a `business/` line and Git ignores the whole directory by
+   default; even if you `git add -f` it manually, `check-public-safe.ps1` before the push rejects it with exit code `2`.
+3. **How to confirm** (run these in the repository root, ready to copy):
 
 ```powershell
-# ① 造一个假业务文件做验证（验证完删掉）
+# 1) create a fake business file for the check (delete it afterwards)
 '{"demo":true}' | Set-Content business\flows\_ignore-probe.json -Encoding UTF8
 
-# ② git status 不应出现它
+# 2) git status must not show it
 git status --short
 
-# ③ 忽略规则应命中 business/ 这一行
+# 3) the ignore rule must report the business/ line
 git check-ignore -v business\flows\_ignore-probe.json
 
-# ④ 推送门禁应直接拒绝（退出码 2，而不是 0/1）
+# 4) the push gate must reject it outright (exit code 2, not 0/1)
 .\tools\publish\check-public-safe.ps1 -Files 'business\flows\_ignore-probe.json'
-$LASTEXITCODE   # 期望 2
+$LASTEXITCODE   # expected 2
 
-# ⑤ 清理探针
+# 5) clean up the probe
 Remove-Item business\flows\_ignore-probe.json
 ```
 
-> 退出码说明：`0` = 可以推；`1` = 内容命中真实业务词；`2` = 门禁自身拒绝（含业务目录、清单缺失、词表故障）。
-> 只要不是 `0`，就停下来，不要把文件硬加进暂存区。
+> Exit code meanings: `0` = can be pushed; `1` = content hit a real business term; `2` = the gate rejected it
+> (including a business directory, a missing file list, or a broken denylist). Whenever it is not `0`, stop and do
+> not force the file into the staging area.
 
-### 9.6 拦不住的场景
+### 9.6 Scenarios it cannot catch
 
-- 运行时才拼接的业务名（字符串分段拼接）或编码后的内容（base64、压缩包、加密载荷）；
-- 只在运行时生成、词表里没有登记的路径与账号；
-- 词表尚未收录的新业务词——门禁只能拦已知模式，不能推断语义；
-- 二进制文件只按 Latin1 扫 ASCII 类规则（`-Verbose` 会标注 `binary`），中文业务词可能漏掉。
+- Business names assembled at run time (string concatenation) or encoded content (base64, archives, encrypted payloads);
+- Paths and accounts produced only at run time and not registered in the denylist;
+- New business terms not yet in the denylist — the gate can only catch known patterns and cannot infer meaning;
+- Binary files are scanned only with ASCII-style rules via Latin1 (`-Verbose` marks them `binary`), so non-ASCII business terms may be missed.
 
-结论：本门禁是**降低泄漏概率**的确定性检查，不是内容脱敏的替代品；公开库仍应按最小文件集推送。
+Conclusion: this gate is a deterministic check that **lowers the probability of a leak**, not a substitute for
+redaction; the public repository should still be pushed with the smallest possible file set.
 
-### 9.7 自动闸门与覆盖边界
+### 9.7 Automatic gates and coverage boundary
 
-**拦截点**
+**Interception points**
 
-| 层 | 位置 | 扫描对象 | 命中后果 |
+| Layer | Location | Scanned object | Consequence of a hit |
 |---|---|---|---|
-| 提交边界（唯一真正拦截） | `.githooks/pre-commit` → `.githooks/pre-commit.ps1` | 暂存区快照（`git checkout-index` 导出） | 非零退出，提交被拒绝 |
-| CI 兜底 | `.github/workflows/ci.yml` 的 public-safe 步骤 | 仓库已跟踪文件（`git ls-files`） | 构建失败 |
+| Commit boundary (the only real interception) | `.githooks/pre-commit` → `.githooks/pre-commit.ps1` | Staging snapshot (exported with `git checkout-index`) | Non-zero exit; the commit is rejected |
+| CI backstop | The public-safe step in `.github/workflows/ci.yml` | Files already tracked by the repository (`git ls-files`) | The build fails |
 
-- `setup.ps1` 会自动执行 `git config core.hooksPath .githooks`；存量克隆手动执行一次即可。
-- **pre-commit 是唯一能在内容进入历史之前拦住的边界**；CI 只能发现**已经推送**的泄漏，
-  此时内容已在公开历史里，需要清理历史或改写提交，成本高得多。所以不要把 CI 当第一道闸门。
-- pre-commit 只扫**这次提交会入库的内容**，工作区里未暂存的改动不参与扫描；
-  `business/`、`out.robin` 等已被 `.gitignore` 忽略，不会进入暂存区，无需额外豁免逻辑。
-- 确需绕过钩子时用 `git commit --no-verify`，但必须在提交说明里写明原因，且 CI 仍会兜底。
+- `setup.ps1` runs `git config core.hooksPath .githooks` automatically; existing clones only need to run it once by hand.
+- **pre-commit is the only boundary that can stop content before it enters history**; CI can only discover a leak
+  that has **already been pushed**, at which point the content is in the public history and cleanup or history
+  rewriting is far more expensive. So do not treat CI as the first gate.
+- pre-commit scans only **what this commit will add to the repository**; unstaged working-tree changes are not
+  scanned. `business/`, `out.robin` and the like are already ignored by `.gitignore` and never enter the staging
+  area, so no extra exemption logic is needed.
+- When a hook genuinely must be bypassed, use `git commit --no-verify`, but state the reason in the commit message; CI still backstops it.
 
-**覆盖边界**
+**Coverage boundary**
 
-现有默认词表（`tools/publish/public-safe.denylist.json`）只剩 **5 条结构化规则**：
+The current default denylist (`tools/publish/public-safe.denylist.json`) has only **5 structured rules**:
 
-1. `PAD` / `Robot` 根路径（`path-pad-root`）
-2. UNC 网络共享路径（`path-unc`）
-3. 内网主机后缀（`.corp` / `.intra` / `.internal` / `.lan`，`host-internal-suffix`）
-4. 邮箱地址（`email-address`）
-5. 中国大陆手机号（`mobile-number`）
+1. `PAD` / `Robot` root paths (`path-pad-root`)
+2. UNC network share paths (`path-unc`)
+3. Intranet host suffixes (`.corp` / `.intra` / `.internal` / `.lan`, `host-internal-suffix`)
+4. Email addresses (`email-address`)
+5. Mainland China mobile numbers (`mobile-number`)
 
-**拦不到**：业务名、流程名、普通本地路径、账号口令，以及尚未登记进本地词表的新词。
-这些只能靠 `public-safe.denylist.local.json` 逐条登记，或靠人工评审。
+**Not caught**: business names, flow names, ordinary local paths, account credentials, and new terms not yet
+registered in the local denylist. These can only be covered by registering them one by one in
+`public-safe.denylist.local.json` or by manual review.
 
-**缺省词表时的行为**：只有默认词表、没有本地覆盖文件时，钩子与 CI 只打印一条显著提示
-（说明当前只有上述 5 条结构化规则），**不改变退出码**——否则公开库 CI 会因为永远没有本地词表而始终失败。
+**Behaviour without a local denylist**: when only the default denylist exists and no local overlay file is present,
+the hook and CI print one prominent notice (stating that only the 5 structured rules above are active) and
+**do not change the exit code** — otherwise the public CI would fail forever, since it never has a local denylist.

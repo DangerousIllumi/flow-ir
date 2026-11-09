@@ -1,27 +1,28 @@
-# 从一句话到可运行流程：示例与打分
+# From one sentence to a runnable flow: example and scoring
 
-> 这份文档回答两个问题：
-> 1. 「需求 → flow.json → 校验通过 → 粘进 PAD」具体长什么样？
-> 2. Agent 一次生成多条需求，怎么量化它到底靠不靠谱？（公开样例集现有 10 个流程样例 + 6 个 trigger 样例）
+> This document answers two questions:
+> 1. What does "requirement → flow.json → checks pass → paste into PAD" actually look like?
+> 2. When an agent generates several requirements in one go, how do you quantify whether it is reliable?
+>    (The public sample set currently holds 10 flow samples + 6 trigger samples.)
 
 ---
 
-## 1. 示例：一句话如何变成 flow.json
+## 1. Example: how one sentence becomes flow.json
 
-**用户原话**
+**The user's exact words**
 
-> 每天把 `C:\Temp\input.txt` 的内容原样复制到 `output.txt`，出问题就提示我。
+> Every day, copy the contents of `C:\Temp\input.txt` verbatim to `output.txt`; if something goes wrong, tell me.
 
-**Agent A 要做的事**（按 `skills/pad-flow-designer/` 的步骤）
+**What Agent A has to do** (following the steps in `skills/pad-flow-designer/`)
 
-1. 提取要素：触发=每天；步骤=读文件 → 写文件；没有分支、没有循环、没有外部系统。
-2. 查知识库确认动作存在（**不许凭记忆编**）：
+1. Extract the elements: trigger = daily; steps = read file → write file; no branches, no loops, no external systems.
+2. Check the knowledge base to confirm the action exists (**never invent from memory**):
 
    ```powershell
    node -e "const kb=require('./pad-robin-action-kb/PAD_Robin_ActionKB.json');for(const id of ['File.ReadTextFromFile.ReadText','File.WriteText'])console.log(id, kb.actions.some(a=>a.actionId===id)?'OK':'MISS')"
    ```
 
-3. 产出 `business/flows/copy-text.json`（可直接复制 `tests/eval/fixtures/file-copy-text.json` 再改）：
+3. Produce `business/flows/copy-text.json` (copy `tests/eval/fixtures/file-copy-text.json` and edit it):
 
    ```json
    {
@@ -29,9 +30,9 @@
      "trigger": { "kind": "manual" },
      "budget": { "maxLoop": 1 },
      "acceptance": {
-       "description": "复制成功后目标文件存在且非空",
+       "description": "After a successful copy the target file exists and is not empty",
        "checks": [
-         { "name": "目标文件存在", "type": "fileExists",
+         { "name": "target file exists", "type": "fileExists",
            "path": "{{variables.OutputFile}}", "minBytes": 1 }
        ]
      },
@@ -53,60 +54,67 @@
    }
    ```
 
-   要点：`budget` 必填；参数值走 `{{variables.X}}` / `{{1.FileContent}}`；字符串字面量写成 `$'''…'''`。
-   `trigger` **只认 `kind`**（`manual` / `schedule` / `file`），`manual` 只允许 `{ "kind": "manual" }`；
-   旧形状 `{ "type": "...", "config": {...} }` 会被判 `TRIGGER_LEGACY_SHAPE`，不做静默映射，
-   完整字段见 [trigger-adapter-design.md](trigger-adapter-design.md)。
-   **设计规则要求每个节点**（含控制节点）写 `run_mode`（auto/confirm/observe）与 `idempotent`
-   （语义是「重跑安全性」：false 时加一到两句中文 `idempotency_note`，写清重跑会发生什么）。
-   注意这两项是**设计与结构断言的门槛**，不是生成器的全局硬校验：缺字段的 flow 仍能生成 `.robin`，
-   把关靠 `skills/pad-flow-designer` 的必答流程，以及 cases 里的 `nodeDeclaration` / `declarationsComplete` 断言
-   （`tests/eval/fixtures` 的样例每个节点都写了，可直接参照）。
-   没问清这两项就不要生成 flow.json。本工具链不做自动重试，运行失败一律「告警 + 人工重跑」，该字段不用于放行自动化。
-   读取外部文件的步骤还要声明**节点级 `inputs`**（`dir` 走 `{{config.<KEY>}}`、`pattern` 通配符、
-   `required` 显式布尔）；该字段只用于准入与结构校验，**不进入 `.robin` 生成产物**。
+   Key points: `budget` is required; parameter values use `{{variables.X}}` / `{{1.FileContent}}`; string
+   literals are written as `$'''…'''`.
+   `trigger` **accepts only `kind`** (`manual` / `schedule` / `file`), and `manual` allows only
+   `{ "kind": "manual" }`; the old shape `{ "type": "...", "config": {...} }` is reported as
+   `TRIGGER_LEGACY_SHAPE` with no silent mapping. Full fields:
+   [trigger-adapter-design.md](trigger-adapter-design.md).
+   **The design rules require every node** (control nodes included) to declare `run_mode`
+   (auto/confirm/observe) and `idempotent` (its semantics are "rerun safety": when false, add one or two
+   sentences of Chinese `idempotency_note` describing what a rerun does).
+   Note that these two are **a gate for design and structural assertions, not a global hard check in the
+   generator**: a flow missing the fields can still generate `.robin`, and enforcement comes from the
+   mandatory-answer process in `skills/pad-flow-designer` plus the `nodeDeclaration` / `declarationsComplete`
+   assertions in the cases (every node in the `tests/eval/fixtures` samples declares them, so copy from there).
+   Do not generate flow.json until both are answered. This toolchain does no automatic retry: a failed run is
+   always "alert + manual rerun", so the field is never used to unlock automation.
+   Steps that read external files also declare **node-level `inputs`** (`dir` uses `{{config.<KEY>}}`,
+   `pattern` is a wildcard, `required` is an explicit boolean). The field is used only for admission and
+   structural checks and **never enters the generated `.robin`**.
 
-4. 产出配套声明（缺了准入会拦）：
-   - `business/flows/copy-text.requirements.json`：环境依赖。最小内容就是 `{ "checks": [] }`
-     （本示例不依赖外部环境）；真实流程按下列字段写：
+4. Produce the companion declarations (admission blocks without them):
+   - `business/flows/copy-text.requirements.json`: environment dependencies. The minimal content is
+     `{ "checks": [] }` (this example depends on no external environment). A real flow uses these fields:
 
      ```json
      {
        "checks": [
-         { "name": "PAD 根目录", "type": "dirs", "base": "PadRoot",
-           "paths": ["Scripts", "Results"], "hint": "先安装或拷贝 PAD 部署包" }
+         { "name": "PAD root directory", "type": "dirs", "base": "PadRoot",
+           "paths": ["Scripts", "Results"], "hint": "install or copy the PAD deployment package first" }
        ]
      }
      ```
 
-     字段：`name` 检查项名；`type` 为 `dirs`（子目录齐全）或 `files`（文件齐全）；
-     `base` 引用 `flow.json` 里的变量名；`paths` 是相对 `base` 的子路径；
-     `hint` 是失败时给人看的中文建议。
-   - `acceptance`：写进 flow.json（上面的示例已含一条 `fileExists` 判据），也可拆成
-     `business/flows/copy-text.acceptance.json`。生成判据文件：
+     Fields: `name` is the check name; `type` is `dirs` (subdirectories present) or `files` (files present);
+     `base` references a variable name from `flow.json`; `paths` are sub-paths relative to `base`;
+     `hint` is the advice shown to a human on failure.
+   - `acceptance`: written into flow.json (the example above already contains one `fileExists` criterion), or
+     split into `business/flows/copy-text.acceptance.json`. Generate the criteria file:
 
      ```powershell
      .\tools\pad-sync\build-acceptance.ps1 -FlowFile business\flows\copy-text.json -OutFile business\flows\copy-text.acceptance.json
-     # 预期：[build-acceptance] 已生成 …（1 条判据）
+     # expected tool output: [build-acceptance] 已生成 …（1 条判据）
      ```
 
-     注意 `acceptance.checks` 是必需的：缺了会报
-     `Write-Error: flow.json 里没有 acceptance.checks，无法生成验收判据`。
-   - `business/tests/eval/copy-text.cases.json`：把"需求里必须成立的事实"写成断言。
-     **不要直接跑仓库自带的 `tests/eval/*.cases.json`**——那评的是仓库里的中性样例，不是你自己写的流程。
-     正确做法是复制一份、把 `flow` 指到自己的文件：
+     Note that `acceptance.checks` is required: without it the tool reports
+     `Write-Error: flow.json 里没有 acceptance.checks，无法生成验收判据`.
+   - `business/tests/eval/copy-text.cases.json`: turn "the facts that must hold for this requirement" into
+     assertions. **Do not run the repository's `tests/eval/*.cases.json` directly** — those score the neutral
+     samples shipped with the repository, not the flow you wrote. Copy one and point `flow` at your own file:
 
      ```powershell
      Copy-Item tests\eval\file-copy-text.cases.json business\tests\eval\copy-text.cases.json
-     # 打开该文件，把 "flow" 改成 "business/flows/copy-text.json"，并按你的实际需求增删断言
+     # open the file, change "flow" to "business/flows/copy-text.json", and add or remove assertions to match your requirement
      ```
 
-> **样例与业务用例的边界**：`tests/eval/fixtures`（16 个中性合成样例：10 个流程 + 6 个 trigger）
-> 与 `tests/eval/*.cases.json`（11 个用例文件，内含结构断言）随仓库分发，供演示与 CI 使用；
-> 真实流程的断言一律放 `business/tests/eval/`（该目录不入库）。
-> 两者格式相同、跑法相同：`eval-flow.js` 既接受单个用例文件，也接受整个目录。
+> **Boundary between samples and business cases**: `tests/eval/fixtures` (16 neutral synthetic samples:
+> 10 flows + 6 triggers) and `tests/eval/*.cases.json` (11 case files containing structural assertions) ship
+> with the repository for demos and CI. Assertions for real flows always live in `business/tests/eval/`
+> (that directory is never committed). Both share the same format and the same command: `eval-flow.js` accepts
+> a single case file or a whole directory.
 
-**四步验证**（顺序不能乱）
+**Four-step verification** (order matters)
 
 ```powershell
 node tools\pad-robin\flow-to-robin.js business\flows\copy-text.json out.robin
@@ -115,10 +123,10 @@ node tools\pad-robin\check.js out.robin
 node tools\pad-robin\eval-flow.js business\tests\eval\copy-text.cases.json
 ```
 
-预期输出（下面数字是本仓库实测值）：
+Expected output (the numbers below are measured values from this repository):
 
 ```text
-已生成: out.robin（2 个节点）          <- 生成器把"已生成"写 stderr，属正常
+已生成: out.robin（2 个节点）          <- tool output: the generator writes this to stderr, which is normal
 OK   out.robin: 2 action lines, 0 errors
 [admit] 通过 10 / 警告 6 / 待批 0 / 失败 0
 PASS  read-then-write  需求：先读源文件，再写目标文件
@@ -126,45 +134,50 @@ PASS  content-passed-through  需求：写的内容来自上一步读取结果�
 [eval-flow] 通过 2 / 2（1 个流程样例）
 ```
 
-6 条警告都是**信息性**的，不是故障；按顺序是：
+The 6 warnings are **informational**, not failures. In order:
 
-| 检查项 | 代码 | 为什么正常 |
+| Check | Code | Why it is normal |
 |---|---|---|
-| `ACCEPTANCE` | `ACCEPTANCE_MISSING` | 还没生成验收判据文件。跑上面 step 4 的 `build-acceptance.ps1` 后转 pass（变 11 通过 / 5 警告） |
-| `CONFIG` | `CONFIG_MISSING` | 本机 `business\config\runtime.json` 还没按 `docs\config.example.json` 填好 |
-| `PREFLIGHT` | `PREFLIGHT_SKIPPED` | 没有 config 时前置探查无法执行，属跳过而非失败 |
-| `FINGERPRINT` | `FINGERPRINT_NO_BASELINE` | 新流程第一次跑还没有指纹基线（旧版会判 fail，现为 warn） |
-| `SCRIPT_FINGERPRINT` | `FINGERPRINT_NO_BASELINE` | 同上，基线种子包含产物与脚本两项 |
-| `INPUT` | `INPUT_UNDECLARED` | 本示例是"给定两个路径就复制"，不依赖目录里的输入文件；真实流程补节点级 `inputs` 后转 pass |
+| `ACCEPTANCE` | `ACCEPTANCE_MISSING` | The criteria file has not been generated yet. Running `build-acceptance.ps1` from step 4 turns it into a pass (11 passed / 5 warnings) |
+| `CONFIG` | `CONFIG_MISSING` | The local `business\config\runtime.json` has not been filled in per `docs\config.example.json` yet |
+| `PREFLIGHT` | `PREFLIGHT_SKIPPED` | Without a config the preflight probe cannot run, so it is skipped rather than failed |
+| `FINGERPRINT` | `FINGERPRINT_NO_BASELINE` | A new flow has no fingerprint baseline on its first run (older versions treated this as fail; it is now a warning) |
+| `SCRIPT_FINGERPRINT` | `FINGERPRINT_NO_BASELINE` | Same as above; the baseline seed covers both the artifact and the scripts |
+| `INPUT` | `INPUT_UNDECLARED` | This example "copies two given paths" and does not depend on input files in a directory; a real flow that declares node-level `inputs` turns this into a pass |
 
-只要没有 `[FAIL]`，这 6 条警告都不阻断交付。补充两个常见变体：
+As long as there is no `[FAIL]`, none of these 6 warnings block delivery. Two common variants:
 
-- 若 `trigger` 仍写成旧的 `type` 形状，会多一条 `TRIGGER_LEGACY_SHAPE`（即 **9 通过 / 7 警告**），按上文改成 `kind` 即可消除。
-- 若已按 step 4 生成验收判据文件，`ACCEPTANCE` 转 pass，结果为 **11 通过 / 5 警告**。
-- 首次发布并真实运行一次后，用 `pad-fingerprint -Set` 播种基线，重跑时两项指纹检查转 pass。
+- If `trigger` still uses the old `type` shape, one more `TRIGGER_LEGACY_SHAPE` appears (that is
+  **9 passed / 7 warnings**); change it to `kind` as described above to remove it.
+- If the criteria file was generated per step 4, `ACCEPTANCE` becomes a pass and the result is
+  **11 passed / 5 warnings**.
+- After the first publish and one real run, seed the baseline with `pad-fingerprint -Set`; both fingerprint
+  checks then pass on the next run.
 
-最后：PAD 新建流程 → 粘贴 `out.robin` → 补 UI 元素（本示例没有）→ 运行。
+Finally: create a new PAD flow → paste `out.robin` → fill in UI elements (this example has none) → run.
 
 ---
 
-## 2. 批量打分：衡量"生成质量"而不是"这一次跑没跑通"
+## 2. Batch scoring: measure "generation quality", not "whether this one run worked"
 
-固定需求集就是 `tests/eval/*.cases.json`（共 11 个：10 个流程样例的断言 + 1 个 trigger 断言）。每个用例文件里的 `flow` 指向被测的 `flow.json`。
+The fixed requirement set is `tests/eval/*.cases.json` (11 files: assertions for 10 flow samples plus 1 trigger
+assertion). The `flow` field in each case file points at the `flow.json` under test.
 
-**打分流程**
+**Scoring procedure**
 
-1. 把 10 条流程需求的原文交给 Agent A，要求它每条的产出落到 `candidates/<需求id>.json`
-2. 为每条需求准备得分规则（复用现有 `*.cases.json`，把 `flow` 改指向候选文件）
-3. 逐条跑四件事：**结构断言 → 生成 → 静态校验 → 准入**
-4. 记录到表里
+1. Give the original text of the 10 flow requirements to Agent A and require each output to land in
+   `candidates/<requirement id>.json`
+2. Prepare scoring rules per requirement (reuse the existing `*.cases.json` and repoint `flow` at the candidate file)
+3. Run four things per candidate: **structural assertions → generate → static check → admission**
+4. Record them in a table
 
-**一条命令跑完（PowerShell 示例）**
+**One command to run it all (PowerShell example)**
 
 ```powershell
 $rows = @()
 Get-ChildItem candidates\*.json | ForEach-Object {
     $id = $_.BaseName
-    # 公开样例的断言在 tests\eval；真实流程的断言在 business\tests\eval（不入库）
+    # assertions for public samples live in tests\eval; those for real flows live in business\tests\eval (never committed)
     $casesBiz = "business\tests\eval\$id.cases.json"
     $cases = if (Test-Path $casesBiz) { $casesBiz } else { "tests\eval\$id.cases.json" }
     $out = "candidates\$id.robin"
@@ -180,27 +193,31 @@ Get-ChildItem candidates\*.json | ForEach-Object {
     }
     & powershell -NoProfile -ExecutionPolicy Bypass -File tools\pad-sync\pad-admit.ps1 -FlowFile $_.FullName -RobinFile $out *> $null
     $admit = if ($LASTEXITCODE -eq 0) { "PASS" } else { "FAIL" }
-    $rows += [pscustomobject]@{ 需求 = $id; 结构 = $struct; 生成 = $gen; 静态 = $chk; 准入 = $admit }
+    $rows += [pscustomobject]@{ Requirement = $id; Structure = $struct; Generate = $gen; Static = $chk; Admit = $admit }
 }
 $rows | Format-Table -AutoSize
-"可交付率 = {0:P0}" -f (($rows | Where-Object { $_.结构 -eq 'PASS' -and $_.生成 -eq 'PASS' -and $_.静态 -eq 'PASS' -and $_.准入 -eq 'PASS' }).Count / $rows.Count)
+"deliverable rate = {0:P0}" -f (($rows | Where-Object { $_.Structure -eq 'PASS' -and $_.Generate -eq 'PASS' -and $_.Static -eq 'PASS' -and $_.Admit -eq 'PASS' }).Count / $rows.Count)
 ```
 
-**记分表模板**
+**Scoreboard template**
 
-| 需求 id | 结构断言 | 生成 | 静态校验 | 准入 | 判定 |
+| Requirement id | Structural assertions | Generate | Static check | Admission | Verdict |
 |---|---|---|---|---|---|
-| foreach-archive | PASS | PASS | PASS | PASS | 可交付 |
-| switch-exit-code | PASS | PASS | FAIL | - | 设计对、参数写错 |
-| http-webhook | FAIL | - | - | - | 设计错（少了失败分支） |
+| foreach-archive | PASS | PASS | PASS | PASS | Deliverable |
+| switch-exit-code | PASS | PASS | FAIL | - | Design right, parameter wrong |
+| http-webhook | FAIL | - | - | - | Design wrong (missing failure branch) |
 
-判定口径：
+Decision criteria:
 
-- **四项全绿** → 可交付（仍需人工看业务语义）
-- **结构绿、后面红** → 设计对了，参数/变量写错，属于"可自动修复"类
-- **结构红** → 需求理解就错了，改参数没用，必须回到设计
+- **All four green** → deliverable (a human still has to review the business semantics)
+- **Structure green, a later stage red** → the design is right and a parameter/variable is wrong; the
+  "auto-fixable" class
+- **Structure red** → the requirement was understood wrongly; changing parameters will not help and you must
+  return to design
 
-**两条纪律**
+**Two disciplines**
 
-1. 通过率只衡量**结构与可生成性**，不衡量文案和业务正确性——金额、批次、口径仍要人工确认。
-2. 需求集固定，才可比较。改需求就等于换考卷，历史通过率不能直接对比；新增需求请另记一行并标注开始日期。
+1. The pass rate measures **structure and generability only**, not wording or business correctness — amounts,
+   batches and accounting conventions still need human confirmation.
+2. Only a fixed requirement set is comparable. Changing a requirement is changing the exam, so historical pass
+   rates cannot be compared directly; add a new row for a new requirement and record its start date.
