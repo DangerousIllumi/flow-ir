@@ -105,8 +105,12 @@ function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]
         ($_.LastWriteTime.ToUniversalTime() -ge $SinceUtc.AddMinutes(-2))
     })
     if ($hit.Count -gt 1) {
-        throw ("Workspace 里有 $($hit.Count) 个候选修订，无法确定本次发布对应哪一份：" +
-            (($hit | ForEach-Object { $_.Directory.Name }) -join '、'))
+        # 带 Data['code'] 的异常：调用方按码分类，不解析中文消息
+        $msg = "Workspace 里有 $($hit.Count) 个候选修订，无法确定本次发布对应哪一份：" +
+            (($hit | ForEach-Object { $_.Directory.Name }) -join '、')
+        $ex = [System.Exception]::new($msg)
+        $ex.Data['code'] = 'FINGERPRINT_AMBIGUOUS'
+        throw $ex
     }
     if ($hit.Count -eq 1) { return $hit[0].FullName }
     return $null

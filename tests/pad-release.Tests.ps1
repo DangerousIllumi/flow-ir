@@ -138,10 +138,11 @@ Describe 'pad-release 纯函数测试' {
             New-Item -ItemType File -Path $p -Force | Out-Null
             (Get-Item $p).LastWriteTime = [datetime]'2026-10-27 08:00:00'
         }
-        $msg = $null
+        $ex = $null
         try { $null = Find-WorkspaceRobin $work $g1 '' ([datetime]'2026-10-26 09:00:00') }
-        catch { $msg = $_.Exception.Message }
-        $msg | Should Match '2 个候选修订'
+        catch { $ex = $_.Exception }
+        $ex.Data['code'] | Should Be 'FINGERPRINT_AMBIGUOUS'
+        $ex.Message | Should Match '2 个候选修订'
     }
 
     It 'manifest 追加：一行一个合法 JSON，字段齐全，多次追加不覆盖' {

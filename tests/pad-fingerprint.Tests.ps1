@@ -69,10 +69,11 @@ Describe 'PadFingerprint 定位与身份' {
             [IO.File]::WriteAllText($p, 'x', (New-Object Text.UTF8Encoding($false)))
             (Get-Item $p).LastWriteTime = [datetime]::UtcNow.AddMinutes(-5)
         }
-        $msg = $null
+        $ex = $null
         try { $null = Find-WorkspaceRobin (Join-Path $work 'Workspace') $g '' ([datetime]::UtcNow.AddDays(-1)) }
-        catch { $msg = $_.Exception.Message }
-        $msg | Should Match '2 个候选修订'
+        catch { $ex = $_.Exception }
+        $ex.Data['code'] | Should Be 'FINGERPRINT_AMBIGUOUS'
+        $ex.Message | Should Match '2 个候选修订'
     }
 
     It '环境 ID：从合成 console.config 读取首个 EnvironmentId，读不到返回 null' {

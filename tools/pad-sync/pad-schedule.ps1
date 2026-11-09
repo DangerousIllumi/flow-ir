@@ -188,6 +188,8 @@ function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$
         $msg = "CALENDAR_STALE: 日历不覆盖今天：今天 $((Get-Date).ToString('yyyy-MM-dd'))（覆盖 $min ~ $max），判定为日历过期，本次不运行"
         $ex = [System.Exception]::new($msg)
         $ex.Data['code'] = 'CALENDAR_STALE'
+        # 区间随异常携带，读取方不再从中文消息里正则抽取
+        $ex.Data['calendarRange'] = "$min ~ $max"
         throw $ex
     }
     return [ordered]@{ workday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
@@ -432,7 +434,7 @@ if (-not $NoMain) {
             $exitCode = $cal.exitCode
             $result.reason = $cal.reason
             if ($cal.stale) { $result.calendarOk = $null } else { $result.calendarOk = $false }
-            $range = [regex]::Match($msg, '覆盖 ([^）]+)').Groups[1].Value
+            $range = [string]$_.Exception.Data['calendarRange']
             if ($cal.stale) {
                 $alert = Write-RunAlert -FlowName $FlowName -ExitCode $exitCode -Stage 'calendar' `
                     -Status 'skipped' -CalendarStale -CalendarRange $range

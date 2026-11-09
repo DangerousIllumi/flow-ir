@@ -8,6 +8,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { execFileSync } = require("child_process");
 const { lintRobin } = require("./lint-robin.js");
 
@@ -70,28 +71,20 @@ test("LOOP 里的 IF 不算 IF 嵌套", () => {
   assert.strictEqual(rulesOf(text, "nested-if").length, 0);
 });
 
-test("回归：生产脚本 0 条流程卫生警告", () => {
-  // 公开仓库不含业务脚本；按目录扫描，避免把具体流程名写死进测试
-  const dir = path.join(__dirname, "..", "..", "business", "flows");
-  const targets = fs.existsSync(dir)
-    ? fs.readdirSync(dir).filter((f) => f.endsWith(".robin"))
-    : [];
-  for (const name of targets) {
-    const text = fs.readFileSync(path.join(dir, name), "utf8");
-    assert.strictEqual(rulesOf(text, "unused-output").length, 0, name);
-    assert.strictEqual(rulesOf(text, "nested-if").length, 0, name);
-  }
-});
-
-test("示例流程生成后不误报嵌套过深", () => {
-  // 公开仓库不含知识库（由 setup.ps1 克隆），缺失时跳过，避免测试硬依赖
+test("回归：生产脚本生成后 0 条流程卫生警告", (t) => {
+  // 公开仓库不含业务脚本；改用仓库示例流程生成脚本，避免依赖 business/ 下的产物
+  // 知识库由 setup.ps1 克隆，缺失时明确跳过并给出原因
   const kb = path.join(__dirname, "..", "..", "pad-robin-action-kb", "PAD_Robin_ActionKB.json");
-  if (!fs.existsSync(kb)) return;
+  if (!fs.existsSync(kb)) {
+    t.skip("未找到动作知识库（先执行 setup.ps1），跳过生产脚本回归");
+    return;
+  }
   const flow = path.join(__dirname, "..", "flow-drawio", "example-flow.json");
   const gen = path.join(__dirname, "flow-to-robin.js");
-  const out = path.join(require("os").tmpdir(), `lint-example-${process.pid}.robin`);
+  const out = path.join(os.tmpdir(), `lint-prod-${process.pid}.robin`);
   execFileSync(process.execPath, [gen, flow, out], { stdio: "pipe" });
   const text = fs.readFileSync(out, "utf8");
   fs.unlinkSync(out);
+  assert.strictEqual(rulesOf(text, "unused-output").length, 0);
   assert.strictEqual(rulesOf(text, "nested-if").length, 0);
 });

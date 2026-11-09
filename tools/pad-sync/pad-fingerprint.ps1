@@ -179,7 +179,7 @@ try {
     }
 } catch {
     if (-not $result.code) {
-        if ($_.Exception.Message -match '个候选修订') { $result.code = 'FINGERPRINT_AMBIGUOUS' }
+        if ([string]$_.Exception.Data['code'] -eq 'FINGERPRINT_AMBIGUOUS') { $result.code = 'FINGERPRINT_AMBIGUOUS' }
         else { $result.code = 'FINGERPRINT_UNKNOWN' }
     }
     $result.message = $_.Exception.Message
