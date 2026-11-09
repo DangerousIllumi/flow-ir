@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 /**
- * flow-to-drawio.js — flow.json → .drawio（确定性布局 + 元数据写入 object 属性）
+ * flow-to-drawio.js — flow.json → .drawio (deterministic layout + metadata written into object attributes)
  *
- * 用法：
+ * Usage:
  *   node flow-to-drawio.js <flow.json> <out.drawio>
  *
- * 字段映射：
+ * Field mapping:
  *   node.id       → <object id="n{id}">
- *   node.label    → <object title="...">（回读时以此为准）
+ *   node.label    → <object title="..."> (the authoritative value when reading back)
  *   node.type     → nodeType
  *   node.pad_hint → padHint
- *   node.params   → params（JSON 字符串）
- *   node.outputs  → outputs（JSON 数组字符串）
- *   展示用富文本   → <object label="...">（仅显示，回读不依赖）
- *   next/branch   → 边 <object from=".." to=".." label="">
- *   trigger/variables → 不写入画布，始终以 flow.json 为准
+ *   node.params   → params (JSON string)
+ *   node.outputs  → outputs (JSON array string)
+ *   display rich text → <object label="..."> (display only; the read-back does not depend on it)
+ *   next/branch   → edge <object from=".." to=".." label="">
+ *   trigger/variables → not written to the canvas; flow.json is always authoritative
  */
 
 const fs = require("fs");
@@ -26,15 +26,15 @@ if (!flowPath || !outPath) {
   process.exit(1);
 }
 
-// 读入后剥离 BOM：flow.json 可能被编辑器存成 UTF-8 with BOM，直接 parse 会报错
+// Strip the BOM after reading: an editor may have saved flow.json as UTF-8 with BOM, and parsing it directly fails
 const flow = JSON.parse(fs.readFileSync(flowPath, "utf8").replace(/^\uFEFF/, ""));
 const nodes = flow.nodes || [];
 
-// ── 简单分层布局 ──────────────────────────────────────────────
+// ── Simple layered layout ─────────────────────────────────────────
 const level = {};
 const byId = new Map(nodes.map((n) => [n.id, n]));
 
-// flow.json 若提供显式 edges，则分层与画线都以它为准；否则退回 next/branch 推导
+// When flow.json provides explicit edges, both layering and edge drawing follow them; otherwise derive from next/branch
 const explicitEdges = Array.isArray(flow.edges) && flow.edges.length ? flow.edges : null;
 const adjacency = new Map();
 if (explicitEdges) {
@@ -48,7 +48,7 @@ if (explicitEdges) {
   }
 }
 
-// BFS 从第一个节点开始分层
+// Layer the graph with a BFS starting from the first node
 const startNode = nodes[0];
 if (startNode) {
   level[startNode.id] = 0;
@@ -79,7 +79,7 @@ if (startNode) {
     }
   }
 }
-// 未分层的节点放到最后
+// Nodes that the BFS never reached go last
 let maxLevel = Math.max(0, ...Object.values(level));
 for (const n of nodes) {
   if (level[n.id] === undefined) {
@@ -88,7 +88,7 @@ for (const n of nodes) {
   }
 }
 
-// 按层分组
+// Group nodes by layer
 const layers = {};
 for (const n of nodes) {
   const lv = level[n.id];
@@ -96,11 +96,11 @@ for (const n of nodes) {
   layers[lv].push(n);
 }
 
-// 节点高度、最小/最大宽度、水平与垂直间距、单行最大宽度
+// Node height, minimum/maximum width, horizontal and vertical gaps, maximum width of a single row
 const NODE_H = 72, MIN_W = 200, MAX_W = 400;
 const GAP_X = 60, GAP_Y = 52, ROW_GAP = 28, MAX_ROW_W = 1400;
 
-// 文本渲染宽度估算：中文/全角按字号宽，ASCII 按 0.6 字号宽
+// Estimate the rendered text width: CJK/full-width glyphs count as one font size, ASCII as 0.6 of a font size
 function textWidth(text, fontSize) {
   let w = 0;
   for (const ch of String(text)) {
@@ -109,13 +109,13 @@ function textWidth(text, fontSize) {
   return w;
 }
 
-// PAD 动作只显示最后一段，避免把 Scripting.RunDOSCommand.RunDOSCommand 整串塞进方框
+// Show only the last segment of a PAD action so the whole Scripting.RunDOSCommand.RunDOSCommand string does not blow up the box
 function shortAction(padHint) {
   const parts = String(padHint || "").split(".");
   return parts[parts.length - 1] || "";
 }
 
-// 按标题与动作名实测宽度，限制在 [MIN_W, MAX_W]
+// Measure the title and action name, then clamp the width to [MIN_W, MAX_W]
 function nodeWidth(node) {
   const title = `${node.id}. ${node.label || node.type || ""}`;
   const action = shortAction(node.pad_hint);
@@ -123,7 +123,7 @@ function nodeWidth(node) {
   return Math.max(MIN_W, Math.min(MAX_W, Math.ceil(need + 24)));
 }
 
-// ── 布局：每层按 MAX_ROW_W 折行，超出宽度换行，避免同行方块互相压住 ──
+// ── Layout: wrap each layer at MAX_ROW_W so boxes in the same row do not overlap ──
 const positions = new Map();
 let cursorY = 0;
 for (let lv = 0; lv <= maxLevel; lv++) {
@@ -156,7 +156,7 @@ for (let lv = 0; lv <= maxLevel; lv++) {
   cursorY += ROW_GAP;
 }
 
-// 平移坐标系到正数区域，并按实际内容计算页面尺寸
+// Shift the coordinate system into positive space and size the page from the actual content
 const allPos = [...positions.values()];
 const minX = Math.min(...allPos.map((p) => p.x));
 const minY = Math.min(...allPos.map((p) => p.y));
@@ -169,7 +169,7 @@ for (const p of allPos) {
 const PAGE_W = Math.ceil(maxX - minX + 80);
 const PAGE_H = Math.ceil(maxY - minY + 80);
 
-// ── 生成节点 ──────────────────────────────────────────────────
+// ── Generate nodes ────────────────────────────────────────────────
 const nodeCells = [];
 const edgeCells = [];
 
@@ -177,7 +177,7 @@ for (const node of nodes) {
   const pos = positions.get(node.id);
   const title = `${node.id}. ${node.label || node.type || ""}`;
   const action = shortAction(node.pad_hint);
-  // 两行 HTML 标签：标题正常字号，PAD 动作名小字灰色，且节点启用自动换行
+  // Two-line HTML label: the title at normal size, the PAD action name smaller and grey; the node wraps its text
   const display = `<div style="font-size:11px;line-height:15px;">${title}</div>` +
     (action ? `<div style="font-size:9px;line-height:13px;color:#888888;">PAD: ${action}</div>` : "");
   const objAttrs = [
@@ -198,24 +198,25 @@ for (const node of nodes) {
   );
 }
 
-// ── 生成边 ────────────────────────────────────────────────────
+// ── Generate edges ────────────────────────────────────────────────
 let edgeId = 0;
 if (explicitEdges) {
-  // 显式 edges 是唯一真源：顺序、标签都按 flow.json，不再从 next/branch 猜
+  // Explicit edges are the single source of truth: order and labels come from flow.json, never guessed from next/branch
   for (const e of explicitEdges) {
     if (!byId.has(e.from) || !byId.has(e.to)) continue;
     edgeCells.push(makeEdge(`e${edgeId++}`, `n${e.from}`, `n${e.to}`, e.label || ""));
   }
 } else {
 for (const node of nodes) {
-  // 控制流节点里只有 IF 不走普通 next 边（其汇合点通常已由支路内部的 next 链到达，
-  // 再画一条会与分支边重复）；LOOP 的 next 表示「结束循环」、SWITCH 的 next 表示「分支结束」
+  // Among control-flow nodes only IF skips the ordinary next edge (its join point is normally already reached
+  // through the next chain inside the branches, so one more edge would duplicate the branch edges); LOOP's next
+  // means "end of loop" and SWITCH's next means "end of branch"
   if (node.pad_hint !== "IF") {
     for (const toId of node.next || []) {
       edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${toId}`, node.pad_hint === "LOOP" ? "end loop" : ""));
     }
   }
-  // 分支边：只画「入口」一条，支路内部的连线由各节点的 next 边表达
+  // Branch edges: draw only the entry edge; connections inside a branch are expressed by each node's next edge
   if (node.branch) {
     const tEntry = (node.branch.trueBody && node.branch.trueBody[0]) ||
                    (node.branch.body && node.branch.body[0]) ||
@@ -225,11 +226,11 @@ for (const node of nodes) {
                    node.branch.false;
     if (fEntry) edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${fEntry}`, "no"));
   }
-  // 循环体边：LOOP → 体首节点（循环体内节点的 next 边照常绘制）
+  // Loop-body edge: LOOP -> first node of the body (the next edges of nodes inside the body are drawn as usual)
   if (node.loop && node.loop.body && node.loop.body[0]) {
     edgeCells.push(makeEdge(`e${edgeId++}`, `n${node.id}`, `n${node.loop.body[0]}`, "loop body"));
   }
-  // 分支选择边：SWITCH → 各 CASE 体首节点 / DEFAULT 首节点
+  // Switch-case edges: SWITCH -> first node of each CASE body / first DEFAULT node
   if (node.switch) {
     for (const c of node.switch.cases || []) {
       const entry = (c.body || [])[0];
@@ -242,8 +243,8 @@ for (const node of nodes) {
 }
 
 function makeEdge(id, from, to, label) {
-  // draw.io 只认 mxCell 上的 source/target；object 上的 from/to 仅用于回读（drawio-to-flow.js）
-  // 两处都写：mxCell 负责渲染连线，object 属性负责保留原始引用关系
+  // draw.io only honours source/target on the mxCell; from/to on the object is used only for read-back (drawio-to-flow.js)
+  // Write both: the mxCell renders the edge, the object attributes preserve the original references
   return `        <object id="${id}" from="${from}" to="${to}" label="${escapeXml(label)}">
           <mxCell edge="1" parent="1" source="${from}" target="${to}"
                   style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=9;labelBackgroundColor=#FFFFFF;">
@@ -252,7 +253,7 @@ function makeEdge(id, from, to, label) {
         </object>`;
 }
 
-// ── 组装 XML ──────────────────────────────────────────────────
+// ── Assemble the XML ──────────────────────────────────────────────
 const xml = `<mxfile host="flow-to-drawio.js" type="device">
   <diagram id="flow" name="Page-1">
     <mxGraphModel dx="${PAGE_W}" dy="${PAGE_H}" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${PAGE_W}" pageHeight="${PAGE_H}" math="0" shadow="0">

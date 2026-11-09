@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * flow-to-drawio.js — flow.json → .drawio（ELK 分层布局 + 正交折线）
+ * flow-to-drawio.js — flow.json → .drawio (ELK layered layout + orthogonal routing)
  *
- * 用法：
+ * Usage:
  *   node flow-to-drawio.js <flow.json> <out.drawio>
  *
- * 行为：
- * - 优先使用 flow.edges（显式控制流）；没有 edges 时退回 next/branch 推导
- * - 布局交给 elkjs 的 layered 算法，边输出 bendPoints，避免穿过节点
- * - 旧的自制 BFS 布局保留在 flow-to-drawio-bfs.js，可作回退
+ * Behaviour:
+ * - flow.edges (explicit control flow) wins; without edges we fall back to deriving from next/branch
+ * - Layout is delegated to the elkjs layered algorithm, which emits bendPoints so edges do not cross nodes
+ * - The old hand-rolled BFS layout is kept in flow-to-drawio-bfs.js as a fallback
  *
- * 依赖：仓库根执行过 npm install（elkjs）
+ * Dependency: npm install has been run in the repository root (elkjs)
  */
 "use strict";
 
@@ -37,7 +37,7 @@ const byId = new Map(nodes.map((n) => [n.id, n]));
 
 const NODE_H = 72, MIN_W = 200, MAX_W = 400;
 
-// 文本渲染宽度估算：中文/全角按字号宽，ASCII 按 0.6 字号宽
+// Estimate the rendered text width: CJK/full-width glyphs count as one font size, ASCII as 0.6 of a font size
 function textWidth(text, fontSize) {
   let w = 0;
   for (const ch of String(text)) {
@@ -46,13 +46,13 @@ function textWidth(text, fontSize) {
   return w;
 }
 
-// PAD 动作只显示最后一段，避免整串 actionId 把方框撑爆
+// Show only the last segment of a PAD action so the whole actionId does not blow up the box
 function shortAction(hint) {
   const parts = String(hint || "").split(".");
   return parts[parts.length - 1] || "";
 }
 
-// 按标题与动作名实测宽度，限制在 [MIN_W, MAX_W]
+// Measure the title and action name, then clamp the width to [MIN_W, MAX_W]
 function nodeWidth(node) {
   const title = `${node.id}. ${node.label || node.type || ""}`;
   const action = shortAction(node.pad_hint);
@@ -65,7 +65,7 @@ function escapeXml(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-// 显式 edges 优先；没有时按 next/branch/loop/switch 推导（与 BFS 版保持一致）
+// Explicit edges win; otherwise derive from next/branch/loop/switch (kept in sync with the BFS version)
 function collectEdges() {
   if (Array.isArray(flow.edges) && flow.edges.length) {
     return flow.edges
@@ -81,7 +81,7 @@ function collectEdges() {
 
   const edges = [];
   for (const node of nodes) {
-    // IF 的 next 在旧规则里不画（表示分支结束后的汇合点），避免与分支边重复
+    // Under the legacy rule IF's next is not drawn (it is the join point after the branch ends), to avoid duplicating the branch edges
     if (node.pad_hint !== "IF") {
       for (const to of node.next || []) {
         edges.push({ from: node.id, to, label: node.pad_hint === "LOOP" ? "end loop" : "" });
@@ -111,7 +111,7 @@ function collectEdges() {
 
 const edges = collectEdges();
 
-// ELK 分层布局参数：纵向、正交路由、按模型顺序减少交叉
+// ELK layered-layout options: top-down, orthogonal routing, model order to reduce crossings
 const graph = {
   id: "root",
   layoutOptions: {

@@ -1,50 +1,50 @@
-﻿# check-public-safe.ps1 — 推送前内容门禁：按内容而不是文件名拦截业务信息
+﻿# check-public-safe.ps1 — pre-push content gate: block business information by content, not by file name
 #
-# 背景：上一次推送公开库时，白名单内的脚本本身合规，但注释里写了业务名、真实路径，
-# 于是泄漏到了公开库。所以本门禁逐行扫描「待推文件清单」的内容，命中词表即整体失败。
+# Why: on the last push to the public repo the whitelisted scripts were compliant in themselves, but their
+# comments carried business names and real paths, so they leaked into the public repo. This gate therefore scans
+# the content of the "files to push" list line by line and fails as a whole on a denylist hit.
 #
-# 用法：
+# Usage:
 #   .\check-public-safe.ps1 -Files @('tools\pad-sync\pad-sync.ps1', 'docs\x.md') -Verbose
 #   .\check-public-safe.ps1 -Files ... -DenylistFile tools\publish\public-safe.denylist.json
-#   .\check-public-safe.ps1 -Files ... -Quiet        # 只输出命中行
+#   .\check-public-safe.ps1 -Files ... -Quiet        # print only the matching lines
 #
-# 输出：每条命中一行「文件:行号:命中词」（走 Write-Output，可直接管道处理）
-# 退出码：0 全部干净 / 1 有命中 / 2 门禁自身出错（清单为空、文件缺失、业务目录被列入、词表缺失或无规则）
+# Output: one "file:line:matched term" line per hit (via Write-Output, so it pipes cleanly)
+# Exit codes: 0 all clean / 1 at least one hit / 2 the gate itself failed (empty list, missing file, a business directory in the list, missing denylist or a denylist with no rules)
 #
-# 词表：默认 tools\publish\public-safe.denylist.json；若同目录存在
-#   tools\publish\public-safe.denylist.local.json 会自动合并。
-#   真实业务词只放本地文件，该文件永不推送（见 docs\admission-gate.md 第 9 节）。
+# Denylist: defaults to tools\publish\public-safe.denylist.json; when
+#   tools\publish\public-safe.denylist.local.json exists beside it, the two are merged automatically.
+#   Real business terms live only in the local file, which is never pushed (see section 9 of docs\admission-gate.md).
 #
-# 业务目录：business\ 默认绝不入库。任何被列入 -Files 的 business\ 文件直接判错（退出码 2），
-#   避免「误把业务文件当候选推上去」这种静默风险。
+# Business directory: business\ never enters the repository. Any business\ file passed in -Files is an
+#   immediate error (exit code 2), which removes the silent risk of pushing a business file by accident.
 #
-# 编码：复用 pad-sync\TextEncoding.psm1 的探测（UTF-8 / UTF-16 / ANSI）。
-#   含 NUL 且不是 UTF-16LE 的文件按二进制处理，用 Latin1 无损解码只扫 ASCII 类规则，
-#   避免把二进制当 UTF-8 硬读而产生乱码假阳性。
+# Encoding: reuses the probing in pad-sync\TextEncoding.psm1 (UTF-8 / UTF-16 / ANSI).
+#   A NUL-bearing file that is not UTF-16LE is read as binary and decoded losslessly as Latin1, so only ASCII-style rules can match instead of mojibake hits from a forced UTF-8 read.
 
 [CmdletBinding()]
 param(
-    # 待推文件清单（相对仓库根或绝对路径均可）
+    # The files to push (relative to the repository root, or absolute)
     [Parameter(Position = 0)]
     [string[]]$Files,
-    # 词表路径，可给多个；不给时用默认词表 + 本地覆盖文件
+    # Denylist paths; several may be given. When omitted, the default denylist plus the local override is used
     [string[]]$DenylistFile,
-    # 仓库根；默认取本脚本的上两级目录
+    # Repository root; defaults to the parent of the directory holding this script
     [string]$RepoRoot,
-    # 只输出命中行，不打印汇总与提示
+    # Print only the matching lines, without the summary and the hints
     [switch]$Quiet,
-    # 仅供 Pester dot-source，不执行主流程
+    # For Pester dot-sourcing only: do not run the main flow
     [switch]$NoMain
 )
 $ErrorActionPreference = 'Stop'
 
-# 编码探测与本项目其他工具共用同一套判断，避免各写一份出现口径漂移
+# Encoding probing is shared with the other tools in this repository, so the rules cannot drift apart
 $script:EncodingModule = Join-Path (Split-Path -Parent $PSScriptRoot) 'pad-sync\TextEncoding.psm1'
-# -Verbose:$false 只压掉模块导入的加载日志，不影响本脚本自己的 -Verbose 输出
+# -Verbose:$false silences only the module import log; it does not affect this script's own -Verbose output
 Import-Module $script:EncodingModule -Force -Verbose:$false
 
-# 读取待扫描文本：返回 Text（正文）与 Kind（utf-8-bom / utf-16le / ansi / binary / empty）
-# 关键点：.vbs 可能是 UTF-16LE 带 BOM，不能按 UTF-8 硬读；二进制不能交给 UTF-8 猜测
+# Read the text to be scanned: returns Text (the body) and Kind (utf-8-bom / utf-16le / ansi / binary / empty)
+# Key point: a .vbs file may be UTF-16LE with a BOM, so it must not be force-read as UTF-8; binaries must never be thrown at a UTF-8 guess
 function Read-GateText {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -53,13 +53,13 @@ function Read-GateText {
         return [pscustomobject]@{ Text = ''; Kind = 'empty' }
     }
 
-    # 1) 有 BOM（UTF-8 / UTF-16LE / UTF-16BE）时以 BOM 为准，交给统一探测解码
+    # 1) When a BOM is present (UTF-8 / UTF-16LE / UTF-16BE), trust it and let the shared probe decode
     $hasBom = $false
     if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $hasBom = $true }
     if ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) { $hasBom = $true }
 
     if (-not $hasBom) {
-        # 只抽样前 8KB，避免大文件全量遍历
+        # Sample only the first 8KB, so a large file is not walked end to end
         $sample = [Math]::Min($bytes.Length, 8192)
         $oddZeros = 0
         $evenZeros = 0
@@ -72,26 +72,26 @@ function Read-GateText {
         }
         $half = [Math]::Max(1, [int]($sample / 2))
 
-        # 2) 无 BOM 的 UTF-16LE：奇数位大量 0x00、偶数位几乎没有
+        # 2) BOM-less UTF-16LE: plenty of 0x00 bytes at odd offsets, almost none at even offsets
         if ($sample -ge 8 -and ($oddZeros / $half) -gt 0.3 -and ($evenZeros / $half) -lt 0.05) {
             $enc = New-Object Text.UnicodeEncoding($false, $false)
             return [pscustomobject]@{ Text = $enc.GetString($bytes); Kind = 'utf-16le' }
         }
 
-        # 3) 其余含 NUL 的按二进制：Latin1 无损解码，只可能命中 ASCII 类规则
+        # 3) Anything else with NUL counts as binary: decoded losslessly as Latin1, so only ASCII-style rules can ever match
         if ($nulCount -gt 0) {
             $latin1 = [Text.Encoding]::GetEncoding(28591)
             return [pscustomobject]@{ Text = $latin1.GetString($bytes); Kind = 'binary' }
         }
     }
 
-    # 4) 普通文本：交给统一探测（UTF-8 / ANSI / 带 BOM 的 UTF-16）
+    # 4) Plain text: hand it to the shared probe (UTF-8 / ANSI / UTF-16 with a BOM)
     $info = Read-TextFileAuto $Path
     return [pscustomobject]@{ Text = $info.text; Kind = $info.kind }
 }
 
-# 载入词表：分类键即规则分类，规则字段见 tools\publish\public-safe.denylist.json
-# 返回 Rules（已编译正则）、Errors（词表问题）、Sources（实际用到的词表）
+# Load the denylist: a category key is a rule category; the rule fields are described in tools\publish\public-safe.denylist.json
+# Returns Rules (compiled regexes), Errors (denylist problems) and Sources (the denylist files actually used)
 function Import-GateDenylist {
     param([string[]]$Paths)
 
@@ -118,7 +118,7 @@ function Import-GateDenylist {
             continue
         }
 
-        # 保留域白名单：命中文里出现这些域名时不算违规；enabled=false 可整体关闭
+        # Reserved-domain allowlist: a hit containing one of these domains is not a violation; enabled=false turns it off entirely
         if ($doc.PSObject.Properties.Name -contains 'allowlist' -and $null -ne $doc.allowlist) {
             $al = $doc.allowlist
             $alEnabled = $true
@@ -141,7 +141,7 @@ function Import-GateDenylist {
             $catName = [string]$catProp.Name
             foreach ($r in @($catProp.Value.rules)) {
                 if ($null -eq $r) { continue }
-                # enabled 缺省为 true；显式 false 的规则只做格式示例
+                # enabled defaults to true; a rule with an explicit false is a format example only
                 if ($r.PSObject.Properties.Name -contains 'enabled' -and [bool]$r.enabled -eq $false) { continue }
 
                 $pattern = [string]$r.pattern
@@ -154,7 +154,7 @@ function Import-GateDenylist {
 
                 $isRegex = $false
                 if ($r.PSObject.Properties.Name -contains 'regex' -and [bool]$r.regex -eq $true) { $isRegex = $true }
-                # 字面量规则自动转义，避免业务词里的正则元字符误伤
+                # Literal rules are escaped automatically, so regex metacharacters inside a business term cannot over-match
                 $src = if ($isRegex) { $pattern } else { [regex]::Escape($pattern) }
 
                 $opts = [Text.RegularExpressions.RegexOptions]::IgnoreCase
@@ -183,7 +183,7 @@ function Import-GateDenylist {
     return [pscustomobject]@{ Rules = @($rules); Errors = @($errors); Sources = @($sources); AllowDomains = @($allowDomains) }
 }
 
-# 判断命中文本里是否含保留域（按域名边界匹配，避免 example.com.cn 之类被误放行）
+# Decide whether matched text contains a reserved domain (matched on domain boundaries, so example.com.cn is not let through by accident)
 function Test-AllowedDomain {
     param([string]$Text, [string[]]$Domains)
 
@@ -195,7 +195,7 @@ function Test-AllowedDomain {
     return $false
 }
 
-# 扫描入口：解析清单、载入词表、逐行匹配，返回统一汇总对象（不打印，便于测试）
+# Scan entry point: resolve the list, load the denylist, match line by line, and return one summary object (it prints nothing, which keeps it testable)
 function Invoke-PublicSafeScan {
     [CmdletBinding()]
     param(
@@ -213,8 +213,8 @@ function Invoke-PublicSafeScan {
         $errors += "repository root does not exist: $root"
     }
 
-    # 1) 解析待推清单；相对路径一律按仓库根解释，避免受当前目录影响
-    #    业务目录是「绝不入库」区：命中即判错，不静默跳过
+    # 1) Resolve the list to push; relative paths always resolve against the repository root, so the current directory cannot change the result
+    #    The business directory is a "never committed" zone: a hit is an error, never a silent skip
     $businessRoot = [IO.Path]::GetFullPath((Join-Path $root 'business'))
     if (-not $Files -or @($Files).Count -eq 0) {
         $errors += 'the file list to push is empty (-Files)'
@@ -239,7 +239,7 @@ function Invoke-PublicSafeScan {
         }
     }
 
-    # 2) 词表：显式给出的优先；否则默认词表 + 同目录的本地覆盖文件
+    # 2) Denylist: explicit paths win; otherwise the default denylist plus the local override beside it
     $lists = @()
     if ($DenylistFile -and @($DenylistFile).Count -gt 0) {
         foreach ($dl in @($DenylistFile)) {
@@ -256,11 +256,11 @@ function Invoke-PublicSafeScan {
     $errors += @($imported.Errors)
     $allowedDomains = @($imported.AllowDomains)
     if (@($imported.Rules).Count -eq 0) {
-        # 没有规则的门禁会静默放行，比直接失败更危险
+        # A gate with no rules lets everything through silently, which is more dangerous than failing outright
         $errors += 'the denylist enables no rules; the gate would be a no-op'
     }
 
-    # 3) 逐文件逐行匹配
+    # 3) Match file by file, line by line
     $hits = @()
     $scanned = @()
     $binaryFiles = @()
@@ -276,7 +276,7 @@ function Invoke-PublicSafeScan {
             foreach ($rule in @($imported.Rules)) {
                 $m = $rule.Regex.Match($line)
                 if ($m.Success) {
-                    # 保留域（示例/工具域）不算违规；真实域仍然记命中
+                    # A reserved domain (example / tool domain) is not a violation; a real domain is still reported
                     if (Test-AllowedDomain -Text $m.Value -Domains $allowedDomains) { continue }
                     $hits += [pscustomobject]@{
                         File     = $file
@@ -292,7 +292,7 @@ function Invoke-PublicSafeScan {
         $scanned += $file
     }
 
-    # 4) 退出码：门禁自身出错优先（说明扫描不完整），其次才是内容命中
+    # 4) Exit codes: the gate failing itself comes first (it means the scan was incomplete), content hits come second
     $exitCode = 0
     if (@($errors).Count -gt 0 -or @($missing).Count -gt 0) {
         $exitCode = 2
@@ -319,7 +319,7 @@ if (-not $NoMain) {
     try {
         $result = Invoke-PublicSafeScan -Files $Files -DenylistFile $DenylistFile -RepoRoot $RepoRoot
 
-        # 命中行固定格式，便于人工定位与管道解析
+        # Hit lines use a fixed format, which makes them easy to locate by eye and to parse in a pipeline
         foreach ($hit in @($result.Hits)) {
             Write-Output ("{0}:{1}:{2}" -f $hit.File, $hit.Line, $hit.Match)
             Write-Verbose ("    rule {0} ({1}): {2}" -f $hit.RuleId, $hit.Category, $hit.Reason)

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * drawio-to-flow.js — .drawio → flow.json（回读 + 变更摘要 + 标记手工新增节点）
+ * drawio-to-flow.js — .drawio → flow.json (read-back + change summary + flagging nodes added by hand)
  *
- * 用法：
+ * Usage:
  *   node drawio-to-flow.js <in.drawio> <orig.flow.json> <out.new.json>
  *
- * 输出：
- * - <out.new.json>：回读后的 flow.json（节点/连线来自画布，trigger/variables 沿用原文件）
- * - 控制台：变更摘要（新增/删除/改名/连线/pad_hint 变化 + 需 Agent A 补齐的节点）
+ * Output:
+ * - <out.new.json>: the read-back flow.json (nodes/edges come from the canvas; trigger/variables are inherited
+ *   from the original file)
+ * - console: change summary (added/removed/renamed/edge changes/pad_hint changes + nodes Agent A still has to
+ *   complete)
  */
 
 const fs = require("fs");
@@ -23,7 +25,7 @@ if (!drawioPath || !origPath || !outPath) {
 const orig = JSON.parse(fs.readFileSync(origPath, "utf8"));
 const drawio = fs.readFileSync(drawioPath, "utf8");
 
-// ── 解析 drawio 中的 <object> 元素 ────────────────────────────
+// ── Parse the <object> elements in the drawio ────────────────────
 const objRe = /<object\s+([^>]*?)>/g;
 const objects = [];
 let m;
@@ -57,14 +59,14 @@ function safeJson(s, def) {
   try { return s ? JSON.parse(s) : def; } catch { return def; }
 }
 
-// ── 重建节点 ──────────────────────────────────────────────────
+// ── Rebuild nodes ─────────────────────────────────────────────────
 const nodes = objects.filter((o) => !o.edge);
 const edges = objects.filter((o) => o.edge);
 
 const byId = new Map(nodes.map((n) => [n.id, n]));
 const origById = new Map((orig.nodes || []).map((n) => [n.id, n]));
 
-// 重建 next：每个节点的出边
+// Rebuild next: the outgoing edges of each node
 const outEdges = {};
 for (const e of edges) {
   const from = e.from.replace(/^n/, "");
@@ -86,7 +88,7 @@ const newNodes = nodes.map((n) => {
   };
 });
 
-// ── 变更摘要 ──────────────────────────────────────────────────
+// ── Change summary ────────────────────────────────────────────────
 const origIds = new Set((orig.nodes || []).map((n) => n.id));
 const newIds = new Set(newNodes.map((n) => n.id));
 
@@ -106,8 +108,9 @@ for (const n of newNodes) {
   if (oNext !== nNext) changed.push(`node ${n.id} edges changed: ${oNext} -> ${nNext}`);
 }
 
-// ── 组装新 flow.json ──────────────────────────────────────────
-// edges 显式回写，避免回读后丢失显式控制流（5→38、8→52 这类 next 表达不了的边）
+// ── Assemble the new flow.json ────────────────────────────────────
+// Write edges back explicitly so the read-back does not lose explicit control flow (edges such as 5->38 and 8->52
+// that next cannot express)
 const result = {
   name: orig.name,
   description: orig.description,

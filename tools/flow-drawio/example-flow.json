@@ -1,6 +1,6 @@
 {
   "name": "monthly-reconciliation",
-  "description": "示例对账：从邮箱读取附件，提取金额，跟导出数据核对，差异标红后发邮件给收件人",
+  "description": "Sample reconciliation: read attachments from the mailbox, extract amounts, compare them with the exported data, highlight differences in red, then email the recipient",
   "trigger": {
     "kind": "schedule",
     "task_name": "flow-ir-monthly-reconciliation",
@@ -10,35 +10,35 @@
   },
   "budget": {
     "maxLoop": 1,
-    "note": "示例流程无轮询；仅演示结构"
+    "note": "The sample flow does not poll; it only demonstrates the structure"
   },
   "variables": [
     {
       "name": "ManagerEmail",
       "type": "string",
       "default": "user@example.com",
-      "description": "收件人邮箱",
+      "description": "Recipient mailbox",
       "required": true
     },
     {
       "name": "SenderFilter",
       "type": "string",
       "default": "sender@example.com",
-      "description": "发件人过滤",
+      "description": "Sender filter",
       "required": true
     },
     {
       "name": "Month",
       "type": "string",
       "default": "2026-09",
-      "description": "对账月份",
+      "description": "Reconciliation month",
       "required": true
     },
     {
       "name": "ExcelPath",
       "type": "string",
       "default": "<EXPORT_DIR>\\export.xlsx",
-      "description": "SAP导出Excel路径",
+      "description": "Path of the Excel export from SAP",
       "required": true
     }
   ],
@@ -47,7 +47,7 @@
       "id": "1",
       "type": "mail.launch",
       "pad_hint": "Outlook.Launch",
-      "label": "启动 Outlook",
+      "label": "Launch Outlook",
       "params": {},
       "outputs": [
         "OutlookInstance"
@@ -64,7 +64,7 @@
       "id": "2",
       "type": "mail.search",
       "pad_hint": "Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments",
-      "label": "检索示例报表邮件并保存附件",
+      "label": "Find the sample report email and save its attachments",
       "params": {
         "MarkAsRead": true,
         "MailFolder": "收件箱",
@@ -90,7 +90,7 @@
       "type": "sap.export",
       "pad_hint": "Scripting.RunVBScript.RunVBScript",
       "intent": "sap-export",
-      "label": "运行导出事务脚本",
+      "label": "Run the export transaction script",
       "params": {
         "VBScriptCode": "WScript.Echo \"export done to {{variables.ExcelPath}}\""
       },
@@ -111,7 +111,7 @@
       "id": "4",
       "type": "excel.launch",
       "pad_hint": "Excel.LaunchExcel.LaunchAndOpen",
-      "label": "打开 SAP 导出的 Excel",
+      "label": "Open the SAP export in Excel",
       "params": {
         "Path": "{{variables.ExcelPath}}",
         "Visible": false
@@ -131,7 +131,7 @@
       "id": "5",
       "type": "excel.read",
       "pad_hint": "Excel.ReadFromExcel.ReadAllCells",
-      "label": "读取 Excel 全部数据",
+      "label": "Read all data from the Excel file",
       "params": {
         "FirstLineIsHeader": true
       },
@@ -150,7 +150,7 @@
       "id": "6",
       "type": "branch",
       "pad_hint": "IF",
-      "label": "有差异吗",
+      "label": "Any differences?",
       "params": {
         "Condition": "ExcelData.Count > 0"
       },
@@ -173,7 +173,7 @@
       "id": "7",
       "type": "excel.color",
       "pad_hint": "Excel.SetColor.SetColorRangePredefined",
-      "label": "差异行标红",
+      "label": "Highlight differing rows in red",
       "params": {
         "StartRow": 2,
         "EndRow": "ExcelData.Count + 1",
@@ -195,7 +195,7 @@
       "id": "8",
       "type": "excel.close",
       "pad_hint": "Excel.CloseExcel.CloseAndSave",
-      "label": "保存并关闭 Excel",
+      "label": "Save and close Excel",
       "params": {},
       "outputs": [],
       "next": [
@@ -210,7 +210,7 @@
       "id": "9",
       "type": "mail.send",
       "pad_hint": "Outlook.SendEmailThroughOutlook.SendEmail",
-      "label": "发对账结果邮件给经理",
+      "label": "Email the reconciliation result to the manager",
       "params": {
         "SendTo": "{{variables.ManagerEmail}}",
         "Subject": "{{variables.Month}} 对账结果",

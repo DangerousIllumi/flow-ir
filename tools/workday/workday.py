@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""workday.py — 工作日历工具（通用件，不含任何业务核对规则）
+"""workday.py — working-calendar tool (generic; contains no business checking rules)
 
-读一份「日期 / 是否工作日」两列的 xlsx 日历，回答两个问题：
-  1. 今天是不是工作日（日历不可用时按周一至周五兜底）
-  2. 上一个工作日是哪天
+Reads an xlsx calendar with two columns, date / is-workday, and answers two questions:
+  1. is today a workday (falling back to Monday-Friday when the calendar is unavailable)
+  2. which day was the previous workday
 
-中国节假日与调休都体现在日历的这一列：节假日标「否」，调休上班的周末标「是」。
+Chinese holidays and make-up workdays both show up in that calendar column: a holiday reads "no", a weekend worked as a make-up day reads "yes".
 
-CLI（与调度脚本的约定一致）：
+CLI (matching the convention used by the scheduling scripts):
   python workday.py --is-workday   --calendar cal.xlsx
       -> CALENDAR_OK=1/0 + WORKDAY=1/0
   python workday.py --prev-workday --calendar cal.xlsx
-      -> PREV_WORKDAY=YYYY-MM-DD（读不到日历时按周一至周五倒推）
+      -> PREV_WORKDAY=YYYY-MM-DD (counts back over Monday-Friday when the calendar is unreadable)
   python workday.py --is-last-workday --calendar cal.xlsx
-      -> LAST_WORKDAY=1/0（今天是否本月最后一个工作日）
+      -> LAST_WORKDAY=1/0 (whether today is the last workday of this month)
 """
 import argparse
 import os
@@ -22,9 +22,9 @@ from datetime import date, datetime, timedelta
 
 from openpyxl import load_workbook
 
-# Excel 读取层是通用件，实现在仓库 tools/xlsx/xlsx_io.py：
-# 表头定位、日期转换等口径全仓库共用一份，避免各写一份后漂移。
-# 源码树里位于 tools/workday/，部署后可能与 xlsx_io.py 同目录或放在上一级。
+# The Excel access layer is a generic piece implemented in the repository at tools/xlsx/xlsx_io.py:
+# header lookup, date conversion and the like live in exactly one place, so separate copies cannot drift apart.
+# In the source tree it sits under tools/workday/, but once deployed it may be beside xlsx_io.py or one level up.
 _here = os.path.dirname(os.path.abspath(__file__))
 for _cand in (os.path.join(_here, "..", "xlsx"), _here):
     if os.path.isfile(os.path.join(_cand, "xlsx_io.py")):
@@ -32,12 +32,12 @@ for _cand in (os.path.join(_here, "..", "xlsx"), _here):
         break
 from xlsx_io import norm, to_date, find_col  # noqa: E402
 
-# 日历里代表「上班」的写法，大小写不敏感
+# Spellings that mean "working day" in the calendar, matched case-insensitively
 TRUE_FLAGS = ("Y", "YES", "TRUE", "1", "是", "工作日")
 
 
 def _sheet_priority(name):
-    """页签选择优先级：中文「工作日」优先，英文 workday / working day 作为别名"""
+    """Sheet selection priority: a Chinese workday sheet wins, English workday / working day are aliases"""
     if "工作日" in name:
         return 2
     low = name.lower()
@@ -47,21 +47,21 @@ def _sheet_priority(name):
 
 
 def load_calendar(cal_path):
-    """读取日历，返回 (工作日集合, 最小日期, 最大日期)
+    """Read the calendar and return (set of workdays, earliest date, latest date)
 
-    最小/最大日期按「所有能解析出日期的行」统计，不是只统计工作日：
-    这样日历哪天开始、哪天结束一目了然，用来判断日历是否已过期。
-    日历不可用或表头识别失败时返回 (None, None, None)。
+    The earliest/latest dates are computed over every row with a parsable date, not over the workdays only:
+    that makes the calendar's coverage visible at a glance, which is how a stale calendar is detected.
+    Returns (None, None, None) when the calendar is unusable or the header cannot be recognised.
     """
     if not cal_path or not os.path.isfile(cal_path):
         return (None, None, None)
     wb = load_workbook(cal_path, data_only=True)
     try:
-        # 优先选名字里含「工作日」的表，其次英文 workday / working day，都没有则用第一个表
+        # Prefer a sheet whose name mentions workdays, then English workday / working day, otherwise the first sheet
         ws = wb[max(wb.sheetnames, key=_sheet_priority)]
         c_date = c_wd = None
         hdr = 0
-        # 在前 10 行内找表头行（同时含「日期」和「是否工作日」）
+        # Look for the header row (holding both "date" and "is workday") within the first 10 rows
         for r in range(1, min(ws.max_row, 10) + 1):
             vals = [ws.cell(row=r, column=c).value for c in range(1, min(ws.max_column, 10) + 1)]
             d = find_col(vals, ["日期"], prefix="日期")
@@ -90,15 +90,15 @@ def load_calendar(cal_path):
 
 
 def load_workdays(cal_path):
-    """只取工作日集合（保留旧签名，供既有调用方使用）"""
+    """Return the workday set only (the old signature, kept for existing callers)"""
     return load_calendar(cal_path)[0]
 
 
 def calendar_state(cal_path, today):
-    """返回日历状态：{days, min, max, stale}；日历不可用时返回 None
+    """Return the calendar state: {days, min, max, stale}; None when the calendar is unusable
 
-    stale 表示今天落在日历覆盖范围之外：此时不能把「表里没有今天」解释成休息，
-    否则日历过期会让定时任务静默跳过。
+    stale means today falls outside the calendar's coverage: "today is not in the table" must not be
+    read as a day off, because an expired calendar would then make scheduled jobs skip silently.
     """
     days, dmin, dmax = load_calendar(cal_path)
     if days is None:
@@ -109,7 +109,7 @@ def calendar_state(cal_path, today):
 
 
 def load_prev_workday(cal_path, today):
-    """从工作日历读出「上一个工作日」（严格早于 today 的最近一个工作日）"""
+    """Read the previous workday from the calendar (the latest workday strictly before today)"""
     days = load_workdays(cal_path)
     if not days:
         return None
@@ -118,9 +118,9 @@ def load_prev_workday(cal_path, today):
 
 
 def is_workday_detail(cal_path, today):
-    """返回 (是否工作日, 日历可用, 日历过期, 最小日期, 最大日期)
+    """Return (is workday, calendar available, calendar stale, earliest date, latest date)
 
-    日历过期时 WORKDAY 必须为 1（不能表达成「今天休息」），由调用方硬失败。
+    When the calendar is stale, WORKDAY must be 1 (it can never be expressed as "today is a day off"); the caller fails hard instead.
     """
     state = calendar_state(cal_path, today)
     if state is None:
@@ -131,13 +131,13 @@ def is_workday_detail(cal_path, today):
 
 
 def is_workday(cal_path, today):
-    """判断 today 是否工作日，返回 (是否工作日, 日历是否可用)"""
+    """Decide whether today is a workday; returns (is workday, calendar available)"""
     detail = is_workday_detail(cal_path, today)
     return (detail[0], detail[1])
 
 
 def prev_workday_by_weekday(today):
-    """日历不可用时的兜底：按周一至周五倒推上一个工作日（不识别法定节假日）"""
+    """Fallback when the calendar is unavailable: step back over Monday-Friday (public holidays are not recognised)"""
     d = today - timedelta(days=1)
     while d.weekday() >= 5:
         d -= timedelta(days=1)
@@ -145,10 +145,10 @@ def prev_workday_by_weekday(today):
 
 
 def is_last_workday(cal_path, today):
-    """判断 today 是否当前月份的最后一个工作日
+    """Decide whether today is the last workday of its month
 
-    日历可用时：今天本身必须是工作日，且本月没有更晚的工作日。
-    日历不可用时按周一到周五兜底：今天是工作日，且本月剩余日期里没有工作日。
+    With a usable calendar: today must itself be a workday, and no later workday may exist in the month.
+    Without a calendar, fall back to Monday-Friday: today is a weekday and no weekday remains this month.
     """
     days = load_workdays(cal_path)
     if days is None:

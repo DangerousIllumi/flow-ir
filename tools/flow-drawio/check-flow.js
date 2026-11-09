@@ -1,24 +1,25 @@
 #!/usr/bin/env node
 /**
- * check-flow.js — 校验 flow.json 的显式 edges 与旧结构（next/branch/loop/switch）是否一致
+ * check-flow.js — check that the explicit edges in flow.json agree with the legacy shape (next/branch/loop/switch)
  *
- * 背景：flow-to-robin 仍依赖 next/branch 表达 IF/LOOP 的嵌套，画图依赖 edges。
- * 两边各写一份必然漂移，因此生成 PAD 代码前先跑本校验：
- *   - 旧结构能推导出的边，必须在 edges 里存在（缺一条就报错）
- *   - edges 允许包含旧结构表达不了的补充边（如 break、IF 之后的续接）
- *   - edges 不允许悬空或同一 from->to 重复
+ * Background: flow-to-robin still relies on next/branch to express IF/LOOP nesting, while the diagram relies on
+ * edges. Keeping two hand-written versions of the same structure always drifts, so run this check before
+ * generating PAD code:
+ *   - every edge derivable from the legacy shape must be present in edges (one missing edge is an error)
+ *   - edges may carry supplementary edges the legacy shape cannot express (break, the continuation after an IF)
+ *   - edges must not dangle, and the same from->to pair must not appear twice
  *
- * 用法：node check-flow.js <flow.json>
- * 退出码：0 一致 / 1 不一致
+ * Usage: node check-flow.js <flow.json>
+ * Exit code: 0 consistent / 1 inconsistent
  */
 
 const fs = require("fs");
 
-// 按旧结构推导边（与 flow-to-drawio-bfs.js / flow-to-robin.js 的口径一致）
+// Derive edges from the legacy shape (same conventions as flow-to-drawio-bfs.js / flow-to-robin.js)
 function deriveEdges(flow) {
   const edges = [];
   for (const node of flow.nodes || []) {
-    // IF 的 next 表示分支结束后的汇合点，旧规则不画
+    // For IF, next is the join point after the branch ends; the legacy rule does not draw it
     if (node.pad_hint !== "IF") {
       for (const to of node.next || []) {
         edges.push({ from: node.id, to, label: node.pad_hint === "LOOP" ? "end loop" : "" });
@@ -31,7 +32,7 @@ function deriveEdges(flow) {
       const f = (node.branch.falseBody && node.branch.falseBody[0]) || node.branch.false;
       if (f) edges.push({ from: node.id, to: f, label: "no" });
     }
-    // guard：body = 守卫成立时执行（正常路径），elseBody = 被跳过时的替代分支
+    // guard: body runs when the guard holds (the normal path), elseBody is the fallback branch taken when skipped
     if (node.pad_hint === "GUARD") {
       const t = (node.body || [])[0];
       const f = (node.elseBody || [])[0];
@@ -62,9 +63,9 @@ function checkFlowConsistency(flow) {
   const derivedKeys = new Set(derived.map(key));
   const explicitKeys = new Set(explicit.map(key));
 
-  // 旧结构有、edges 没有 → 漂移（必须补）
+  // Present in the legacy shape but missing from edges -> drift (must be added)
   const missing = derived.filter((e) => !explicitKeys.has(key(e)));
-  // edges 有、旧结构推导不出 → 允许的补充边（break / IF 续接等）
+  // Present in edges but not derivable from the legacy shape -> allowed supplementary edge (break / IF continuation, etc.)
   const extra = explicit.filter((e) => !derivedKeys.has(key(e)));
   const dangling = explicit.filter((e) => !ids.has(e.from) || !ids.has(e.to));
 
@@ -112,7 +113,7 @@ if (require.main === module) {
     process.exit(1);
   }
   const flow = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
-  // 旧流程没有显式 edges：只提示跳过，不阻断（兼容尚未迁移的 flow.json）
+  // Legacy flows have no explicit edges: report the skip and do not block (keeps un-migrated flow.json working)
   if (!Array.isArray(flow.edges) || flow.edges.length === 0) {
     console.log(`[flow-check] ${file}: no explicit edges; skipped`);
     process.exit(0);
