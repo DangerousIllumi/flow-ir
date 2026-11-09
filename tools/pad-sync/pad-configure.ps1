@@ -1,34 +1,34 @@
-﻿# pad-configure.ps1 — 部署向导：前置探查 → 逐项填写 config → schema 校验 → 写盘
+﻿# pad-configure.ps1 — deployment wizard: preflight probes -> fill in each config item -> schema validation -> write to disk
 #
-# 用法：
-#   # 只体检，不生成配置（全部 OK 退出 0，有缺失退出 1）
+# Usage:
+#   # Health check only, no config generated (all OK exits 0, anything missing exits 1)
 #   .\pad-configure.ps1 -ProbeOnly
 #
-#   # 交互式向导（缺前置项会先中止，并给出修复建议）
+#   # Interactive wizard (aborts first when a prerequisite is missing, with a suggested fix)
 #   .\pad-configure.ps1
 #
-#   # 无人值守：用答案文件生成配置（CI/批量部署）
+#   # Unattended: generate the config from an answers file (CI/batch deployment)
 #   .\pad-configure.ps1 -AnswersFile .\answers.json -SkipProbe -Force
 #
-# 退出码：0 成功 / 1 前置缺失 / 2 schema 校验失败 / 3 用户取消
+# Exit codes: 0 success / 1 missing prerequisite / 2 schema validation failed / 3 user cancelled
 #
-# -NoMain 仅给测试用：dot-source 后只拿函数，不执行向导主流程。
+# -NoMain is for tests only: dot-sourcing yields the functions without running the wizard main flow.
 
 [CmdletBinding()]
 param(
-    # 为空时按「config 里的 PAD_ROOT → 项目内 pad 目录 → C:\PAD」顺序自动解析
+    # When empty, resolved in this order: PAD_ROOT from the config -> the project's pad directory -> C:\PAD
     [string]$PadRoot,
     [string]$PythonExe,
     [string]$ConfigPath,
     [string]$SchemaFile,
-    # 工作流需求声明（决定探查哪些项）；不传时按配置名派生 business\flows\<stem>.requirements.json
+    # Workflow requirements declaration (decides which items are probed); when omitted, derived from the config name as business\flows\<stem>.requirements.json
     [string]$RequirementsFile,
-    # 非交互答案文件（JSON，键名与 config 相同）；给了就不再逐项提问
+    # Non-interactive answers file (JSON with the same keys as the config); when given, nothing is asked one by one
     [string]$AnswersFile,
     [switch]$ProbeOnly,
-    # 跳过前置探查（离线生成配置时用）
+    # Skip the preflight probes (used when generating a config offline)
     [switch]$SkipProbe,
-    # config 已存在时直接覆盖
+    # Overwrite an existing config directly
     [switch]$Force,
     [switch]$NoMain
 )
@@ -37,10 +37,10 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
 
-# 参数推导只在跑主流程时执行：Pester dot-source（-NoMain）只取函数，不做任何落盘判定
+# Parameter derivation happens only when the main flow runs: Pester dot-sourcing (-NoMain) only takes the functions and makes no write decisions
 if (-not $NoMain) {
     if (-not $ConfigPath) {
-        # 不再默认到某个具体业务流程：只认「有同名 schema」的配置，必须唯一匹配
+        # No longer default to a particular business flow: only configs with a same-named schema count, and the match must be unique
         $cfgCands = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'business\config') -Filter '*.json' -File -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.Name -notmatch '\.(schema|example)\.json$' -and
@@ -58,10 +58,10 @@ if (-not $NoMain) {
     }
     $stem = [IO.Path]::GetFileNameWithoutExtension([IO.Path]::GetFileNameWithoutExtension($ConfigPath))
     if (-not $SchemaFile) {
-        # 与 pad-deploy 一致的派生规则：同目录下 <stem>.schema.json
+        # Same derivation rule as pad-deploy: <stem>.schema.json in the same directory
         $SchemaFile = Join-Path ([IO.Path]::GetDirectoryName($ConfigPath)) ($stem + '.schema.json')
     }
-    # 示例配置按配置名派生（<stem>.example.json），不再写死某个业务流程的文件名
+    # Example config derived from the config name (<stem>.example.json); no business flow's file name is hardcoded any more
     $ExamplePath = Join-Path ([IO.Path]::GetDirectoryName($ConfigPath)) `
         ($stem + '.example.json')
 }
@@ -79,7 +79,7 @@ function Write-ProbeTable($checks) {
     Write-Host ''
 }
 
-# 以 example 为默认值，叠加探查到的实际路径与用户答案（答案优先级最高）
+# Start from the example defaults, then overlay the probed real paths and the user answers (answers win)
 function New-ConfiguredConfig {
     param(
         [Parameter(Mandatory = $true)]$Defaults,
@@ -108,14 +108,14 @@ function Save-ConfigFile {
     [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
 }
 
-# 复用 pad-deploy 的 schema 校验（避免两套规则不一致）
+# Reuse pad-deploy's schema validation so there are not two diverging rule sets
 function Invoke-ConfigValidation {
     param(
         [Parameter(Mandatory = $true)][string]$ConfigFile,
         [Parameter(Mandatory = $true)][string]$SchemaFile
     )
     $deploy = Join-Path $here 'pad-deploy.ps1'
-    # FlowName 在 pad-deploy 里是必填参数；校验模式不碰流程，传占位值即可
+    # FlowName is mandatory in pad-deploy; validate-only mode never touches a flow, so a placeholder value will do
     & $deploy -ValidateOnly -FlowName 'PAD_SYNC_TEST' -ConfigFile $ConfigFile -SchemaFile $SchemaFile | Out-Host
     return $LASTEXITCODE
 }
@@ -127,7 +127,7 @@ function Invoke-ConfigureMain {
         [switch]$ProbeOnly, [switch]$SkipProbe, [switch]$Force
     )
 
-    # PAD 根目录不写死 C 盘：优先用已有 config 的值，其次项目内 pad 目录，最后才回退 C:\PAD
+    # The PAD root is not hardcoded to the C drive: prefer the existing config value, then the project's pad directory, and only then fall back to C:\PAD
     if (-not $PadRoot) {
         if (Test-Path $ConfigPath) {
             $existing = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -152,7 +152,7 @@ function Invoke-ConfigureMain {
         Write-Host '[configure] preflight probes skipped (-SkipProbe); generating the config directly'
     } else {
         if (-not $RequirementsFile) {
-            # 需求声明按配置名派生（business\flows\<stem>.requirements.json），不再写死某个业务流程
+            # The requirements declaration is derived from the config name (business\flows\<stem>.requirements.json); no business flow is hardcoded any more
             $RequirementsFile = Join-Path $repoRoot ("business\flows\{0}.requirements.json" -f $stem)
         }
         if (-not (Test-Path $RequirementsFile)) { throw "requirements declaration not found: $RequirementsFile" }
@@ -180,7 +180,7 @@ function Invoke-ConfigureMain {
         $obj = [IO.File]::ReadAllText($AnswersFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $obj.PSObject.Properties | ForEach-Object { $answers[$_.Name] = $_.Value }
     } elseif (-not $ProbeOnly) {
-        # 交互模式：逐项给出默认值，回车即采用默认
+        # Interactive mode: show a default for each item; pressing Enter accepts it
         Write-Host '[configure] INTERACTIVE_CONFIRM confirm each setting (press Enter to accept the value in brackets)'
         foreach ($p in $defaults.PSObject.Properties) {
             $def = [string]$p.Value

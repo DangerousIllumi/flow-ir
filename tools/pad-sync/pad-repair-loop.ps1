@@ -1,12 +1,13 @@
-﻿# pad-repair-loop.ps1 — 自动分析-修复闭环
+﻿# pad-repair-loop.ps1 — automatic analyse-and-repair loop
 #
-# 作用：把 .robin 注入测试流程 → 自动运行 → 收集失败动作 → 输出修复建议 → 等待 agent 修改 → 再注入
+# What it does: inject the .robin into the test flow → run it automatically → collect the failing actions →
+# print repair guidance → wait for the agent to edit → inject again
 #
-# 安全边界（硬约束）：
-#   1) 默认只能操作 PAD_SYNC_TEST 测试流程（-AllowProd 开关只用于紧急绕过）
-#   2) 只能读写 %TEMP%\pad-repair-*.robin 临时文件和 %RESULT_DIR%\*.txt 日志
-#   3) 最多重试 -MaxRound 次（默认 3）
-#   4) 任何外部修复产出的 .robin 仍需通过基本静态自检
+# Safety boundaries (hard constraints):
+#   1) By default only the PAD_SYNC_TEST test flow may be touched (-AllowProd exists purely as an emergency override)
+#   2) May only read and write the %TEMP%\pad-repair-*.robin temporary files and the %RESULT_DIR%\*.txt logs
+#   3) Retries at most -MaxRound times (default 3)
+#   4) Any .robin produced by an external repair must still pass the basic static self-check
 
 [CmdletBinding()]
 param(
@@ -16,13 +17,13 @@ param(
     [int]$RunTimeoutSec = 120,
     [string]$ResultDir,
     [switch]$AllowProd,
-    # 测试阶段直接点设计器“运行”，不发布到云端
+    # During testing, click the designer's Run button directly instead of publishing to the cloud
     [switch]$LocalRun,
-    # 只跑一轮：落盘修复上下文后立即退出，等 agent 改完再手动跑下一轮
+    # Single round: write the repair context to disk and exit immediately; run the next round manually after the agent edits
     [switch]$SingleRound,
-    # 可插拔执行器：失败后自动调用它修 .robin，修完直接进下一轮
+    # Pluggable executor: call it automatically after a failure to repair the .robin, then go straight to the next round
     [string]$Executor,
-    # 执行器最长运行秒数
+    # Maximum seconds the executor may run
     [int]$ExecutorTimeoutSec = 600
 )
 $ErrorActionPreference = 'Stop'
@@ -30,7 +31,7 @@ $ErrorActionPreference = 'Stop'
 if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
     Write-Error 'safety fuse: only the PAD_SYNC_TEST flow may be touched by default. Add -AllowProd explicitly to operate on a production flow.'
 }
-# V 模型红线：生产流程只允许观察或人工修复，不允许自动改代码
+# V-model red line: production flows may only be observed or repaired manually; automatic code edits are forbidden
 if ($FlowName -ne 'PAD_SYNC_TEST' -and $Executor) {
     throw 'automatic repair is forbidden for production flows: use -SingleRound to observe, or edit the .robin manually'
 }
@@ -38,9 +39,9 @@ if (-not (Test-Path $SourceRobin)) { Write-Error ".robin not found: $SourceRobin
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $padSync = Join-Path $here 'pad-sync.ps1'
-# 日志与 VBS 源码的编码探测统一走 TextEncoding 模块
+# Log and VBS source encoding detection both go through the TextEncoding module
 Import-Module (Join-Path $here 'TextEncoding.psm1') -Force
-# 子进程末行 RESULT 的解析统一由 PadTelemetry 提供，本脚本不再自带正则
+# Parsing the child process's final RESULT line is provided by PadTelemetry; this script carries no regex of its own
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
 if (-not (Test-Path $padSync)) { Write-Error "pad-sync.ps1 not found: $padSync" }
 
@@ -58,7 +59,7 @@ function Log([string]$m) {
     Write-Host "[repair-loop] $m"
 }
 
-# 静态自检：非空、行数>=2
+# Static self-check: non-empty and at least 2 lines
 function Test-RobinSyntax([string]$path) {
     $text = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
     if (-not $text.Trim()) { return $false, '.robin is empty' }
@@ -68,23 +69,23 @@ function Test-RobinSyntax([string]$path) {
     return $true, $null
 }
 
-# 按 BOM 自动识别编码读取日志（VBS 的 OpenTextFile 第 3 参数为 True 时写 UTF-16LE，PS 写的多为 UTF-8/GBK）
+# Read a log with the encoding detected from the BOM (VBS OpenTextFile with the 3rd argument True writes UTF-16LE, PowerShell usually writes UTF-8/GBK)
 function Read-LogAuto([string]$path, [int]$maxChars = 4000) {
-    # 编码探测与解码统一交给 TextEncoding 模块（UTF-16LE / UTF-8-BOM / ANSI 三例有 Pester 覆盖）
+    # Encoding detection and decoding are delegated to the TextEncoding module (Pester covers the UTF-16LE / UTF-8-BOM / ANSI cases)
     $text = (Read-TextFileAuto $path).text
-    # 日志可能很大，只保留尾部（报错信息通常在最后）
+    # The log may be large, keep only the tail (error messages are usually at the end)
     if ($text.Length -gt $maxChars) { $text = '...(truncated)...' + $text.Substring($text.Length - $maxChars) }
     return $text
 }
 
-# 从 VBS 源码提取日志约定，而不是靠"脚本名_result.txt"猜：
-#   1) 找 Const RESULT_DIR = "..." 得到日志目录
-#   2) 找源码里所有写死的 .txt/.log 文件名（过账脚本 → posting_result.txt；导出脚本 → saveas_result.txt/saveas_stop.txt/export_excel.log）
-#   3) 只保留磁盘上真实存在的，优先名字含 result 的，其次按修改时间最新
+# Read the logging convention from the VBS source instead of guessing "scriptname_result.txt":
+#   1) Find Const RESULT_DIR = "..." to get the log directory
+#   2) Find every hard-coded .txt/.log file name in the source (posting script → posting_result.txt; export script → saveas_result.txt/saveas_stop.txt/export_excel.log)
+#   3) Keep only the ones that really exist on disk, preferring names containing result, then the newest modification time
 function Get-VbsLogFile([string]$vbsPath) {
     $src = (Read-TextFileAuto $vbsPath).text
 
-    # 候选目录：RESULT_DIR 常量 + 源码里的完整路径字面量 + 脚本自身目录
+    # Candidate directories: the RESULT_DIR constant + full-path literals in the source + the script's own directory
     $dirs = @()
     if ($src -match 'Const\s+RESULT_DIR\s*=\s*"([^"\r\n]+)"') { $dirs += $Matches[1] }
     foreach ($m in [regex]::Matches($src, '"([A-Za-z]:\\[^"\r\n]+\\[^"\\]+)"')) {
@@ -94,7 +95,7 @@ function Get-VbsLogFile([string]$vbsPath) {
     $dirs += (Split-Path $vbsPath -Parent)
     $dirs = @($dirs | Where-Object { $_ } | Select-Object -Unique)
 
-    # 源码里出现的日志文件名（可能带反斜杠前缀或完整路径，如 "\posting_result.txt"、"%RESULT_DIR%\saveas_result.txt"）
+    # Log file names appearing in the source (they may carry a backslash prefix or a full path, e.g. "\posting_result.txt", "%RESULT_DIR%\saveas_result.txt")
     $names = @([regex]::Matches($src, '"([^"\r\n]*?([A-Za-z0-9_\-\.]+\.(?:txt|log)))"') | ForEach-Object {
         [pscustomobject]@{ Full = $_.Groups[1].Value; Name = $_.Groups[2].Value }
     })
@@ -103,7 +104,7 @@ function Get-VbsLogFile([string]$vbsPath) {
     $files = @()
     foreach ($n in $names) {
         if ($n.Full -match '^[A-Za-z]:\\') {
-            # 源码里写的是完整路径，直接校验
+            # The source spells out a full path; validate it directly
             if (Test-Path $n.Full) { $files += (Get-Item $n.Full) }
             continue
         }
@@ -114,15 +115,15 @@ function Get-VbsLogFile([string]$vbsPath) {
     }
     if (-not $files) { return $null }
 
-    # 排序：result 类优先，其次修改时间最新
+    # Sort: result-like names first, then the newest modification time
     return ($files | Sort-Object @{ Expression = { if ($_.Name -match 'result') { 0 } else { 1 } } },
         @{ Expression = { $_.LastWriteTime }; Descending = $true })[0]
 }
 
-# RunDOSCommand 失败时的日志 hook：从命令行解析 VBS/Python 脚本路径，读取外部日志
-# 项目脚本约定（agent 生成脚本时必须遵循）：
-#   VBS    → 退出码非 0；日志文件由 VBS 源码内写死的 .txt/.log 文件名决定（hook 从源码提取）
-#   Python → 退出码非 0；stdout 末尾 RECONCILE_RESULT=ERROR
+# Log hook for a failed RunDOSCommand: parse the VBS/Python script path from the command line and read the external log
+# Project script convention (agent-generated scripts must follow it):
+#   VBS    → non-zero exit code; the log file is decided by the hard-coded .txt/.log name in the VBS source (the hook extracts it)
+#   Python → non-zero exit code; RECONCILE_RESULT=ERROR at the end of stdout
 function Get-RunDosExtraLog($failedAction) {
     $extra = [ordered]@{ scriptPath = $null; vbsLogPath = $null; vbsLog = $null; pythonStdout = $null; hookNote = $null }
     $actionName = $failedAction.action
@@ -132,7 +133,7 @@ function Get-RunDosExtraLog($failedAction) {
     }
     $cmdLine = $failedAction.inputs.DOSCommandOrApplication
     if (-not $cmdLine) { $extra.hookNote = 'inputs has no DOSCommandOrApplication'; return $extra }
-    # 正则提取脚本路径：优先 .vbs 后 .py，单引号包裹模式避免双引号转义
+    # Extract the script path with regexes: .vbs first, then .py; single-quoted patterns avoid double-quote escaping
     $scriptPath = $null
     if ($cmdLine -match '"([^"]+\.vbs)"') { $scriptPath = $Matches[1] }
     elseif ($cmdLine -match 'cscript[^"]*"([^"]+\.vbs)"') { $scriptPath = $Matches[1] }
@@ -141,7 +142,7 @@ function Get-RunDosExtraLog($failedAction) {
     $extra.scriptPath = $scriptPath
     if (-not $scriptPath) { $extra.hookNote = 'cannot resolve the script path'; return $extra }
     if ($scriptPath -match '\.vbs$') {
-        # 不再猜"脚本名_result.txt"，改为从 VBS 源码提取真实日志文件名与目录
+        # No longer guess "scriptname_result.txt"; extract the real log file name and directory from the VBS source
         $logFile = Get-VbsLogFile $scriptPath
         if ($logFile) {
             $extra.vbsLogPath = $logFile.FullName
@@ -180,8 +181,8 @@ try {
         if (-not $ok) { throw "round ${round}: .robin static self-check failed: $msg" }
         $res = Invoke-RunCycle $currentRobin $round
         if (-not $res) { throw "round ${round}: pad-sync returned no valid result" }
-        # 设计器本地运行返回的是动作级异常数组 failedActions（没有单数 failedAction），
-        # 取第一个异常并补上 hook 需要的 systemActionName 字段
+        # A designer-local run returns the action-level exception array failedActions (no singular failedAction);
+        # take the first exception and add the systemActionName field the hook needs
         $fa = $res.failedAction
         if (-not $fa -and $res.failedActions -and @($res.failedActions).Count -gt 0) {
             $fa = @($res.failedActions)[0]
@@ -222,7 +223,7 @@ try {
         } | ConvertTo-Json -Depth 10 | Out-File $ctxPath -Encoding UTF8
         Log "repair context written: $ctxPath"
         Log "repair guidance: read $ctxPath -> edit current.robin -> write to $nextPath"
-        # 可插拔执行器：把上下文交给外部程序，修完的 .robin 直接进下一轮
+        # Pluggable executor: hand the context to an external program; the repaired .robin goes straight into the next round
         if ($Executor) {
             if (-not (Test-Path $Executor)) { throw "executor not found: $Executor" }
             Log "calling executor: $Executor"

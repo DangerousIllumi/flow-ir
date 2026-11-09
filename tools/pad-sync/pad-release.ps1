@@ -1,86 +1,87 @@
-﻿# pad-release.ps1 — release 流水线：测试摘要 → 用户确认 → 发布 → URL 触发 → 云端历史校验 → manifest
+﻿# pad-release.ps1 — release pipeline: test summary -> user confirmation -> publish -> URL trigger -> cloud history verification -> manifest
 #
-# 阶段：
-#   1. 测试摘要：pytest（tests\）+ Pester（tests\*.Tests.ps1），任一失败即中止
-#   2. 校验 + 变量替换：复用 pad-deploy -DryRun，产物为 .deployed.robin
-#   3. 发布前快照：从本地运行历史（Console\Scripts）取流程 GUID 与当前云端版本
-#   4. 用户确认弹窗（一次，含测试摘要与副作用说明）
-#   5. 正式发布：复用 pad-deploy -SkipConfirm（注入 → 发布 → URL 触发 → 收集运行结果）
-#   6. 发布后校验：
-#      a) Workspace 里的已发布 script.robin 与 .deployed.robin 规范化哈希一致（验收点）
-#      b) 新运行的 RunDefinition.json：startTime 在本次发布之后、状态 Succeeded、记录 flowVersion
-#   7. 通过 PublishHistory.psm1 向 business\manifest.jsonl 追加一行（type=release），
-#      供 pad-rollback.ps1 回滚与发布清单（PublishHistory.psm1）查询使用
+# Stages:
+#   1. Test summary: pytest (tests\) + Pester (tests\*.Tests.ps1); any failure aborts the release
+#   2. Validation + variable substitution: reuse pad-deploy -DryRun; the artefact is .deployed.robin
+#   3. Pre-release snapshot: take the flow GUID and the current cloud version from the local run history (Console\Scripts)
+#   4. User confirmation dialog (once, showing the test summary and the side effects)
+#   5. Real release: reuse pad-deploy -SkipConfirm (inject -> publish -> URL trigger -> collect the run result)
+#   6. Post-release verification:
+#      a) The published script.robin in Workspace and .deployed.robin have the same normalised hash (the acceptance point)
+#      b) The new run's RunDefinition.json: startTime after this release, status Succeeded, flowVersion recorded
+#   7. Append one line to business\manifest.jsonl through PublishHistory.psm1 (type=release),
+#      used by pad-rollback.ps1 for rollback and by the release inventory (PublishHistory.psm1)
 #
-# 输出：最后一行 PAD_RELEASE_RESULT=<JSON>；退出码 0 成功 / 1 失败
-# -AcceptanceFile：发布触发的运行结束后按判据检查产物；不传时自动找 business\flows\<flow>.acceptance.json
-# -DryRun：只跑阶段 1~3（测试 + 校验 + 替换 + 快照），不确认、不发布、不写 manifest
-# -NoMain：仅供 Pester dot-source 加载函数，不执行主流程
-# 注意：FlowName 不设为 Mandatory，否则 Pester dot-source 时会弹参数提示
+# Output: the last line is PAD_RELEASE_RESULT=<JSON>; exit code 0 success / 1 failure
+# -AcceptanceFile: after the run triggered by the release ends, check the artefacts against the criteria; when omitted it
+#   looks for business\flows\<flow>.acceptance.json automatically
+# -DryRun: run stages 1-3 only (tests + validation + substitution + snapshot); no confirmation, no release, no manifest
+# -NoMain: only for Pester dot-sourcing to load the functions; the main flow is not executed
+# Note: FlowName is not Mandatory, otherwise Pester dot-sourcing would prompt for parameters
 
 [CmdletBinding()]
 param(
-    # 不传时按 -FlowName 派生为 business\flows\<FlowName>.robin / business\config\<FlowName>.json，派生不到即报错
+    # When omitted, derived from -FlowName as business\flows\<FlowName>.robin / business\config\<FlowName>.json; a failed derivation is an error
     [string]$SourceRobin,
     [string]$ConfigFile,
     [string]$FlowName,
     [string]$SchemaFile,
-    # 运行后验收判据；不传时自动找同名的 <flow>.acceptance.json
+    # Post-run acceptance criteria; when omitted, the same-named <flow>.acceptance.json is looked up automatically
     [string]$AcceptanceFile,
     [string]$PythonExe = 'C:\Program Files\Python313\python.exe',
-    # 生产流最坏要轮询 60 分钟 + 处理余量，默认 4200 秒；快速验证可显式传更小值
+    # A production flow may poll for up to 60 minutes plus processing headroom; the default is 4200 seconds; pass a smaller value explicitly for a quick verification
     [int]$RunTimeoutSec = 4200,
     [switch]$SkipTests,
     [switch]$DryRun,
-    # 只发布不运行：发布后只校验哈希，不做运行状态/验收
+    # Publish without running: after publishing only the hash is verified, with no run status or acceptance check
     [switch]$PublishOnly,
     [switch]$AllowProd,
     [switch]$NoMain
 )
 $ErrorActionPreference = "Stop"
 
-# $PSScriptRoot = tools\pad-sync，退两级到仓库根
-# （从 $MyInvocation.MyCommand.Path 算会带上文件名，退两级只到 tools，少退一级）
+# $PSScriptRoot = tools\pad-sync; two levels up is the repository root
+# (computing from $MyInvocation.MyCommand.Path includes the file name, so two levels up would only reach tools)
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:DeployPath = Join-Path $PSScriptRoot 'pad-deploy.ps1'
 $script:ConfirmPath = Join-Path $PSScriptRoot 'confirm-deploy.ps1'
 
 function Log([string]$m) { Write-Host "[release] $m" }
 
-# ═══ 纯函数（供主流程与 Pester 单测共用） ═══
-# 指纹定位与身份解析唯一实现（pad-fingerprint / pad-admit / pad-rollback 共用）
+# ═══ Pure functions (shared by the main flow and the Pester unit tests) ═══
+# Single implementation of fingerprint location and identity resolution (shared by pad-fingerprint / pad-admit / pad-rollback)
 Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force -Global
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
-# 子进程末行 RESULT 的解析统一由 PadTelemetry 提供
+# Parsing of the child process's last-line RESULT is centralised in PadTelemetry
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force -Global
-# 失败告警：与 pad-schedule / pad-sync / pad-deploy 共用同一份实现（kind 常量集中在模块里）
+# Failure alerts: shares one implementation with pad-schedule / pad-sync / pad-deploy (the kind constants live in the module)
 Import-Module (Join-Path $PSScriptRoot 'PadAlerts.psm1') -Force -Global
-# robin 规范化 / 哈希 / 逐行比对统一放在 RobinText.psm1：
-# 发布后校验（本脚本）与 -VerifyCanvas 画布回读（PadDesigner）必须使用同一套规则
-# 必须用 -Global：阶段 1 的 Invoke-Pester 会在自己的作用域里跑完再销毁，
-# 普通导入的模块函数随后就取不到了（表现为 Get-RobinHash 找不到）。
-# 必须放在 PadFingerprint 之后：PadFingerprint 内部会 Import-Module RobinText -Force，
-# 先导入 RobinText 会被那次嵌套导入从全局作用域里卸载掉，
-# 表现为 dot-source 后 ConvertTo-NormalizedRobin / Get-RobinHash / Compare-RobinText 全部找不到。
+# robin normalisation / hashing / line-by-line comparison all live in RobinText.psm1:
+# post-release verification (this script) and the -VerifyCanvas canvas readback (PadDesigner) must use one rule set
+# -Global is required: Invoke-Pester in stage 1 runs in its own scope, which is torn down afterwards,
+# so functions from a plain import are no longer reachable (Get-RobinHash would not be found).
+# It must come after PadFingerprint: PadFingerprint imports RobinText with -Force internally, and
+# if RobinText were imported first that nested import would unload it from the global scope,
+# leaving ConvertTo-NormalizedRobin / Get-RobinHash / Compare-RobinText all missing after dot-sourcing.
 Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force -Global
 
 
-# 已发布流程的本地定义副本定位与身份解析已迁移到 PadFingerprint.psm1（唯一实现）：
-#   Get-FlowGuidFromLogPath / Find-LatestFlowRun / Find-WorkspaceRobin 均由模块导入，
-#   函数名保持不变，pad-release 只是调用方。
+# Local definition-copy location and identity resolution for a released flow moved into PadFingerprint.psm1 (single implementation):
+#   Get-FlowGuidFromLogPath / Find-LatestFlowRun / Find-WorkspaceRobin all come from the module;
+#   their names are unchanged and pad-release is only a caller.
 
-# manifest 追加与版本快照统一由 PublishHistory.psm1 提供（pad-rollback.ps1 共用）
-# 阶段 1：测试摘要。pytest 解析 passed/failed 计数；Pester 3.4 用 -PassThru 的结果对象计数
+# Manifest appending and version snapshots are provided by PublishHistory.psm1 (shared with pad-rollback.ps1)
+# Stage 1: test summary. pytest counts are parsed from passed/failed; Pester 3.4 is counted from the -PassThru result objects
 function Get-TestSummary([string]$RepoRoot, [string]$PythonExe) {
     $summary = [ordered]@{ pytestPassed = 0; pytestFailed = 0; pesterPassed = 0; pesterFailed = 0 }
     $testsDir = Join-Path $RepoRoot 'tests'
 
     Log "running pytest: $testsDir"
-    # 不能用 Select-Object -First 截断输出（会提前杀死子进程），Out-String 全量收集
+    # Do not truncate the output with Select-Object -First (it kills the child process early); Out-String collects it all
     $out = & $PythonExe -m pytest $testsDir -q 2>&1 | Out-String
     $m = [regex]::Match($out, '(\d+) passed'); if ($m.Success) { $summary.pytestPassed = [int]$m.Groups[1].Value }
     $m = [regex]::Match($out, '(\d+) failed'); if ($m.Success) { $summary.pytestFailed = [int]$m.Groups[1].Value }
-    if ($LASTEXITCODE -ne 0 -and $summary.pytestFailed -eq 0) { $summary.pytestFailed = -1 }  # 非断言类失败（如解释器报错）
+    if ($LASTEXITCODE -ne 0 -and $summary.pytestFailed -eq 0) { $summary.pytestFailed = -1 }  # A non-assertion failure (e.g. an interpreter error)
 
     foreach ($f in (Get-ChildItem $testsDir -Filter '*.Tests.ps1' -ErrorAction SilentlyContinue)) {
         Log "running Pester: $($f.Name)"
@@ -94,7 +95,7 @@ function Get-TestSummary([string]$RepoRoot, [string]$PythonExe) {
                 } else { $summary.pesterFailed++ }
             }
         } elseif ($r -and $r.PSObject.Properties['PassedCount']) {
-            # 兜底：部分 Pester 版本只给计数属性
+            # Fallback: some Pester versions only expose count properties
             $summary.pesterPassed += $r.PassedCount
             $summary.pesterFailed += $r.FailedCount
         }
@@ -102,8 +103,8 @@ function Get-TestSummary([string]$RepoRoot, [string]$PythonExe) {
     return $summary
 }
 
-# 调 pad-deploy 子进程并解析 PAD_DEPLOY_RESULT（最后一行）
-# 注意：PS 5.1 的 hashtable splat 不能用于 exe，只能显式组参数数组
+# Call the pad-deploy child process and parse PAD_DEPLOY_RESULT (the last line)
+# Note: PS 5.1 hashtable splatting does not work for an exe, so the argument array is built explicitly
 function Invoke-Deploy([string]$SrcRobin, [string]$CfgFile, [string]$Flow, [string]$Schema,
                        [int]$TimeoutSec, [string]$Acceptance, [switch]$DryRunMode, [switch]$Prod, [switch]$NoConfirm, [switch]$PublishOnlyMode) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:DeployPath,
@@ -124,14 +125,14 @@ function Invoke-Deploy([string]$SrcRobin, [string]$CfgFile, [string]$Flow, [stri
     return $json
 }
 
-# 批准指纹：把「这次要发的三样东西」绑成一个可核对的标识
-# 确认框展示短哈希，正式发布前重算一次；期间文件被改过就中止
+# Approval fingerprint: bind "the three things being released this time" into one verifiable identifier
+# The dialog shows short hashes; they are recomputed right before the real release, and any change in between aborts
 function Get-ApprovalFingerprint([string]$RobinPath, [string]$ConfigPath, [string]$AcceptancePath) {
-    # 哈希算法统一由 PadFingerprint 提供，本脚本不再自行实现一份
+    # The hashing algorithm is provided by PadFingerprint; this script no longer implements its own copy
     return (Get-FingerprintParts $RobinPath $ConfigPath $AcceptancePath)
 }
 
-# 只展示每个哈希前 8 位，够人眼核对又不刷屏
+# Show only the first 8 characters of each hash: enough for a human check without flooding the output
 function Format-ApprovalFingerprint($Fp) {
     if (-not $Fp) { return '(none)' }
     $parts = @()
@@ -142,7 +143,7 @@ function Format-ApprovalFingerprint($Fp) {
     return ($parts -join ' ')
 }
 
-# ═══ 主流程 ═══
+# ═══ Main flow ═══
 if (-not $NoMain) {
     $exitCode = 1
     $result = [ordered]@{
@@ -158,7 +159,7 @@ if (-not $NoMain) {
     try {
         if (-not $FlowName) { throw 'missing -FlowName (not Mandatory so Pester can dot-source this script)' }
         if (-not (Test-Path $script:DeployPath)) { throw "pad-deploy.ps1 not found" }
-        # 不再默认到某个具体业务流程：先按 -FlowName 派生，派生不到就明确要求显式指定
+        # No longer default to a particular business flow: derive from -FlowName first and demand an explicit value when derivation fails
         if (-not $SourceRobin) {
             $guess = Join-Path $script:RepoRoot ("business\flows\{0}.robin" -f $FlowName)
             if (Test-Path -LiteralPath $guess) {
@@ -177,7 +178,7 @@ if (-not $NoMain) {
         }
         $result.sourceRobin = $SourceRobin
         if (-not (Test-Path $SourceRobin)) { throw ".robin not found: $SourceRobin" }
-        # 验收判据默认取同名的 <flow>.acceptance.json（与 flow.json 同目录）
+        # Acceptance criteria default to the same-named <flow>.acceptance.json (next to flow.json)
         if (-not $AcceptanceFile) {
             $candidate = [IO.Path]::ChangeExtension($SourceRobin, '.acceptance.json')
             if (Test-Path $candidate) { $AcceptanceFile = $candidate }
@@ -192,7 +193,7 @@ if (-not $NoMain) {
             throw 'Safety fuse: only PAD_SYNC_TEST may be released by default. Releasing a production flow requires explicit -AllowProd.'
         }
 
-        # ── 阶段 1：测试摘要 ──
+        # ── Stage 1: test summary ──
         if ($SkipTests) {
             $result.tests = [ordered]@{ skipped = $true }
             $result.warnings += 'test summary skipped (-SkipTests)'
@@ -207,9 +208,9 @@ if (-not $NoMain) {
             }
         }
 
-        # ── 阶段 2：校验 + 变量替换（DryRun，不触碰 PAD） ──
-        # Invoke-Pester 跑完会把它加载过的模块一起卸载（含上面的 RobinText），
-        # 这里必须重新导入，否则接下来算哈希会报 Get-RobinHash 找不到
+        # ── Stage 2: validation + variable substitution (DryRun, never touches PAD) ──
+        # Invoke-Pester unloads the modules it loaded when it finishes (including RobinText above),
+        # so they must be imported again here; otherwise the hash step reports Get-RobinHash as missing
         Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force -Global
         Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force -Global
         $result.stage = 'deploy-dryrun'
@@ -221,7 +222,7 @@ if (-not $NoMain) {
         $result.sha256 = Get-RobinHash $deployedText
         Log "substitution complete: $($result.replacedCount) placeholders; content hash $($result.sha256.Substring(0,12))..."
 
-        # ── 阶段 3：发布前快照（流程 GUID + 当前云端版本） ──
+        # ── Stage 3: pre-release snapshot (flow GUID + current cloud version) ──
         $result.stage = 'snapshot'
         $scriptsRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts'
         $workspaceRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Workspace'
@@ -236,17 +237,17 @@ if (-not $NoMain) {
         }
 
         if ($DryRun) {
-            # DryRun：到此为止，不确认、不发布、不写 manifest
+            # DryRun: stop here; no confirmation, no release, no manifest
             $result.ok = $true; $result.stage = 'done'; $exitCode = 0
             Log '[DryRun] tests + validation + substitution + snapshot completed; nothing was released'
         } else {
-            # ── 阶段 4：用户确认（一次，含测试摘要与副作用说明） ──
+            # ── Stage 4: user confirmation (once, with the test summary and the side effects) ──
             $result.stage = 'confirm'
             $t = $result.tests
             $testText = $(if ($t.skipped) { 'skipped' } else { "pytest $($t.pytestPassed) passed/$($t.pytestFailed) failed; Pester $($t.pesterPassed) passed/$($t.pesterFailed) failed" })
             $acceptText = $(if ($AcceptanceFile) { "acceptance criteria: $([IO.Path]::GetFileName($AcceptanceFile))`n" } else { '' })
             $runNote = $(if ($PublishOnly) { 'This release does not trigger a run.' } else { 'After release a real run is triggered immediately via URL (it sends and receives real email and operates SAP).' })
-            # 批准绑定指纹：确认框上看到的就是即将发布的三份内容，发布前再复核一次
+            # Approval binding: what the dialog shows is exactly the three items about to be released, rechecked once before releasing
             $result.fingerprint = Get-ApprovalFingerprint $result.sourceRobin $ConfigFile $result.acceptanceFile
             $fpText = Format-ApprovalFingerprint $result.fingerprint
             $msg = "Target flow: $FlowName`nTest summary: $testText`n$($acceptText)Replaced variables: $($result.replacedCount)`nContent hash: $($result.sha256.Substring(0,12))...`nApproval fingerprint: $fpText`nCurrent cloud version: $($result.flowVersionBefore)`n`nPrerequisite: this flow is already open in the PAD designer.`nNote: $runNote`n`nRelease now?"
@@ -258,7 +259,7 @@ if (-not $NoMain) {
                 throw 'robin/config/acceptance changed after confirmation; release again and confirm again'
             }
 
-            # ── 阶段 5：正式发布（注入 → 发布 → URL 触发 → 收集） ──
+            # ── Stage 5: real release (inject -> publish -> URL trigger -> collect) ──
             $result.stage = 'publish'
             $deployStartUtc = [datetime]::UtcNow
             $rel = Invoke-Deploy $SourceRobin $ConfigFile $FlowName $SchemaFile $RunTimeoutSec $AcceptanceFile -Prod:$AllowProd -NoConfirm -PublishOnlyMode:$PublishOnly
@@ -269,9 +270,9 @@ if (-not $NoMain) {
             if ($PublishOnly) { Log 'release complete (-PublishOnly, no run was triggered)' }
             else { Log "release complete; verification run status: $($result.runStatus)" }
 
-            # ── 阶段 6：发布后校验 ──
+            # ── Stage 6: post-release verification ──
             $result.stage = 'verify'
-            # 6a) 运行历史校验：仅“发布并运行”模式需要；只发布模式跳过
+            # 6a) Run-history check: only needed in "publish and run" mode; publish-only mode skips it
             if (-not $PublishOnly) {
                 $ids = Get-FlowGuidFromLogPath ([string]$rel.runResult.logPath)
                 if ($ids) { $result.flowGuid = $ids.flowGuid; $result.runId = $ids.runId }
@@ -281,7 +282,7 @@ if (-not $NoMain) {
                     $rd = [IO.File]::ReadAllText($runDefPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
                     $result.flowVersionAfter = $(if ($rd.diagnosticInfo) { [string]$rd.diagnosticInfo.flowVersion } else { $null })
                     $runStartUtc = [datetime]::Parse([string]$rd.startTime).ToUniversalTime()
-                    # 允许 2 分钟时钟误差，防止本机与云端时钟轻微偏移误判
+                    # Allow a 2-minute clock skew so a slight offset between the local and cloud clocks is not misjudged
                     if ($runStartUtc -lt $deployStartUtc.AddMinutes(-2)) {
                         throw "cloud history check failed: this run has startTime=$($rd.startTime), earlier than the release time"
                     }
@@ -292,8 +293,8 @@ if (-not $NoMain) {
                 }
             }
             if (-not $result.flowGuid) { throw 'cannot determine the flow GUID; post-release verification aborted' }
-            # 6b) 已发布版本哈希与画布（注入内容）一致
-            # Workspace 是本地缓存，可能滞后于云端；最多等 60 秒让本次修订落盘
+            # 6b) The published version's hash matches the canvas (the injected content)
+            # Workspace is a local cache and may lag behind the cloud; wait up to 60 seconds for this revision to land
             $wsRobin = $null
             $swWs = [Diagnostics.Stopwatch]::StartNew()
             while ($swWs.Elapsed.TotalSeconds -lt 60) {
@@ -307,7 +308,7 @@ if (-not $NoMain) {
             $wsStale = ((Get-Item $wsRobin).LastWriteTime.ToUniversalTime() -lt $deployStartUtc.AddMinutes(-2))
             if ($wsStale) {
                 if ($PublishOnly) {
-                    # 只发布模式：云端 published（控制台 modifiedOn 已更新），本地缓存未刷新时不误判失败
+                    # Publish-only mode: the cloud is already published (the console's modifiedOn is updated), so a stale local cache must not be judged a failure
                     $result.warnings += 'Workspace cache was not refreshed; skipping hash verification (published state takes precedence)'
                     Log 'warning: Workspace cache was not refreshed; skipping hash verification'
                 } else {
@@ -318,7 +319,7 @@ if (-not $NoMain) {
                 $cmp = Compare-RobinText $deployedText $wsText
                 $result.hashMatch = $cmp.match
                 if (-not $cmp.match) {
-                    # 带 Data['code'] 的异常：告警分类按码判断，不解析中文消息
+                    # Exception carrying Data['code']: alerts are classified by code, not by parsing message text
                     $msg = "published version differs from the canvas: line $($cmp.diffIndex)`n  canvas: $($cmp.lineA)`n  cloud: $($cmp.lineB)"
                     $ex = [System.Exception]::new($msg)
                     $ex.Data['code'] = 'RELEASE_CANVAS_MISMATCH'
@@ -327,16 +328,16 @@ if (-not $NoMain) {
                 Log "hash check passed: published version matches the injected content ($($result.sha256.Substring(0,12))...)"
             }
 
-            # ── 快照归档：发布成功即固化一份成品，供 pad-rollback.ps1 重发 ──
+            # ── Snapshot archiving: a successful release freezes one finished copy for pad-rollback.ps1 to re-release ──
             $snapshotsRoot = Join-Path $script:RepoRoot 'business\snapshots'
             $result.snapshotPath = Save-ReleaseSnapshot $snapshotsRoot $FlowName $result.deployedRobin $result.sha256 ([datetime]::Now)
             Log "snapshot archived: $($result.snapshotPath)"
-            # 只保留最近 20 个快照，避免无限增长
+            # Keep only the latest 20 snapshots so they cannot grow without bound
             $removed = @(Remove-OldReleaseSnapshots (Split-Path -Parent $result.snapshotPath) 20)
             if ($removed.Count -gt 0) { Log "removed $($removed.Count) old snapshots (keeping the latest 20)" }
 
-            # ── 指纹基线：发布成功后固化「这份定义 + 配置 + 验收」的哈希，供准入比对 ──
-            # 写入失败不推翻已经成功的发布，但必须显式告警
+            # ── Fingerprint baseline: on success, freeze the hash of "this definition + config + acceptance" for the admission comparison ──
+            # A failed write does not undo a successful release, but it must raise an explicit warning
             try {
                 $fpPath = Get-FingerprintBaselinePath $script:RepoRoot $FlowName
                 $fpBase = New-FingerprintBaseline -FlowName $FlowName -FlowGuid $result.flowGuid `
@@ -356,7 +357,7 @@ if (-not $NoMain) {
     catch {
         $result.errors += $_.Exception.Message
         Log "release pipeline failed at [$($result.stage)]: $($_.Exception.Message)"
-        # DryRun 不触碰 PAD，失败不写告警，避免污染真实运维记录
+        # DryRun never touches PAD, so failures write no alert and do not pollute the real operations records
         if (-not $DryRun) {
             $ak = Get-AlertKindConstants
             $msg = $_.Exception.Message
@@ -375,7 +376,7 @@ if (-not $NoMain) {
         }
     }
     finally {
-        # ── 阶段 7：manifest（DryRun 不写；成功失败都记录，供回滚与审计） ──
+        # ── Stage 7: manifest (not written for DryRun; both success and failure are recorded for rollback and audit) ──
         if (-not $DryRun -and $result.stage -ne 'init') {
             $manifestPath = Join-Path $script:RepoRoot 'business\manifest.jsonl'
             $entry = [ordered]@{
@@ -395,7 +396,7 @@ if (-not $NoMain) {
                 Add-ManifestEntry $manifestPath $entry
                 $result.manifestPath = $manifestPath
                 Log "manifest appended: $manifestPath"
-                # release 记录永久保留，这里只清理过期的 run 记录
+                # Release records are kept forever; only expired run records are pruned here
                 [void](Remove-OldManifestEntries $manifestPath -KeepDays 90)
             }
             catch { $result.warnings += "manifest write failed: $($_.Exception.Message)" }

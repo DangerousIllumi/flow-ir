@@ -1,40 +1,41 @@
-﻿# pad-fingerprint.ps1 — 流程指纹基线：查看定位结果、播种（-Set）与人工确认
+﻿# pad-fingerprint.ps1 — flow fingerprint baseline: inspect the location result, seed it (-Set) and confirm manually
 #
-# 为什么需要：
-#   pad-admit 的 FINGERPRINT 检查要拿「当前 .robin / config / acceptance」与一份基线比对。
-#   基线只由三个写入侧产生：pad-release 成功、pad-rollback 成功、本脚本 -Set（存量流播种）。
+# Why this exists:
+#   The FINGERPRINT check in pad-admit compares "current .robin / config / acceptance" against a baseline.
+#   The baseline is produced by only three writers: a successful pad-release, a successful pad-rollback,
+#   and -Set in this script (seeding an existing flow).
 #
-# 硬约束：
-#   1) 定位精确到修订（修订目录名 = 本次 runId），不「取最新一份」；
-#      命中多个候选直接报 AMBIGUOUS 并停下，绝不自动挑一个。
-#   2) -Set 只打印定位结果与三个哈希，必须再加 -Confirm 才写；
-#      -DryRun 永远不写。禁止在无人确认时静默写基线。
-#   3) 基线落在 business\fingerprints\<流程名>.json（业务层，不入库）。
+# Hard constraints:
+#   1) The location is pinned to the revision (the revision directory name is this run's runId); never "take the latest one".
+#      Multiple matching candidates are reported as AMBIGUOUS and the script stops; it never picks one automatically.
+#   2) -Set only prints the location result and the three hashes; -Confirm is required to write, and -DryRun never writes.
+#      Writing a baseline silently without human confirmation is forbidden.
+#   3) The baseline lives in business\fingerprints\<flow name>.json (business layer, not committed).
 #
-# 用法：
-#   .\pad-fingerprint.ps1 -FlowName X                        # 只看定位结果，不写
-#   .\pad-fingerprint.ps1 -FlowName X -Set                   # 打印后退出码 2，要求加 -Confirm
-#   .\pad-fingerprint.ps1 -FlowName X -Set -Confirm          # 人工确认后写入基线
+# Usage:
+#   .\pad-fingerprint.ps1 -FlowName X                        # inspect the location result only, no write
+#   .\pad-fingerprint.ps1 -FlowName X -Set                   # print then exit with code 2, asking for -Confirm
+#   .\pad-fingerprint.ps1 -FlowName X -Set -Confirm          # write the baseline after human confirmation
 #
-# 输出：最后一行 PAD_FINGERPRINT_RESULT=<JSON>；退出码 0 成功 / 1 定位失败 / 2 需要确认或候选不唯一
+# Output: the last line is PAD_FINGERPRINT_RESULT=<JSON>; exit codes 0 success / 1 location failed / 2 confirmation needed or candidates not unique
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$FlowName,
     [string]$RepoRoot,
-    # PAD 本地运行历史与 Workspace 根：默认取 LOCALAPPDATA，可用参数覆盖（测试用假根目录）
+    # PAD local run history and the Workspace root: taken from LOCALAPPDATA by default, overridable (tests use fake roots)
     [string]$ScriptsRoot,
     [string]$WorkspaceRoot,
     [string]$ConsoleConfigPath,
     [string]$ConfigFile,
     [string]$AcceptanceFile,
     [string]$BaselinePath,
-    # 业务流文件；不传时按 -FlowName 的 pad_flow_name 在 business\flows 反查
+    # Business flow file; when omitted, looked up under business\flows by matching -FlowName against pad_flow_name
     [string]$FlowFile,
     [string]$EnvironmentId,
-    # 仓库外旧拷贝的绝对路径（PAD 运行目录下的同名文件）；只在播种时写入 external 段
+    # Absolute paths of old copies outside the repo (same-name files in the PAD run directory); written into the external section only when seeding
     [string[]]$ExternalPaths,
-    # 仓库内脚本清单；显式传入时不再读业务层配置（测试与特殊流程用）
+    # List of scripts inside the repo; when passed explicitly the business-layer config is not read (for tests and special flows)
     [string[]]$ScriptPaths,
     [switch]$Set,
     [switch]$DryRun,
@@ -44,7 +45,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
-# 先导入模块：下面的默认路径计算会用到 Get-FingerprintBaselinePath
+# Import the module first: the default path calculation below uses Get-FingerprintBaselinePath
 Import-Module (Join-Path $here 'PadFingerprint.psm1') -Force
 
 if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent (Split-Path -Parent $here) }
@@ -54,10 +55,10 @@ if (-not $ScriptsRoot) {
 if (-not $WorkspaceRoot) {
     $WorkspaceRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Workspace'
 }
-# ── 业务流标识：与 pad-admit 同一套解析 ──────────────────────────
-# PAD 流程名（中文）用于在本地运行历史里定位流程，
-# 但仓库侧产物（.robin / config / acceptance / 基线）一律用 flow.json 文件名命名；
-# 两者不是一个名字时若混用，基线会写到准入读不到的位置（永远 NO_BASELINE）。
+# ── Business flow identity: the same resolution pad-admit uses ──────────────────────────
+# The PAD flow name (Chinese) is used to locate the flow in the local run history,
+# but repo-side artifacts (.robin / config / acceptance / baseline) are always named after the flow.json file name;
+# if the two names differ and get mixed up, the baseline is written where admission cannot find it (permanent NO_BASELINE).
 function Resolve-FlowFileByName([string]$FlowsDir, [string]$Name) {
     if (-not $Name -or -not (Test-Path -LiteralPath $FlowsDir)) { return $null }
     $items = @(Get-ChildItem -LiteralPath $FlowsDir -Filter '*.json' -File | Where-Object {
@@ -67,14 +68,14 @@ function Resolve-FlowFileByName([string]$FlowsDir, [string]$Name) {
         try { $j = [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json } catch { }
         [ordered]@{ File = $_.FullName; Json = $j }
     })
-    # 先按 pad_flow_name 精确匹配；命中不唯一时不做猜测
+    # Match pad_flow_name exactly first; never guess when the match is not unique
     $hit = @($items | Where-Object { [string]$_.Json.pad_flow_name -eq $Name })
     if ($hit.Count -eq 1) { return $hit[0].File }
     return $null
 }
 
 if (-not $FlowFile) { $FlowFile = Resolve-FlowFileByName (Join-Path $RepoRoot 'business\flows') $FlowName }
-# 反查不到时退回 PAD 流程名（存量流可能还没有 pad_flow_name）
+# When the lookup fails, fall back to the PAD flow name (existing flows may not have a pad_flow_name yet)
 $businessName = if ($FlowFile) {
     [IO.Path]::GetFileNameWithoutExtension($FlowFile)
 } else { $FlowName }
@@ -84,7 +85,7 @@ if (-not $ConfigFile) {
     if (Test-Path -LiteralPath $guess) { $ConfigFile = $guess }
 }
 if (-not $AcceptanceFile) {
-    # 与 pad-release 同一口径：业务流目录下同名的 <flow>.acceptance.json
+    # Same rule as pad-release: <flow>.acceptance.json with the same name in the business flow directory
     $guess = Join-Path $RepoRoot ("business\flows\{0}.acceptance.json" -f $businessName)
     if (Test-Path -LiteralPath $guess) { $AcceptanceFile = $guess }
 }
@@ -105,7 +106,7 @@ $result = [ordered]@{
 $exitCode = 1
 
 try {
-    # ── 定位：流程身份来自本地运行历史，定义副本精确到本次 runId ──
+    # ── Locate: the flow identity comes from the local run history, the definition copy is pinned to this runId ──
     $run = Find-LatestFlowRun $ScriptsRoot $FlowName
     if (-not $run) {
         $result.code = 'FINGERPRINT_UNKNOWN'
@@ -125,8 +126,8 @@ try {
     $result.workspaceMtime = (Get-Item -LiteralPath $wsRobin).LastWriteTime.ToString('o')
     $result.environmentId = $(if ($EnvironmentId) { $EnvironmentId } else { Get-PadEnvironmentId $ConsoleConfigPath })
 
-    # 源 .robin 取流程产物；找不到时退回已发布副本（由日志显式提示）
-    # 源 .robin 与 pad-admit 比对的是同一份文件：按 flow.json 文件名取，取不到才退回已发布副本
+    # The source .robin is the flow artifact; when it is missing, fall back to the published copy (stated explicitly in the log)
+    # The source .robin compared by pad-admit is the same file: take it by flow.json file name, fall back to the published copy only when absent
     $sourceRobin = $null
     $guess = Join-Path $RepoRoot ("business\flows\{0}.robin" -f $businessName)
     if (Test-Path -LiteralPath $guess) { $sourceRobin = $guess } else { $sourceRobin = $wsRobin }
@@ -144,7 +145,7 @@ try {
     Log "hashes: $($sha -join ' ')"
     Log "baseline file: $BaselinePath"
 
-    # ── 写入：必须 -Set + -Confirm，且 -DryRun 永远不写 ──
+    # ── Write: requires -Set + -Confirm, and -DryRun never writes ──
     if ($Set -and -not $DryRun) {
         if (-not $Confirm) {
             $result.stage = 'need-confirm'; $result.code = 'FINGERPRINT_CONFIRM_REQUIRED'
@@ -162,7 +163,7 @@ try {
                 AcceptancePath = $AcceptanceFile
                 ExternalPaths  = $ExternalPaths
             }
-            # 只有显式传入 -ScriptPaths 才跳过业务层配置，避免默认行为悄悄改变
+            # Only an explicit -ScriptPaths skips the business-layer config, so the default behaviour cannot change silently
             if ($PSBoundParameters.ContainsKey('ScriptPaths')) { $baseArgs['ScriptPaths'] = $ScriptPaths }
             $base = New-FingerprintBaseline @baseArgs
             [void](Write-FingerprintBaseline $BaselinePath $base)

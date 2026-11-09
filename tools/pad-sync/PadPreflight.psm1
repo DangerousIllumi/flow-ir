@@ -1,20 +1,20 @@
-﻿# PadPreflight.psm1 — 部署前置探查（机器 / Python / SAP GUI / Outlook）
+﻿# PadPreflight.psm1 — deployment preflight probes (machine / Python / SAP GUI / Outlook)
 #
-# 只做「只读检查」，不安装、不修改任何环境；每项都返回统一结构：
-#   Name   检查项名称
-#   Ok     是否通过
-#   Detail 检测到的实际情况（版本号、路径、缺失的目录等）
-#   Hint   未通过时给用户的可执行建议
+# Read-only checks only: nothing is installed and no environment is modified; every probe returns the same shape:
+#   Name   check name
+#   Ok     whether it passed
+#   Detail what was actually found (versions, paths, missing directories, ...)
+#   Hint   actionable advice for the user when the check fails
 #
-# 设计要点：所有路径/注册表位置都可以由参数传入，
-# 这样单元测试能在任意机器（含没有 SAP/Outlook 的 CI）上验证判定逻辑。
+# Design note: every path/registry location can be passed in as a parameter,
+# so unit tests can verify the decision logic on any machine (including CI without SAP/Outlook).
 
 function New-Probe {
     param([string]$Name, [bool]$Ok, [string]$Detail, [string]$Hint = '')
     return [pscustomobject]@{ Name = $Name; Ok = $Ok; Detail = $Detail; Hint = $Hint }
 }
 
-# PAD 部署根目录：检查关键子目录是否齐全
+# PAD deployment root: check that all the key subdirectories are present
 function Test-PadInstalled {
     param(
         [Parameter(Mandatory = $true)][string]$PadRoot,
@@ -31,14 +31,14 @@ function Test-PadInstalled {
         "Install or copy the PAD deployment package first, or point -PadRoot at the correct root directory"
 }
 
-# Python：可执行文件存在 + 能正常输出版本 + 能导入 openpyxl
+# Python: the executable exists + prints a version normally + can import openpyxl
 function Get-PythonProbe {
     param([Parameter(Mandatory = $true)][string]$PythonExe)
     if (-not (Test-Path $PythonExe)) {
         return New-Probe 'Python' $false "cannot find $PythonExe" `
             'Install Python 3.x, or point PYTHON_EXE in the config at python.exe'
     }
-    # 2>&1 把版本号（新版 Python 打到 stdout，旧版可能到 stderr）统一收进来
+    # 2>&1 collects the version string uniformly (newer Python prints it to stdout, older versions may use stderr)
     $ver = (& $PythonExe --version 2>&1 | Out-String).Trim()
     if (-not $ver) {
         return New-Probe 'Python' $false "$PythonExe produced no version output" `
@@ -52,7 +52,7 @@ function Get-PythonProbe {
     return New-Probe 'Python' $true "$ver, openpyxl $mod"
 }
 
-# SAP GUI：SAP Logon 可执行文件是否存在（脚本开关无法从外部可靠读取，只做文件级检查）
+# SAP GUI: whether the SAP Logon executable exists (the scripting switch cannot be read reliably from outside, so this is a file-level check only)
 function Get-SapGuiProbe {
     param([Parameter(Mandatory = $true)][string]$SapLogonPath)
     if (Test-Path $SapLogonPath) {
@@ -62,7 +62,7 @@ function Get-SapGuiProbe {
         'Install SAP GUI, enable scripting in the SAP Logon options, then log in again'
 }
 
-# Outlook：按 Office 版本的注册表位置判断是否安装
+# Outlook: detect installation through the registry locations of each Office version
 function Get-OutlookProbe {
     param([string[]]$OfficeKeys)
     foreach ($k in $OfficeKeys) {
@@ -72,7 +72,7 @@ function Get-OutlookProbe {
         'Install Office/Outlook and sign in to the mailbox in Outlook once'
 }
 
-# 汇总探查：返回数组，调用方负责打印与退出码
+# Aggregate probe: return an array; the caller handles printing and the exit code
 function Get-PreflightReport {
     param(
         [Parameter(Mandatory = $true)][string]$PadRoot,
@@ -89,7 +89,7 @@ function Get-PreflightReport {
     return $checks
 }
 
-# 按 Office 常见安装位置生成候选注册表键（只读探测，不写注册表）
+# Build candidate registry keys from the common Office install locations (read-only probe, nothing is written)
 function Get-DefaultOfficeKeys {
     $keys = @()
     foreach ($ver in '16.0', '15.0', '14.0') {
@@ -99,7 +99,7 @@ function Get-DefaultOfficeKeys {
     return $keys
 }
 
-# SAP Logon 常见路径
+# Common SAP Logon paths
 function Get-DefaultSapLogonPath {
     $cands = @("$env:ProgramFiles\SAP\FrontEnd\SAPgui\saplogon.exe",
                "${env:ProgramFiles(x86)}\SAP\FrontEnd\SAPgui\saplogon.exe")
@@ -107,14 +107,14 @@ function Get-DefaultSapLogonPath {
     return $cands[0]
 }
 
-# 由「工作流需求声明」驱动的通用探查：
-# 声明文件（如 business/flows/<flow>.requirements.json）里每个 check 指定 type，
-# 换工作流或增删依赖只改声明，不改本模块代码。
-#   type=dirs      : base（变量名，如 PAD_ROOT）+ paths（相对子目录）
-#   type=files     : base（变量名）+ paths（相对文件路径，逐个必须存在）
-#   type=python    : path（变量名，可空=自动找 python.exe）+ modules（需能导入的模块）
-#   type=exe       : paths（候选绝对路径，支持 %ProgramFiles% 展开）
-#   type=registry  : keys（候选注册表键）
+# Generic probes driven by a "workflow requirements declaration":
+# each check in the declaration file (e.g. business/flows/<flow>.requirements.json) names its type,
+# so switching workflows or adding/removing dependencies changes only the declaration, not this module.
+#   type=dirs      : base (variable name, e.g. PAD_ROOT) + paths (relative subdirectories)
+#   type=files     : base (variable name) + paths (relative file paths, each must exist)
+#   type=python    : path (variable name, empty = locate python.exe automatically) + modules (modules that must be importable)
+#   type=exe       : paths (candidate absolute paths, %ProgramFiles% expansion supported)
+#   type=registry  : keys (candidate registry keys)
 function Invoke-PreflightChecks {
     param(
         [Parameter(Mandatory = $true)]$Requirements,

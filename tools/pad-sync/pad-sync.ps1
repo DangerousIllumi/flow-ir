@@ -1,50 +1,53 @@
 ﻿<#
-pad-sync.ps1 — 把 .robin 注入 PAD 设计器并自动运行、收集执行结果
+pad-sync.ps1 — inject a .robin into the PAD designer, run it, and collect the results
 
-用途：
-  让 agent 生成的 .robin 真正进入 PAD 画布，跑一次并把失败动作（错误码、消息）
-  结构化返回，供 agent 自动分析修复。
+Purpose:
+  Get an agent-generated .robin into the PAD canvas for real, run it once, and return the failing
+  action (error code and message) as structured data so the agent can analyse and fix it automatically.
 
-  设计器交互本身全部在 PadDesigner.psm1，遥测解析在 PadTelemetry.psm1；
-  本脚本只负责编排：读文件 → 注入 → 发布（可选）→ 运行 → 收集结果。
+  All designer interaction lives in PadDesigner.psm1 and telemetry parsing lives in PadTelemetry.psm1;
+  this script only orchestrates: read file → inject → publish (optional) → run → collect results.
 
-用法：
-  # 完整闭环：注入 → 发布 → 运行 → 收集（跳过保存草稿，发布按钮直接用当前画布）
+Usage:
+  # Full closed loop: inject → publish → run → collect (skips saving a draft; the publish button uses the current canvas)
   .\pad-sync.ps1 -FlowName "PAD_SYNC_TEST" -RobinFile "C:\temp\flow.robin"
 
-  # 只运行已发布流程并收集结果
+  # Run an already published flow and collect the results
   .\pad-sync.ps1 -FlowName "PAD_SYNC_TEST" -RunOnly
 
-  # 注入并回读画布，确认粘贴完整
+  # Inject and read the canvas back to confirm the paste was complete
   .\pad-sync.ps1 -FlowName "PAD_SYNC_TEST" -RobinFile "C:\temp\flow.robin" -VerifyCanvas -InjectOnly
 
-参数：
-  -FlowName        PAD 流程名（必须已在设计器中打开对应的编辑窗口）
-  -RobinFile       .robin 文本文件路径；-RunOnly 时可省略
-  -Replace         注入前先清空画布上的现有动作（默认追加）
-  -VerifyCanvas    注入后把画布内容复制回来，与源 .robin 规范化逐行比对，
-                   只粘进去一部分时中止并报第一处差异
-  -LocalRun        测试阶段用：点设计器“运行”按钮直接跑当前画布，不发布到云端
-  -NoPublish       等同 -LocalRun（保留旧参数名）
-  -InjectOnly      只注入并校验画布，不发布不运行
-  -SkipStaticCheck 跳过注入前的 check.js 静态校验（仅紧急排查用）
-  -AcceptanceFile  运行后按验收判据检查产物（需同时提供 -ConfigFile）
-  -ConfigFile      部署配置，用于替换验收判据里的 {{KEY}} 占位符
-  -RunId           自定义运行 ID（便于定位日志目录，默认自动生成）
-  -RunTimeoutSec   等待流程结束的最长秒数（默认 300）
-  -ManifestPath    编排层历史文件（默认 business\manifest.jsonl；不在仓库内时默认不写）
-  -NoManifest      本次运行不写 manifest（调试时用）
+Parameters:
+  -FlowName        PAD flow name (the matching designer edit window must already be open)
+  -RobinFile       Path to the .robin text file; may be omitted with -RunOnly
+  -Replace         Clear the actions currently on the canvas before injecting (default is append)
+  -VerifyCanvas    After injecting, copy the canvas content back and compare it line by line
+                   (normalised) against the source .robin; abort and report the first difference
+                   when only part of it was pasted
+  -LocalRun        Used during testing: click the designer's Run button to run the current canvas
+                   without publishing to the cloud
+  -NoPublish       Same as -LocalRun (legacy parameter name kept)
+  -InjectOnly      Inject and verify the canvas only; do not publish or run
+  -SkipStaticCheck Skip the check.js static validation before injecting (emergency debugging only)
+  -AcceptanceFile  Check the artifacts against acceptance criteria after the run (requires -ConfigFile)
+  -ConfigFile      Deployment config used to substitute the {{KEY}} placeholders in the acceptance criteria
+  -RunId           Custom run id (makes the log directory easier to find; generated automatically by default)
+  -RunTimeoutSec   Maximum seconds to wait for the flow to finish (default 300)
+  -ManifestPath    Orchestration history file (default business\manifest.jsonl; nothing is written when outside the repo)
+  -NoManifest      Do not write a manifest entry for this run (for debugging)
 
-输出：
-  标准输出最后打印一行 PAD_SYNC_RESULT=<JSON>，字段含
+Output:
+  The last line on stdout is PAD_SYNC_RESULT=<JSON>, with the fields
   ok / stage / runId / status / actions / failedAction / error / logPath / canvasVerified
   / needsHumanConfirm / dialogTitle
-  ok 可能是 null：Actions.log 与 Console 都没有本次证据时表示“未知”，不是失败
-  退出码：0 成功或未知 / 1 失败 / 3 停在人工确认弹窗 / 4 等锁超时
+  ok may be null: when neither Actions.log nor Console has evidence for this run the outcome is
+  "unknown", not a failure
+  Exit codes: 0 success or unknown / 1 failure / 3 stopped at a manual-confirmation dialog / 4 timed out waiting for the lock
 
-前置条件：
-  1. PAD 控制台已登录，目标流程已发布（未发布的草稿无法通过 URL 运行）
-  2. PAD 设计器已打开该流程的编辑窗口
+Prerequisites:
+  1. PAD console is logged in and the target flow is published (a draft that was never published cannot be run by URL)
+  2. PAD designer has the edit window for that flow open
 #>
 [CmdletBinding()]
 param(
@@ -57,67 +60,68 @@ param(
     [switch]$RunOnly,
     [switch]$InjectOnly,
     [switch]$LocalRun,
-    # 只发布到云端，不触发运行（发布后只校验哈希，不做运行状态/验收）
+    # Publish to the cloud only, do not trigger a run (after publishing only the hash is verified; no run status or acceptance checks)
     [switch]$PublishOnly,
     [switch]$AllowProd,
     [switch]$VerifyCanvas,
-    # 非交互（定时任务）：遇到人工确认弹窗不自动点击，记录 needs-human-confirm 并以退出码 3 收尾
+    # Non-interactive (scheduled task): do not click a manual-confirmation dialog automatically; record needs-human-confirm and exit with code 3
     [switch]$NonInteractive,
-    # 注入前强制跑静态校验；-SkipStaticCheck 仅用于紧急排查
+    # Force the static check before injecting; -SkipStaticCheck is for emergency debugging only
     [switch]$SkipStaticCheck,
-    # 准入网关：enforce=失败即阻断（默认）/ report=只提示 / off=不跑
+    # Admission gate: enforce = block on failure (default) / report = warn only / off = do not run
     [ValidateSet('report', 'enforce', 'off')][string]$AdmitMode = 'enforce',
-    # flow.json；不传时按 -AcceptanceFile 的兄弟文件自动推导
+    # flow.json; when omitted, derived automatically from the sibling file of -AcceptanceFile
     [string]$FlowFile,
-    # 未提供 -FlowFile 时，按 -FlowName 在 business\flows 派生（先 pad_flow_name，再文件名 / name）
-    # 默认关闭：机制先做出来并验证，确认后才接到计划任务，避免存量任务行为突变
+    # When -FlowFile is not given, derive it from -FlowName under business\flows (pad_flow_name first, then file name / name)
+    # Off by default: the mechanism is built and verified first and only wired into scheduled tasks after confirmation, so existing tasks do not change behaviour abruptly
     [switch]$DeriveFlow,
-    # 运行后按验收判据检查产物（需同时提供 -ConfigFile）
+    # Check the artifacts against acceptance criteria after the run (requires -ConfigFile)
     [string]$AcceptanceFile,
     [string]$ConfigFile,
     [string]$ManifestPath,
     [switch]$NoManifest,
-    # 等待 PAD 空闲的最长秒数：超时以退出码 4 结束，不硬闯（避免两条定时任务抢同一个 PAD）
-    # 默认 90 分钟，按单次持锁最坏时长取：
-    #   AI 核对流：等报表邮件最多 60 分钟 + 核对/SAP 约 3 分钟 ≈ 63 分钟
-    #   长时间 SAP 下载：最长约 30 分钟 + 后续处理约 10~15 分钟 ≈ 40~45 分钟
-    #   取两者较大值 63 分钟，再留 27 分钟余量覆盖 SAP 登录、重启、机器卡顿等抖动
+    # Maximum seconds to wait for PAD to become idle: on timeout exit with code 4 instead of barging in
+    # (this stops two scheduled tasks from fighting over the same PAD)
+    # Default 90 minutes, sized from the worst-case single lock hold:
+    #   AI reconciliation flow: wait up to 60 min for the report mail + ~3 min for reconciliation/SAP ≈ 63 min
+    #   Long SAP download: up to ~30 min + ~10–15 min of follow-up processing ≈ 40–45 min
+    #   Take the larger value, 63 min, and leave 27 min of headroom for SAP login, restarts, machine stalls
     [int]$LockWaitSec = 5400,
-    # 跳过跨进程互斥（只在确认没有其它任务会并发时用）
+    # Skip the cross-process mutex (only use when you are sure no other task runs concurrently)
     [switch]$NoLock,
-    # 集中运行时配置：只覆盖未显式给出的 RunTimeoutSec；显式参数优先
+    # Central runtime config: only fills in a RunTimeoutSec that was not given explicitly; explicit parameters win
     [string]$ConfigPath
 )
 
 $ErrorActionPreference = 'Stop'
 
-# 只发布模式与“不注入/不发布”的选项互斥，避免出现没发布却报 Published
+# Publish-only mode is mutually exclusive with the "do not inject / do not publish" options, otherwise a run that never published would still report Published
 if ($PublishOnly -and ($RunOnly -or $LocalRun -or $InjectOnly -or $NoPublish)) {
     throw '-PublishOnly cannot be combined with -RunOnly / -LocalRun / -InjectOnly / -NoPublish'
 }
 
-# 生产流程安全熔断：默认只允许操作 PAD_SYNC_TEST 测试流程
+# Production safety fuse: by default only the PAD_SYNC_TEST flow may be touched
 if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
     throw 'safety fuse: pad-sync only operates on PAD_SYNC_TEST by default. For a production flow, add -AllowProd explicitly.'
 }
 
-# 设计器交互唯一实现 + 遥测解析
-# -DisableNameChecking：模块里有 Focus-/Click- 这类非标准动词，关掉提示避免污染 agent 解析的输出
+# Single implementation of designer interaction + telemetry parsing
+# -DisableNameChecking: the module has non-standard verbs such as Focus-/Click-; suppressing the warning keeps the output the agent parses clean
 Import-Module (Join-Path $PSScriptRoot 'PadDesigner.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'PadTelemetry.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PublishHistory.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PadAcceptance.psm1') -Force
-# 失败告警：与 pad-schedule 共用同一份实现（kind 口径与去重规则只有一处）
+# Failure alerts: shared with pad-schedule (one single implementation of the kind values and dedup rules)
 Import-Module (Join-Path $PSScriptRoot 'PadAlerts.psm1') -Force
-# 集中配置：只在显式传 -ConfigPath 时读取；缺项/路径不存在/类型错误一律硬失败
+# Central config: only read when -ConfigPath is passed explicitly; a missing key, a missing path or a type error is always a hard failure
 Import-Module (Join-Path $PSScriptRoot 'PadConfig.psm1') -Force
 if ($ConfigPath) {
     $runtime = Get-PadRuntimeConfig -ConfigPath $ConfigPath
     if (-not $PSBoundParameters.ContainsKey('RunTimeoutSec')) { $RunTimeoutSec = $runtime.RunTimeoutSec }
 }
 
-# 编排层历史文件：脚本位于仓库 tools\pad-sync 时默认写 business\manifest.jsonl；
-# 被单独部署到仓库之外的目录时不写，避免落到盘根
+# Orchestration history file: when the script sits in tools\pad-sync inside the repo, default to business\manifest.jsonl;
+# when it is deployed on its own outside the repo, write nothing so nothing lands at the drive root
 if (-not $ManifestPath -and -not $NoManifest) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     if (Test-Path (Join-Path $repoRoot 'tools')) { $ManifestPath = Join-Path $repoRoot 'business\manifest.jsonl' }
@@ -127,17 +131,17 @@ $script:Result = [ordered]@{
     ok = $false; stage = 'init'; flow = $FlowName; runId = $null
     status = $null; actions = $null; failedAction = $null; error = $null; logPath = $null
     canvasVerified = $null; warnings = @(); lockWaitSec = 0
-    # 非交互运行停在人工确认弹窗时置为 true；ok 保持 $null（未知 ≠ 失败）
+    # Set to true when a non-interactive run stops at a manual-confirmation dialog; ok stays $null (unknown ≠ failure)
     needsHumanConfirm = $false; dialogTitle = $null; evidence = $null
-    # 触发类失败：URL 被调用但流程没起来 / 流程名解析不出 flowId；供调度层分级告警
+    # Trigger-class failures: the URL was called but the flow never started / the flow name does not resolve to a flowId; used by the scheduler for graded alerts
     triggerFailed = $false; triggerReason = $null; runTimeout = $false
 }
 
-# ── 跨进程互斥：同一时刻只允许一个流占用 PAD ──────────────────
-# 注入 / 发布 / 运行都算占用。实现见 PadLock.psm1：
-# 命名 Mutex 负责互斥（进程被强杀时系统自动释放，不存在陈旧锁死等），
-# 锁文件只在抢锁成功时写一次（持有流程/PID/开始时间），供等待方打印“谁在占着 PAD”；
-# 它不参与互斥判定，也不承担心跳。
+# ── Cross-process mutex: only one flow may occupy PAD at a time ──────────────────
+# Injecting / publishing / running all count as occupying it. Implementation in PadLock.psm1:
+# a named Mutex provides the exclusion (it is released automatically when the process is killed, so a stale lock cannot happen),
+# and a lock file is written once, only after winning the lock (holder flow / PID / start time), so a waiting run can
+# print who is holding PAD; the file takes no part in the mutual exclusion and carries no heartbeat.
 Import-Module (Join-Path $PSScriptRoot 'PadLock.psm1') -Force
 
 $script:LockTimedOut = $false
@@ -146,15 +150,16 @@ function Write-Log([string]$msg) {
     Write-Host "[pad-sync] $msg"
 }
 
-# 准入网关（注入前 / 运行前都跑）
-#   report  = 显式声明的“只提示”模式：拒绝时记 warnings 后继续
-#   enforce = fail-closed：任何不能证明“通过”的情况都阻断注入与运行（默认）
-# 定时任务走 -RunOnly，所以必须放在分支之外，否则夜间运行会绕过门禁
+# Admission gate (runs before injecting and before running)
+#   report  = the explicitly declared "warn only" mode: record warnings on refusal and continue
+#   enforce = fail-closed: anything that cannot prove "passed" blocks injection and running (default)
+# Scheduled tasks go through -RunOnly, so the gate must live outside that branch; otherwise the nightly run would bypass it
 #
-# 允许运行的唯一判定依据：pad-admit 输出 PAD_ADMIT_RESULT，且 summary 满足
-#   fail=0 且 ask=0 且 pass>0（warn 不阻断）
-# 缺脚本 / 非零退出 / 无结果行 / JSON 损坏，一律视为不可放行（不是“没报错就放行”）
-# 没有 flow.json 属于“准入未启用”，会显式记 warning，避免被误会成已通过
+# The only basis for allowing a run: pad-admit prints PAD_ADMIT_RESULT and its summary satisfies
+#   fail=0 and ask=0 and pass>0 (warn does not block)
+# Missing script / non-zero exit / no result line / malformed JSON are all treated as "not allowed to proceed"
+# (absence of an error is not a pass)
+# A missing flow.json means "admission not enabled"; an explicit warning is recorded so it is not mistaken for a pass
 function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]$AcceptanceFileArg) {
     if ($AdmitMode -eq 'off') {
         Write-Log 'admit gate explicitly disabled (-AdmitMode off); nothing was checked'
@@ -183,7 +188,7 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
     if ($flowPath) {
         $admitArgs += @('-FlowFile', $flowPath)
     } else {
-        # 显式开启派生：由准入网关按 pad_flow_name → 文件名/name 唯一命中；多命中报 ADMIT_AMBIGUOUS_FLOW
+        # Derivation was explicitly enabled: the gate matches pad_flow_name → file name / name uniquely; multiple matches raise ADMIT_AMBIGUOUS_FLOW
         $admitArgs += @('-FlowName', $FlowName)
     }
     $admitOut = & powershell @admitArgs *>&1 | Out-String
@@ -204,13 +209,13 @@ function Invoke-AdmitGate([string]$FlowFileArg, [string]$ConfigFileArg, [string]
     return $true
 }
 
-# ── 收集（设计器本地运行）：读机器人遥测日志 ──────────────────
-# 设计器内“运行”不写 Console\Scripts\<flow>\Runs\<runId>\Actions.log，
-# 而是在 DataCollection 下新建带时间戳的 RobinRobot.log（JSON Lines）。
-# 因此用“触发之后的最新文件”关联本次运行；解析交给 PadTelemetry
+# ── Collection (designer-local run): read the robot telemetry log ──────────────────
+# "Run" inside the designer does not write Console\Scripts\<flow>\Runs\<runId>\Actions.log;
+# it creates a new timestamped RobinRobot.log (JSON Lines) under DataCollection instead.
+# So this run is tied to "the newest file created after the trigger"; parsing is left to PadTelemetry
 function Get-DesignerRunResult([datetime]$since, [string]$LogPath) {
-    # 等待阶段已经锁定本次运行的遥测日志时直接用它，
-    # 避免“取触发之后最新一份”在同机并发跑别的流时误命中别人那一份
+    # When the wait phase has already pinned the telemetry log for this run, use it directly,
+    # so "newest file after the trigger" cannot accidentally pick up another flow running concurrently on the same machine
     if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
         return (Get-RobinTelemetryFromFile -Path $LogPath)
     }
@@ -226,22 +231,22 @@ function Get-DesignerRunResult([datetime]$since, [string]$LogPath) {
     return (Get-RobinTelemetryFromFile -Path $log.FullName)
 }
 
-# ── 收集：定位 Runs 目录并解析 Actions.log ────────────────────
+# ── Collection: locate the Runs directory and parse Actions.log ────────────────────
 function Get-PadRunResult([string]$rid, [string]$RunDir) {
     $base = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts'
-    # 等待阶段已锁定本次运行目录时直接用它
+    # Use the run directory pinned by the wait phase, when there is one
     $dir = $null
     if ($RunDir -and (Test-Path -LiteralPath $RunDir)) { $dir = Get-Item -LiteralPath $RunDir }
     if (-not $dir -and $rid) {
-        # 只按本次触发的 runId 精确找：PAD 用 URL 里的 runId 作运行目录名。
-        # 复用 PadDesigner 的 Resolve-PadRunDir（与等待阶段同一口径），
-        # 绝不退化成“取触发之后最新的目录”——同机并发时那会拿到别人的运行
+        # Look up exactly by the runId used for this trigger: PAD uses the runId from the URL as the run directory name.
+        # Reuse PadDesigner's Resolve-PadRunDir (same rule as the wait phase),
+        # never degrade to "newest directory after the trigger": with concurrent runs on one machine that belongs to someone else
         $dir = Resolve-PadRunDir -ScriptsRoot $base -RunId $rid
     }
     if (-not $dir) { return $null }
 
     $logPath = Join-Path $dir.FullName 'Actions.log'
-    # 日志可能在流程结束后才落盘，最多等 30 秒
+    # The log may only be flushed to disk after the flow ends; wait at most 30 seconds
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt 30) {
         if ((Test-Path $logPath) -and (Get-Item $logPath).Length -gt 0) { break }
@@ -251,8 +256,8 @@ function Get-PadRunResult([string]$rid, [string]$RunDir) {
     $status = $null
     $rdPath = Join-Path $dir.FullName 'RunDefinition.json'
     if (Test-Path $rdPath) {
-        # 同样必须按 UTF-8 读，否则中文失败动作名会让 JSON 解析报错；
-        # 用共享模式读，避免流程还在跑时被 PAD 的写句柄挡住
+        # This must be read as UTF-8 too, otherwise Chinese failed-action names break JSON parsing;
+        # read in shared mode so PAD's write handle cannot block us while the flow is still running
         try {
             $rdText = Read-TextShared $rdPath
             $status = ($rdText | ConvertFrom-Json).status
@@ -263,8 +268,8 @@ function Get-PadRunResult([string]$rid, [string]$RunDir) {
     $failed = $null
     $summary = $null
     if (Test-Path $logPath) {
-        # Actions.log 是 UTF-8（PowerShell 5.1 的 Get-Content 默认按 ANSI 读会乱码并破坏 JSON）；
-        # PAD 运行期间会独占写句柄，必须共享读，否则 ReadAllLines 直接抛“文件正由另一进程使用”
+        # Actions.log is UTF-8 (PowerShell 5.1's Get-Content decodes as ANSI by default, which mangles it and breaks the JSON);
+        # PAD holds an exclusive write handle while running, so reads must be shared, otherwise ReadAllLines throws "file is in use by another process"
         $logText = ''
         try { $logText = Read-TextShared $logPath } catch {
             Write-Log "Actions.log is not readable yet: $($_.Exception.Message)"
@@ -272,7 +277,7 @@ function Get-PadRunResult([string]$rid, [string]$RunDir) {
         foreach ($line in ($logText -split "`r?`n")) {
             if (-not $line.Trim()) { continue }
             try { $j = $line | ConvertFrom-Json } catch { continue }
-            # 日志最后一行是整次运行的汇总（没有 index），单独保留后跳过
+            # The last log line is the summary of the whole run (no index); keep it separately and skip it
             if ($null -eq $j.index -or -not $j.status) {
                 if ($j.workflow -and $j.status) { $summary = $j }
                 continue
@@ -299,16 +304,16 @@ function Get-PadRunResult([string]$rid, [string]$RunDir) {
     return [ordered]@{ status = $status; actions = $actions; failed = $failed; logPath = $logPath }
 }
 
-# ── 主流程 ────────────────────────────────────────────────────
+# ── Main flow ────────────────────────────────────────────────────
 try {
     if (-not $RunId) { $RunId = [Guid]::NewGuid().ToString() }
     $script:Result.runId = $RunId
 
-    # 跨进程互斥：同一时刻只允许一个流占用 PAD。
-    # 放在最前面（早于准入、注入），后来者在这里排队，而不是两个流同时抢 PAD
+    # Cross-process mutex: only one flow may occupy PAD at a time.
+    # Done first (before admission and injection) so later arrivals queue here instead of two flows grabbing PAD at once
     if (-not $NoLock) {
         $script:Result.stage = 'lock'
-        # 抢锁结果与等待时长一次带回（ok/waitedSec），不再另调状态查询函数
+        # The lock result and wait time come back in one call (ok/waitedSec); no separate status query is needed
         $lock = Enter-PadRunLock -FlowName $FlowName -WaitSec $LockWaitSec -Logger { param($m) Write-Log $m }
         $waited = $lock.waitedSec
         $script:Result.lockWaitSec = $waited
@@ -321,7 +326,7 @@ try {
         if ($waited -gt 0) { Write-Log "PAD is now free (waited $waited s)" }
     }
 
-    # 准入网关：RunOnly（定时任务）也跑，避免夜间运行绕过门禁
+    # Admission gate: it also runs for RunOnly (scheduled tasks) so the nightly run cannot bypass it
     [void](Invoke-AdmitGate $FlowFile $ConfigFile $AcceptanceFile)
 
     if (-not $RunOnly) {
@@ -329,8 +334,8 @@ try {
         $text = [IO.File]::ReadAllText((Resolve-Path $RobinFile), [Text.Encoding]::UTF8)
         if (-not $text.Trim()) { throw '.robin file is empty' }
 
-        # 准入网关已在主流程开头跑过（RunOnly 也覆盖），这里只做静态校验
-        # V 模型 G2：静态校验不通过就不进设计器，避免坏脚本污染画布
+        # The admission gate already ran at the top of the main flow (RunOnly included); here we only do the static check
+        # V-model G2: never enter the designer when the static check fails, so a broken script cannot pollute the canvas
         if (-not $SkipStaticCheck) {
             $script:Result.stage = 'static-check'
             $checkJs = Join-Path (Split-Path -Parent $PSScriptRoot) 'pad-robin\check.js'
@@ -353,11 +358,11 @@ try {
         if ($afterCount -le 0) { throw 'canvas is empty after injection; injection failed' }
         Write-Log "injection done: $afterCount actions on the canvas"
 
-        # 只验证注入、不发布不运行：用于确认画布真的被更新
+        # Inject-only, no publish and no run: used to confirm the canvas really was updated
         if (-not $InjectOnly -and -not $NoPublish -and -not $LocalRun) {
             $script:Result.stage = 'publish'
             $win = Get-DesignerWindow -FlowName $FlowName
-            # 正常发布不超过 3 分钟；超过即视为异常（版本冲突或服务故障），不能静默等待
+            # A normal publish takes under 3 minutes; exceeding that is abnormal (version conflict or service outage), so do not wait silently
             [void](Click-ToolButton $win 'PublishFlowButton')
             $published = Wait-PublishDone $win 300
             if (-not $published) {
@@ -374,7 +379,7 @@ try {
         $script:Result.actions = $afterCount
         $script:Result.stage = 'done'
     } elseif ($PublishOnly) {
-        # 只保存到云端：发布完成后直接结束，不触发 URL 运行
+        # Save to the cloud only: stop right after publishing, do not trigger a URL run
         Write-Log 'published; skipping the run (-PublishOnly)'
         $script:Result.ok = $true
         $script:Result.status = 'Published'
@@ -383,14 +388,14 @@ try {
     } else {
         $script:Result.stage = 'run'
         $runStart = (Get-Date).AddSeconds(-5)
-        # 等待阶段按“运行日志落盘”锁定本次运行，返回目录/日志路径与终止状态，
-        # 不再用“PAD.RobotV2 进程是否还在”判结束（同机并发时会误判）
+        # The wait phase pins this run by "the run log appearing on disk" and returns the directory / log path and the
+        # terminal status; it no longer judges completion by "is the PAD.RobotV2 process still alive" (which misfires with concurrent runs)
         $runHint = $null
         try {
             $runHint = Invoke-PadRun -WorkflowName $FlowName -RunId $RunId -TimeoutSec $RunTimeoutSec `
                 -Local:($LocalRun -or $NoPublish) -NonInteractive:$NonInteractive
         } catch {
-            # 触发前校验失败（流程名解析不出 flowId）也算触发失败，单独分类后退出码仍是 1
+            # A pre-trigger validation failure (flow name does not resolve to a flowId) counts as a trigger failure too; it gets its own classification but the exit code is still 1
             if ([string]$_.Exception.Data['code'] -eq 'TRIGGER_PREFLIGHT_FAILED') {
                 $script:Result.triggerFailed = $true
                 $script:Result.triggerReason = 'identity-mismatch'
@@ -398,7 +403,7 @@ try {
             throw
         }
         if (-not $runHint -or -not $runHint.evidence) {
-            # 没起来：协议处理器没反应、确认框被取消、PAD 报错弹窗阻塞都会落到这里
+            # It never started: an unresponsive protocol handler, a cancelled confirmation box or a blocking PAD error dialog all land here
             $script:Result.triggerFailed = $true
             $script:Result.triggerReason = 'no-evidence'
             $script:Result.error = [ordered]@{
@@ -408,9 +413,9 @@ try {
             throw $script:Result.error.message
         }
 
-        # 非交互运行停在人工确认弹窗（完成提示 / 人工确认等）：
-        # 不自动点击、不杀进程，弹窗留给人工；本次以 needs-human-confirm 收尾，
-        # 让调度层立刻告警，而不是无声挂到 180 分钟超时。ok 保持 $null（未知 ≠ 失败）
+        # A non-interactive run stopped at a manual-confirmation dialog (completion notice / manual confirmation etc.):
+        # do not click it and do not kill the process; the dialog is left for a human. This run ends as needs-human-confirm
+        # so the scheduler alerts immediately instead of hanging silently until the 180-minute timeout. ok stays $null (unknown ≠ failure)
         if ($runHint.evidence -eq 'human-confirm') {
             $script:Result.stage = 'needs-human-confirm'
             $script:Result.needsHumanConfirm = $true
@@ -422,8 +427,8 @@ try {
             $script:Result.warnings += "non-interactive run stopped at the manual-confirmation dialog '$($runHint.dialogTitle)'; the flow is still waiting for a manual click"
             Write-Log "run stopped at a manual-confirmation dialog `"$($runHint.dialogTitle)`": not clicking automatically; handle it manually and rerun"
         } elseif ($runHint.startupTimedOut -and -not $runHint.status) {
-            # 运行目录已出现但机器人始终没启动：以前会落到 Unknown→退出码 0，静默无告警，
-            # 现在按 trigger-failed（reason=no-robot）收尾，只告警不重试
+            # The run directory appeared but the robot never started: this used to fall through to Unknown → exit 0,
+            # silently and without an alert. It now ends as trigger-failed (reason=no-robot): alert only, no retry
             $script:Result.stage = 'trigger'
             $script:Result.status = 'NotStarted'
             $script:Result.ok = $false
@@ -435,7 +440,7 @@ try {
                 message = 'the trigger was accepted and a run directory appeared, but the robot did not start within the watch window (it may be stuck on a PAD error dialog or was cancelled)'
             }
         } elseif ($runHint.timedOut -and -not $runHint.status) {
-            # 等满 RunTimeoutSec 仍未拿到终止状态：按运行超时告警，不静默按 Unknown 退出
+            # RunTimeoutSec elapsed without a terminal status: alert as a run timeout instead of exiting silently as Unknown
             $script:Result.stage = 'run-timeout'
             $script:Result.status = 'RunTimeout'
             $script:Result.ok = $false
@@ -448,11 +453,11 @@ try {
         } else {
         $script:Result.stage = 'collect'
         if ($LocalRun -or $NoPublish) {
-            # 设计器内运行：读 DataCollection 下的 RobinRobot.log 遥测
+            # Designer-local run: read the RobinRobot.log telemetry under DataCollection
             $res = Get-DesignerRunResult $runStart $runHint.logPath
             if (-not $res) {
-                # 日志正被机器人进程写住、读不出来（或确实找不到）：
-                # 按 Unknown 收尾，不判失败、不抛异常，与 Console 取证同一口径
+                # The log is still being written by the robot process and cannot be read (or is genuinely missing):
+                # end as Unknown without judging failure or throwing, the same rule used for Console evidence
                 $script:Result.status = 'Unknown'
                 $script:Result.ok = $null
                 $script:Result.evidence = 'unknown'
@@ -469,7 +474,7 @@ try {
                 $script:Result.timedActions = $res.timedActions
                 $script:Result.totalMs = $res.totalMs
                 $script:Result.error = $res.error
-                # 内置动作（SET/IF/File 等）失败时没有动作级异常，用 run 级错误码构造一个
+                # Built-in actions (SET/IF/File etc.) have no action-level exception when they fail, so build one from the run-level error code
                 if ($res.status -eq 'Failed' -and -not $script:Result.failedActions) {
                     $script:Result.failedAction = [ordered]@{ name = $null; error = $res.error }
                 }
@@ -477,9 +482,9 @@ try {
             }
         } else {
             $res = Get-PadRunResult $RunId $runHint.runDir
-            # Actions.log 在运行结束后会被 PAD 清理：拿不到或状态为空时，
-            # 必须按 runId 回 Console 遥测取证，绝不用可能为空的 runHint.status 判失败。
-            # 取证优先级：Actions.log → PadConsole 本次 runId 事件 → Unknown（未知 ≠ 失败）
+            # PAD cleans up Actions.log after a run: when it is unavailable or the status is empty,
+            # evidence must come from Console telemetry for this runId; never judge failure from a possibly empty runHint.status.
+            # Evidence priority: Actions.log → the PadConsole event for this runId → Unknown (unknown ≠ failure)
             if (-not $res -or -not $res.status) {
                 $console = Get-PadConsoleRunOutcome -RunId $RunId -Since $runStart
                 if ($console -and $console.outcome -eq 'Succeeded') {
@@ -500,14 +505,14 @@ try {
                     $script:Result.evidence = 'unknown'
                     $script:Result.logPath = $runHint.logPath
                     if ($console -and $console.note) {
-                        # 日志正被 PAD 写住、读不出来：仍只记 Unknown，不判失败、不发 run-failed
+                        # The log is still being written by PAD and cannot be read: still record Unknown only; do not judge failure and do not send run-failed
                         $script:Result.warnings += $console.note
                         Write-Log $console.note
                     } else {
                         $script:Result.warnings += 'neither Actions.log nor PadConsole has evidence for this run; the result is unknown (not treated as a failure and no run-failed alert is sent)'
                         Write-Log 'no usable run evidence; outcome recorded as Unknown (unknown is not failure)'
                     }
-                    # 必须清空，否则下面 if ($res) 会用 $res.status（可能为 $null）覆盖 'Unknown'
+                    # Must be cleared, otherwise the if ($res) below would overwrite 'Unknown' with $res.status (which may be $null)
                     $res = $null
                 }
             }
@@ -529,7 +534,7 @@ try {
             }
         }
 
-        # V 模型 G6：运行成功不等于业务正确，按判据检查产物
+        # V-model G6: a successful run does not mean the business result is correct; check the artifacts against the criteria
         if ($AcceptanceFile) {
             $script:Result.stage = 'acceptance'
             if (-not $ConfigFile) { throw '-AcceptanceFile requires -ConfigFile' }
@@ -551,7 +556,7 @@ try {
 }
 catch {
     $script:Result.ok = $false
-    # 触发类失败在抛出前已写入分类错误码，这里只补消息，不覆盖 code
+    # Trigger-class failures already set their classified error code before being thrown; only fill in the message here, never overwrite code
     $code = $null
     if ($script:Result.error -is [System.Collections.IDictionary]) {
         $code = $script:Result.error['code']
@@ -566,9 +571,9 @@ catch {
     Write-Log "failed at [$($script:Result.stage)]: $($_.Exception.Message)"
 }
 
-# ── 编排层记录：每次运行追加一行 manifest ──────────────────────
-# PAD 画布内不写任何日志动作，运行历史统一由编排层落账。
-# 放在 PAD_SYNC_RESULT 之前，且失败只提示不中断，保证 agent 始终能读到运行结果。
+# ── Orchestration record: append one manifest line per run ──────────────────────
+# No logging action is placed inside the PAD canvas; the orchestration layer keeps the run history.
+# This runs before PAD_SYNC_RESULT and a failure only warns without interrupting, so the agent can always read the run result.
 if (-not $NoManifest -and $ManifestPath) {
     $errCode = $null; $errMsg = $null
     $rawErr = $script:Result.error
@@ -591,7 +596,7 @@ if (-not $NoManifest -and $ManifestPath) {
             -Acceptance $script:Result.acceptance -Warnings $script:Result.warnings
         Add-ManifestEntry $ManifestPath $entry
         Write-Log "manifest appended: $ManifestPath"
-        # run 记录只留 90 天；release / rollback 永久保留。清理失败不影响运行结果
+        # Run records are kept 90 days; release / rollback entries are kept forever. A failed prune does not affect the run result
         try {
             $dropped = Remove-OldManifestEntries $ManifestPath -KeepDays 90
             if ($dropped -gt 0) { Write-Log "manifest pruned $dropped run record(s) older than 90 days" }
@@ -601,12 +606,12 @@ if (-not $NoManifest -and $ManifestPath) {
     }
 }
 
-# 释放互斥锁：正常结束、异常结束都要走这里；进程被强杀时系统会自动释放
+# Release the mutex: both normal and abnormal endings pass through here; when the process is killed the system releases it automatically
 Exit-PadRunLock
 
-# ── 失败告警：直调路径（手工点运行 / URL 触发）也要落 alerts.jsonl ──
-# 与 pad-schedule 共用 PadAlerts.psm1；成功（exit 0 且无失败标记）不写。
-# 同一 runId + 同一 kind 只写一条，重试不会刷屏。
+# ── Failure alerts: directly invoked runs (manual Run click / URL trigger) also write to alerts.jsonl ──
+# Shared with pad-schedule through PadAlerts.psm1; nothing is written on success (exit 0 with no failure flag).
+# One entry per runId + kind, so retries do not flood the file.
 $alertDir = $null
 $alertRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (Test-Path (Join-Path $alertRepo 'tools')) { $alertDir = Join-Path $alertRepo 'business\logs' }
@@ -621,16 +626,16 @@ if ($alertDir) {
             -RunId ([string]$script:Result.runId) -Dir $alertDir
         if ($alert -and -not $alert.skipped) { Write-Log "failure alert written: $($alert.path)" }
     } catch {
-        # 告警写入失败不能影响运行结果与退出码，只提示
+        # A failed alert write must not affect the run result or the exit code; warn only
         Write-Log "alert write failed (does not affect the run result): $($_.Exception.Message)"
     }
 }
 
-# 供 agent 解析的最终结果（最后一行固定前缀）
+# Final result for the agent to parse (fixed prefix on the last line)
 Write-Output ("PAD_SYNC_RESULT=" + ($script:Result | ConvertTo-Json -Depth 8 -Compress))
 
-# 退出码：0 成功/结果未知 / 1 运行失败 / 3 停在人工确认 / 4 等锁超时
-# 结果未知（ok=$null）不按失败处理，避免 Actions.log 被清理后误报
+# Exit codes: 0 success / unknown result / 1 run failed / 3 stopped at manual confirmation / 4 timed out waiting for the lock
+# An unknown result (ok=$null) is not treated as a failure, so a cleaned-up Actions.log does not cause a false alarm
 if ($script:LockTimedOut) { exit 4 }
 if ($script:Result.needsHumanConfirm) { exit 3 }
 if ($script:Result.ok -eq $false) { exit 1 }

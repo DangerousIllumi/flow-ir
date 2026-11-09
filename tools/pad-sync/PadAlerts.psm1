@@ -1,17 +1,17 @@
-﻿# PadAlerts.psm1 — 失败告警的唯一实现（business\logs\alerts.jsonl）
+﻿# PadAlerts.psm1 — the single implementation of failure alerts (business\logs\alerts.jsonl)
 #
-# 为什么单独成模块：
-#   pad-schedule / pad-sync / pad-deploy / pad-release 四条入口都要在失败时落同一种告警；
-#   各自复制一份会让字段名与 kind 口径漂移，运维无法统一过滤。
-#   本模块只做「分级 + 去重 + 追加一行 JSONL」：不发任何外部消息，也不需要任何凭据，
-#   告警通道本身不会影响主流程。
+# Why a separate module:
+#   All four entry points — pad-schedule / pad-sync / pad-deploy / pad-release — must record the same kind of alert on failure;
+#   copying the logic into each would let field names and kind semantics drift, and operations could no longer filter uniformly.
+#   This module does only "classify + deduplicate + append one JSONL line": it sends no external message and needs no credentials,
+#   so the alert channel itself can never affect the main flow.
 #
-# 去重口径：
-#   同一 runId + 同一 kind 只写一条（重试、重复调用都不再追加）；
-#   没有 runId 的阶段（发布/注入/日历）按「flow + kind + stage + 当天」去重，
-#   避免同一天重试刷屏，同时允许第二天再次告警。
+# Deduplication rules:
+#   The same runId + the same kind is written once (retries and repeated calls append nothing);
+#   stages without a runId (release/inject/calendar) deduplicate on "flow + kind + stage + today",
+#   which prevents same-day retry spam while still allowing another alert the next day.
 
-# kind 常量集中在这里：调用点只引用常量名，不写散字符串
+# The kind constants live here: call sites reference the names only and never inline the strings
 function Get-AlertKindConstants {
     return [ordered]@{
         TriggerFailed         = 'trigger-failed'
@@ -28,7 +28,7 @@ function Get-AlertKindConstants {
     }
 }
 
-# 每个 kind 的默认文案：必须带一句「下一步怎么办」，供人直接照做
+# Default note for each kind: it must include a "what to do next" sentence so a person can act on it directly
 function Get-AlertDefaultNote([string]$Kind) {
     switch ($Kind) {
         'deploy-precheck-failed' { return 'Deploy precheck failed (config/placeholders/paths); nothing was injected. Next step: fix the config or the source .robin, then retry.' }
@@ -39,11 +39,11 @@ function Get-AlertDefaultNote([string]$Kind) {
     }
 }
 
-# 失败告警分级：把退出码与结果标记映射成 kind / reason / note
+# Alert classification: map exit codes and result markers to kind / reason / note
 #
-# 单独抽成纯函数，便于 Pester 直接断言分类结果，不必真跑 PAD。
-# 分类优先级：人工确认 > 等锁超时 > 日历不可用 > 触发失败 > 运行超时 > 一般运行失败。
-# 成功（exit 0 且无失败标记）返回 $null：调用方据此不写告警。
+# Extracted as a pure function so Pester can assert the classification directly without actually running PAD.
+# Priority: manual confirmation > lock wait timeout > calendar unavailable > trigger failure > run timeout > generic run failure.
+# Success (exit 0 with no failure marker) returns $null, which tells the caller not to write an alert.
 function Get-RunAlertKind {
     param(
         [int]$ExitCode,
@@ -90,7 +90,7 @@ function Get-RunAlertKind {
     return [ordered]@{ kind = 'run-failed'; reason = $null; note = $null }
 }
 
-# 去重判定：命中已有记录返回 $true（本次不追加）
+# Deduplication test: returns $true when an existing record matches (nothing is appended this time)
 function Test-AlertDuplicate {
     param([string]$File, [string]$FlowName, [string]$Kind, [string]$RunId, [string]$Stage, [string]$Today)
     if (-not (Test-Path -LiteralPath $File)) { return $false }
@@ -100,20 +100,20 @@ function Test-AlertDuplicate {
         if ([string]$r.flow -ne $FlowName) { continue }
         if ([string]$r.kind -ne $Kind) { continue }
         if ($RunId) {
-            # 同一 runId + 同一 kind：重试/重复调用都只留一条
+            # Same runId + same kind: retries and repeated calls all leave a single line
             if ([string]$r.runId -eq $RunId) { return $true }
         } elseif ([string]$r.stage -eq $Stage -and ([string]$r.ts).StartsWith($Today)) {
-            # 无 runId 的阶段：同一天同一 stage 只留一条，允许第二天再告警
+            # Stages without a runId: one line per stage per day; another alert is allowed the next day
             return $true
         }
     }
     return $false
 }
 
-# 失败告警：追加一行到 alerts.jsonl
+# Failure alert: append one line to alerts.jsonl
 #
-# 返回 [ordered]@{ skipped; path; record }：
-#   skipped=$true 表示没有写（成功、或同键已存在）；调用方据此决定是否打印提示。
+# Returns [ordered]@{ skipped; path; record }:
+#   skipped=$true means nothing was written (success, or the same key already exists); the caller uses it to decide whether to print a hint.
 function Write-RunAlert {
     param(
         [string]$FlowName,
@@ -123,19 +123,19 @@ function Write-RunAlert {
         $SyncResult,
         [string]$LogPath,
         [string]$Dir,
-        # 日历是否可用：$false 表示本次因日历不可用而未运行，供告警分级使用
+        # Calendar availability: $false means this run did not execute because the calendar was unavailable, for alert classification
         [Nullable[bool]]$CalendarOk,
-        # 日历过期：日历能读，但今天不在覆盖范围内；必须单列，不能算「今天休息」
+        # Calendar stale: the calendar is readable but does not cover today; this must be a separate case, not "a day off"
         [switch]$CalendarStale,
         [string]$CalendarRange,
-        # 调用方显式指定的 kind（发布/注入类）；不传时由 Get-RunAlertKind 推导
+        # Kind explicitly given by the caller (release/inject stages); derived by Get-RunAlertKind when omitted
         [string]$Kind,
-        # 调用方显式指定的文案；不传时用 kind 对应的默认文案
+        # Note explicitly given by the caller; falls back to the kind's default note when omitted
         [string]$Note,
-        # 调用方显式声明的标记：Note 是否已含「下一步」处置建议。
-        # 默认 true（现有调用方的 Note 都自带下一步）；传空文案时应显式传 $false。
+        # Flag the caller declares explicitly: whether Note already contains a "next step" recommendation.
+        # Defaults to true (existing callers' notes all include a next step); pass $false explicitly when passing an empty note.
         [bool]$NoteHasNextStep = $true,
-        # 运行标识：有值时按「runId + kind」去重
+        # Run identifier: when present, deduplicate on "runId + kind"
         [string]$RunId
     )
     if (-not $Dir) {
@@ -151,7 +151,7 @@ function Write-RunAlert {
         if (-not $grade) { return [ordered]@{ skipped = $true; path = $null; record = $null } }
         if ($Note) { $grade.note = $Note }
     }
-    # 日历过期单独成类：事件名固定 calendar-stale（触发层上线后复用同名，不另造新名）
+    # Stale calendar is its own class: the event name is fixed as calendar-stale (the trigger layer reuses it once online rather than inventing a new name)
     if ($CalendarStale) {
         $grade = [ordered]@{
             kind   = 'calendar-stale'
@@ -161,8 +161,9 @@ function Write-RunAlert {
     }
 
     $note = [string]$grade.note
-    # 兜底：任何一条告警都必须告诉人下一步做什么。
-    # 是否已附加处置建议用显式标记判断，不再匹配文案里的中文关键字。
+    # Safety net: every alert must tell a person what to do next.
+    # Whether a recommendation is already attached is decided by the explicit flag, not by scanning the note for keyword
+    # strings (an approach that only worked for notes written in Chinese).
     $hasNextStep = if ($CalendarStale) { $true }
         elseif ($Note) { $NoteHasNextStep }
         elseif ($Kind) { $true }
@@ -202,14 +203,14 @@ function Write-RunAlert {
         note       = $note
     }
     if ($RunId) { $rec['runId'] = $RunId }
-    # 触发失败额外带 reason 分类（identity-mismatch / no-evidence / no-robot）
+    # Trigger failures additionally carry a reason classification (identity-mismatch / no-evidence / no-robot)
     if ($grade.reason) { $rec['reason'] = $grade.reason }
     if ($CalendarStale) {
         $rec['calendarStale'] = $true
         $rec['calendarRange'] = $CalendarRange
     }
     if ($null -ne $CalendarOk) { $rec['calendarOk'] = [bool]$CalendarOk }
-    # 不用 Add-Content：PS 5.1 首次写入会带 BOM，JSONL 逐行解析会失败
+    # Do not use Add-Content: the first write in PS 5.1 adds a BOM, which breaks line-by-line JSONL parsing
     [IO.File]::AppendAllText($file, (($rec | ConvertTo-Json -Depth 8 -Compress) + "`n"),
         (New-Object Text.UTF8Encoding($false)))
     return [ordered]@{ skipped = $false; path = $file; record = $rec }

@@ -1,26 +1,26 @@
-﻿# pad-verify.ps1 — 按验收判据检查一次运行的产物（只读，不触碰 PAD）
+﻿# pad-verify.ps1 — check the artefacts of one run against the acceptance criteria (read-only; never touches PAD)
 #
-# 用法：
+# Usage:
 #   .\pad-verify.ps1 -AcceptanceFile business\flows\sample-report.acceptance.json `
 #                    -ConfigFile business\config\sample-report.json
 #   .\pad-verify.ps1 -BuildFromFlow -FlowFile business\flows\sample-report.json `
 #                    -ConfigFile business\config\sample-report.json
 #
-# 参数：
-#   -AcceptanceFile  验收判据 JSON
-#   -BuildFromFlow   由 flow.json 的 acceptance 声明现生成判据（忽略 -AcceptanceFile）
-#   -FlowFile        配合 -BuildFromFlow；不传时要求 business\flows 目录里唯一匹配，否则报候选数
-#   -ConfigFile      部署配置（用于替换 {{KEY}} 占位符）
-#   -Since           只认这个时间之后产生的文件；默认 6 小时前
-#   -Json            打印完整 JSON 明细
+# Parameters:
+#   -AcceptanceFile  Acceptance criteria JSON
+#   -BuildFromFlow   Generate the criteria on the fly from flow.json's acceptance declaration (ignores -AcceptanceFile)
+#   -FlowFile        Used with -BuildFromFlow; when omitted it requires a unique match in the business\flows directory, otherwise it reports the number of candidates
+#   -ConfigFile      Deployment config (used to substitute {{KEY}} placeholders)
+#   -Since           Only accept files produced after this time; default is 6 hours ago
+#   -Json            Print the full JSON detail
 #
-# 输出：最后一行固定 PAD_VERIFY_RESULT=<JSON>；退出码 0=通过 / 1=失败
+# Output: the last line is always PAD_VERIFY_RESULT=<JSON>; exit code 0=pass / 1=fail
 
 [CmdletBinding()]
 param(
     [string]$AcceptanceFile,
     [Parameter(Mandatory = $true)][string]$ConfigFile,
-    # 直接从 flow.json 的 acceptance 声明生成判据（不再依赖手写的 acceptance.json）
+    # Build the criteria directly from flow.json's acceptance declaration (no longer relies on a hand-written acceptance.json)
     [string]$FlowFile,
     [switch]$BuildFromFlow,
     [datetime]$Since = (Get-Date).AddHours(-6),
@@ -31,10 +31,10 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'PadAcceptance.psm1') -Force
 
-# 生成模式：先由 flow.json 现算一份判据到临时目录，再走同一套验收逻辑
+# Generation mode: compute the criteria from flow.json into a temp directory, then go through the same acceptance logic
 if ($BuildFromFlow) {
     if (-not $FlowFile) {
-        # 不再默认到某个具体业务流程：business\flows 目录里必须唯一匹配，否则要求显式指定
+        # No longer default to a particular business flow: the business\flows directory must yield a unique match, otherwise an explicit value is required
         $flowsDir = Join-Path (Split-Path -Parent $PSScriptRoot) '..\business\flows'
         $cands = @(Get-ChildItem -LiteralPath $flowsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notmatch '\.(acceptance|requirements|schema)\.json$' })

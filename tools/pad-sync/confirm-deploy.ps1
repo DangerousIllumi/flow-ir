@@ -1,4 +1,4 @@
-﻿# confirm-deploy.ps1 — MessageBox 弹窗，用户确认后 Exit 0，取消 Exit 1
+﻿# confirm-deploy.ps1 — MessageBox dialog; exit 0 when the user confirms, exit 1 when cancelled
 param([string]$Title, [string]$Msg)
 Add-Type -AssemblyName System.Windows.Forms
 $r = [System.Windows.Forms.MessageBox]::Show($Msg, $Title,

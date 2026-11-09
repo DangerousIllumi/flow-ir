@@ -1,18 +1,19 @@
-﻿# build-acceptance.ps1 — 由 flow.json 的 acceptance 声明生成验收判据文件
+﻿# build-acceptance.ps1 — generate the acceptance criteria file from the flow.json acceptance declaration
 #
-# 为什么要生成：验收判据里的路径（Results / 导出目录 / 日历）本来就是 flow 变量的派生结果。
-# 手写两份必然漂移——改了 ResultsDir，验收还在查旧目录，就会「运行成功但验收失败」。
+# Why generate it: the paths in the acceptance criteria (Results / export directories / calendar) are
+# derived from flow variables anyway. Hand-writing two copies is bound to drift: change ResultsDir and the
+# acceptance check still looks at the old directory, giving "run succeeded but acceptance failed".
 #
-# 规则：
-#   {{variables.X}}  → 变量 X 的值（deployKey 变量输出 {{KEY}}，其余用 default）
-#   %X%              → 同上，两种写法都支持，便于和 .robin 里的写法保持一致
-#   递归解析，直到文本不再变化（如 %PadRoot%\Results）
+# Rules:
+#   {{variables.X}}  → the value of variable X (a deployKey variable outputs {{KEY}}, everything else uses default)
+#   %X%              → same as above; both forms are supported so this reads like the .robin
+#   resolved recursively until the text stops changing (e.g. %PadRoot%\Results)
 #
-# 用法：
-#   .\build-acceptance.ps1 -FlowFile business\flows\sample-report.json -OutFile <目标路径>
-#   .\build-acceptance.ps1 -FlowFile business\flows\sample-report.json -Check   # 只校验并打印
+# Usage:
+#   .\build-acceptance.ps1 -FlowFile business\flows\sample-report.json -OutFile <target path>
+#   .\build-acceptance.ps1 -FlowFile business\flows\sample-report.json -Check   # validate and print only
 #
-# 退出码：0 成功 / 1 声明有问题
+# Exit codes: 0 success / 1 the declaration is broken
 
 [CmdletBinding()]
 param(
@@ -23,7 +24,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# PadAcceptance 认识的判据类型，声明里出现别的直接拒绝，避免生成一个永远跑不了的判据
+# The criterion types PadAcceptance understands; anything else in the declaration is rejected outright, so we never generate a criterion that can never run
 $KNOWN_TYPES = @('fileExists', 'globNewerThan', 'pair', 'json', 'jsonl', 'logState')
 
 function Resolve-FlowExpr([string]$Text, [hashtable]$Map) {
@@ -41,7 +42,7 @@ function Resolve-FlowExpr([string]$Text, [hashtable]$Map) {
     return $cur
 }
 
-# 递归解析：字符串替换，数组逐个处理，对象逐属性处理
+# Recursive resolution: substitute in strings, walk arrays element by element, walk objects property by property
 function Resolve-Node($Node, [hashtable]$Map) {
     if ($null -eq $Node) { return $null }
     if ($Node -is [string]) { return Resolve-FlowExpr $Node $Map }
@@ -68,7 +69,7 @@ if (-not $flow.acceptance -or -not $flow.acceptance.checks) {
     exit 1
 }
 
-# 变量名 → 值：部署参数用 {{KEY}}，派生路径用 default
+# Variable name → value: deployment parameters use {{KEY}}, derived paths use default
 $vars = @{}
 foreach ($v in @($flow.variables)) {
     $name = [string]$v.name
@@ -87,7 +88,7 @@ foreach ($c in @($flow.acceptance.checks)) {
         $errs += "criterion '$($resolved.name)' has an unsupported type $type (supported: $($KNOWN_TYPES -join ' / '))"
     }
     foreach ($s in @($resolved.path, $resolved.dir) + @($resolved.paths)) {
-        # 只允许剩下 {{PAD_ROOT}} 这类部署占位符（由 config 在验收时替换）
+        # Only deployment placeholders such as {{PAD_ROOT}} may remain (the config substitutes them at acceptance time)
         if ($s -and ($s -match '\{\{variables\.' -or $s -match '%[A-Za-z_]\w*%')) {
             $errs += "criterion '$($resolved.name)' has an unresolved reference: $s"
         }

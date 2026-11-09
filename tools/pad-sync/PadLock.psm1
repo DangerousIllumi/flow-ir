@@ -1,14 +1,14 @@
-﻿# PadLock.psm1 — 跨进程互斥：同一时刻只允许一个流占用 PAD
+﻿# PadLock.psm1 — cross-process mutual exclusion: only one flow may occupy PAD at a time
 #
-# 为什么用命名 Mutex 而不是纯锁文件：
-#   锁文件在进程被强杀时会残留，等待方无法区分“真正在跑”和“残留”，
-#   只能靠 PID/心跳猜，猜错就死等。命名 Mutex 由系统维护，进程结束即释放，
-#   从根本上不存在陈旧锁。
+# Why a named mutex instead of a plain lock file:
+#   A lock file survives when the process is killed hard, so the waiter cannot tell "really running" from "leftover",
+#   and can only guess from PID/heartbeat; a wrong guess means waiting forever. A named mutex is maintained by the OS
+#   and released the moment the process ends, so a stale lock simply cannot exist.
 #
-# 锁文件（%LOCALAPPDATA%\flow-ir\pad-run.lock.json）只做可观测性：
-#   抢锁成功时写一次，记录持有流程、PID、进程启动时间与开始时间，
-#   供等待方打印“谁在占着 PAD”。它不参与互斥判定，也不承担心跳，
-#   删掉也不会影响正确性。
+# The lock file (%LOCALAPPDATA%\flow-ir\pad-run.lock.json) is only for observability:
+#   it is written once when the lock is acquired, recording the owning flow, PID, process start time, and start time,
+#   so a waiter can print "who is occupying PAD". It is not part of the mutual-exclusion decision and carries no heartbeat;
+#   deleting it does not affect correctness.
 
 $script:Mutex = $null
 $script:LockPath = $null
@@ -22,7 +22,7 @@ function Get-PadLockFile {
     return (Join-Path $dir 'pad-run.lock.json')
 }
 
-# 写锁文件。只在抢锁成功时调用一次，不做逐条日志刷新（避免每条日志一次整文件重写）
+# Write the lock file. Called once when the lock is acquired, never refreshed per log line (that would rewrite the whole file for every line)
 function Write-PadLockInfo {
     param([string]$FlowName)
     if (-not $script:LockPath) { return }
@@ -51,7 +51,7 @@ function Reset-PadLockInfo {
     }
 }
 
-# 锁文件描述的持有进程是否还活着（PID 会被复用，所以同时比对启动时间）
+# Whether the process described by the lock file is still alive (PIDs get reused, so compare the start time too)
 function Test-LockHolderAlive {
     param($Info)
     if (-not $Info -or -not $Info.pid) { return $false }
@@ -60,16 +60,16 @@ function Test-LockHolderAlive {
     try { return ([math]::Abs(($p.StartTime - [datetime]$Info.processStart).TotalSeconds) -lt 5) } catch { return $true }
 }
 
-# 抢锁：最多等 WaitSec 秒，每秒重试。
-# 返回 [pscustomobject]@{ ok; waitedSec }：
-#   以前返回裸布尔，调用方想知道“等了多久”还得再调一个 Get-PadLockState，
-#   等于为一个字段多开一个导出面。这里把判定与等待时长一次带回，
-#   模块只需要导出这一个入口，内部计数器也不必外露。
+# Acquire the lock: wait up to WaitSec seconds, retrying once per second.
+# Returns [pscustomobject]@{ ok; waitedSec }:
+#   It used to return a bare boolean, so a caller that wanted "how long did I wait" had to call Get-PadLockState as well —
+#   a whole extra export surface opened up for one field. Now the verdict and the wait duration come back together,
+#   so the module needs only this one entry point and the internal counter stays private.
 function Enter-PadRunLock {
     param(
         [Parameter(Mandatory = $true)][string]$FlowName,
         [int]$WaitSec = 1800,
-        # 日志回调；不传时直接写控制台
+        # Logging callback; falls back to writing to the console when not supplied
         [scriptblock]$Logger
     )
     $log = if ($Logger) { $Logger } else { { param($m) Write-Host "[pad-lock] $m" } }
@@ -86,7 +86,7 @@ function Enter-PadRunLock {
         try {
             if ($script:Mutex.WaitOne(1000)) { break }
         } catch [System.Threading.AbandonedMutexException] {
-            # 上一个持有者异常退出：锁已归本次所有，直接接管而不是当成残留死等
+            # The previous holder exited abnormally: the lock now belongs to this run, so take it over instead of waiting on it as a leftover
             & $log 'detected an abnormal end of the previous run; lock taken over'
             break
         }

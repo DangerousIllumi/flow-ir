@@ -1,10 +1,10 @@
-﻿# PadConfig.psm1 — 运行时集中配置：读取并逐字段校验
+﻿# PadConfig.psm1 — centralized runtime configuration: read it, then validate field by field
 #
-# 只做三件事：读 JSON、校验必需项/路径/类型、返回强类型对象。
-# 刻意不做多份配置合并、环境变量兜底或默认值回退：缺项直接硬失败，
-# 避免「看起来跑起来了，实际用的是旧路径或硬编码默认值」。
+# It does exactly three things: read the JSON, validate required keys/paths/types, and return a strongly typed object.
+# It deliberately does not merge multiple configs, fall back to environment variables, or apply defaults: a missing field
+# fails hard, so we never end up with "it looks like it ran, but it actually used an old path or a hard-coded default".
 
-# 抛出带错误码的异常：调用方与测试只看 Data['code']，不解析中文文案
+# Throw an exception that carries an error code: callers and tests read only Data['code'] and never parse the message text
 function Throw-ConfigError {
     param([string]$Code, [string]$Message)
     $ex = New-Object System.Exception ($Code + ': ' + $Message)
@@ -42,7 +42,7 @@ function Get-PadRuntimeConfig {
         }
     }
 
-    # 超时必须是正整数；JSON 里写成字符串或小数一律按类型错误处理
+    # The timeout must be a positive integer; a string or a decimal in the JSON is treated as a type error
     $sec = $cfg.RunTimeoutSec
     if (-not ($sec -is [int] -or $sec -is [long])) {
         Throw-ConfigError 'CONFIG_INVALID_VALUE' "RunTimeoutSec must be a positive integer: $sec"

@@ -1,81 +1,85 @@
-﻿# pad-schedule.ps1 — 定时触发（attended，本地任务计划 + 工作日历）
+﻿# pad-schedule.ps1 — scheduled trigger (attended: local Task Scheduler + workday calendar)
 #
-# 是否运行由「工作日历」决定，而不是简单按周一到周五：
-#   中国有法定节假日和调休（节假日不上班、周末可能补班），周一到周五的规则
-#   会在春节、国庆照常跑，也会漏掉调休上班的周末。
-#   因此默认改为「每天 09:00 触发 → 运行时先查日历 → 不是工作日就直接退出」。
-#   日历切换点：tools\workday\workday.py 的 --is-workday（通用件，与核对脚本共用同一份日历逻辑）。
+# Whether it runs is decided by the workday calendar, not by a plain Monday-to-Friday rule:
+#   China has statutory holidays and make-up workdays (nothing runs on holidays, and some
+#   weekends are worked to compensate), so a Monday-Friday rule would fire during Spring
+#   Festival and National Day and would also miss the make-up weekends.
+#   The default is therefore "trigger every day at 09:00 -> check the calendar at run time ->
+#   exit immediately if today is not a workday".
+#   Calendar switch: --is-workday in tools\workday\workday.py (shared component; it uses the
+#   same calendar logic as the verification scripts).
 #
-# 为什么用 Windows 任务计划而不是云端 Recurrence：
-#   attended 模式本身要求「机器开机 + 用户已登录」，云端 Recurrence 同样要求机器在线，
-#   却额外需要 Power Automate Premium（或 RPA attended 附加许可）。
-#   任务计划不依赖额外许可，且可脚本化、可审计、可一键卸载。
+# Why Task Scheduler instead of cloud Recurrence:
+#   attended mode already requires "machine on + user logged in", and cloud Recurrence needs
+#   the machine online as well, yet it additionally needs Power Automate Premium (or an RPA
+#   attended add-on licence).
+#   Task Scheduler needs no extra licence, and it can be scripted, audited and removed with one command.
 #
-# 云端 Recurrence 的做法（需要 Premium，本脚本不代劳）：
-#   1. make.powerautomate.com → 我的流 → 找到该桌面流 → 编辑 → 触发器 → 添加「计划」；
-#   2. 频率=天，时区=中国标准时间，时间=09:00；
-#   3. 保存后需保持目标机器在线且已登录（attended）。
-#   注意：云端 Recurrence 不会识别中国节假日，仍需在流程内用日历判断。
+# How to do it with cloud Recurrence (needs Premium; this script does not do it for you):
+#   1. make.powerautomate.com -> My flows -> find this desktop flow -> Edit -> Triggers -> add "Schedule";
+#   2. Frequency = Day, time zone = China Standard Time, time = 09:00;
+#   3. after saving, the target machine must stay online and logged in (attended).
+#   Note: cloud Recurrence knows nothing about Chinese holidays; the flow still has to check the calendar.
 #
-# 运行结果不需要重定向日志：pad-sync 会把每次运行追加到 business\manifest.jsonl（type=run）。
+# No log redirection is needed: pad-sync appends every run to business\manifest.jsonl (type=run).
 #
-# 用法：
-#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -DryRun        # 只打印将注册的计划
-#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST                # 注册/更新（每天 09:00，按日历判断）
-#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -IgnoreCalendar # 不看日历，只要周一到周五就运行
-#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -List          # 查看下次触发与上次结果
-#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -RunNow        # 立即触发一次（有真实副作用）
-#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -Remove        # 删除计划
+# Usage:
+#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -DryRun        # only print the task that would be registered
+#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST                # register/update (daily 09:00, gated by the calendar)
+#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -IgnoreCalendar # ignore the calendar; run Monday through Friday only
+#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -List          # show the next trigger time and the last result
+#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -RunNow        # trigger once immediately (has real side effects)
+#   .\pad-schedule.ps1 -FlowName PAD_SYNC_TEST -Remove        # delete the scheduled task
 #
-# 输出：最后一行 PAD_SCHEDULE_RESULT=<JSON>；退出码 0 成功 / 1 失败
+# Output: the last line is PAD_SCHEDULE_RESULT=<JSON>; exit code 0 success / 1 failure
 
 [CmdletBinding()]
 param(
     [string]$FlowName = 'PAD_SYNC_TEST',
-    # 触发时刻（HH:mm），默认每天 09:00
+    # Trigger time (HH:mm); default is 09:00 every day
     [string]$Time = '09:00',
     [string]$TaskName,
-    # 被调度的脚本，默认同目录的 pad-sync.ps1
+    # Script to schedule; defaults to pad-sync.ps1 in the same directory
     [string]$PadSyncPath,
-    # 集中运行时配置（JSON）：显式参数优先级最高，未显式给出的项才从配置取
+    # Central runtime config (JSON): explicit parameters win; only items not given explicitly come from the config
     [string]$ConfigPath,
-    # 工作日历：必须显式给出（不再内置默认路径），缺省时按错误退出
+    # Workday calendar: must be given explicitly (there is no built-in default path any more); omitting it is an error
     [string]$CalendarPath,
     [string]$PythonExe,
-    # 工作日判断脚本（通用件；默认 tools\workday\workday.py，找不到时直接失败退出）
+    # Workday check script (shared component; defaults to tools\workday\workday.py and exits with a failure when not found)
     [string]$WorkdayScript,
-    # 运行后验收判据与部署配置（可选；生产定时运行建议带上）
+    # Acceptance criteria and deployment config used after the run (optional; recommended for production schedules)
     [string]$AcceptanceFile,
     [string]$ConfigFile,
-    # pad-sync 的 -RunTimeoutSec：等流程自身运行结束的最长秒数
-    # AI 流等邮件最多 60 分钟 + 核对/SAP 约 3 分钟 ≈ 63 分钟，取 70 分钟余量
+    # pad-sync's -RunTimeoutSec: the longest wait, in seconds, for the flow itself to finish
+    # The AI flow waits for mail for up to 60 minutes + about 3 minutes of verification/SAP ≈ 63 minutes, so 70 minutes leaves headroom
     [int]$RunTimeoutSec = 4200,
-    # pad-sync 的 -LockWaitSec：等跨进程互斥锁的最长秒数
-    # 覆盖「前一个流还在跑 → 当前流排队等锁」的场景，默认 90 分钟
-    # 含长时间 SAP 下载最长约 45 分钟，另一类含等邮件最长约 63 分钟，取较大值加余量
+    # pad-sync's -LockWaitSec: the longest wait, in seconds, for the cross-process mutex
+    # Covers the "previous flow is still running -> the current flow queues for the lock" case; 90 minutes
+    # A long SAP download takes up to ~45 minutes and another kind with mail waiting takes up to ~63 minutes, so take the larger value plus headroom
     [int]$LockWaitSec = 5400,
-    # 忽略日历，退化为「周一到周五都跑」（不推荐：节假日会误跑、调休会漏跑）
+    # Ignore the calendar and fall back to "run every Monday to Friday" (not recommended: it fires on holidays and misses make-up workdays)
     [switch]$IgnoreCalendar,
-    # 运行入口：任务计划触发时由本脚本先判日历，再决定是否调用 pad-sync
+    # Run entry point: when Task Scheduler fires, this script checks the calendar first and only then decides whether to call pad-sync
     [switch]$RunIfWorkday,
-    # 运行入口：只有「本月最后一个工作日」才运行（月底场景）
+    # Run entry point: run only on the last workday of this month (month-end scenario)
     [switch]$RunIfLastWorkday,
-    # 注册选项：生成「仅本月最后一个工作日运行」的计划任务动作
+    # Registration option: build a scheduled-task action that runs only on the last workday of this month
     [switch]$LastWorkday,
-    # 生产流程必须显式给出，与其它部署脚本的熔断口径一致
+    # Must be given explicitly for a production flow, matching the safety-fuse policy of the other deployment scripts
     [switch]$AllowProd,
     [switch]$List,
     [switch]$Remove,
     [switch]$RunNow,
     [switch]$DryRun,
-    # 仅供 Pester dot-source 加载函数
+    # Only for Pester dot-sourcing to load the functions
     [switch]$NoMain
 )
 $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $here)
-# 集中配置：只在显式传 -ConfigPath 时读取；缺项/路径不存在/类型错误一律硬失败
+# Central config: read only when -ConfigPath is given explicitly; a missing item, a path that does not exist or a wrong type is always a hard failure
 Import-Module (Join-Path $here 'PadConfig.psm1') -Force
 if ($ConfigPath) {
     $runtime = Get-PadRuntimeConfig -ConfigPath $ConfigPath
@@ -85,22 +89,22 @@ if ($ConfigPath) {
     if (-not $PSBoundParameters.ContainsKey('WorkdayScript')) { $WorkdayScript = $runtime.WorkdayScript }
     if (-not $PSBoundParameters.ContainsKey('RunTimeoutSec')) { $RunTimeoutSec = $runtime.RunTimeoutSec }
 }
-# 隐藏窗口启动器：任务仍以 Interactive 身份运行（PAD 需要交互桌面），
-# 改用 wscript.exe 包装 powershell，控制台窗口从创建起就是隐藏的，不会闪黑框
+# Hidden-window launcher: the task still runs as Interactive (PAD needs an interactive desktop),
+# but wscript.exe wraps powershell so the console window is hidden from creation and never flashes
 $script:HiddenLauncher = Join-Path $here 'run-hidden.vbs'
 
 function Log([string]$m) { Write-Host "[schedule] $m" }
-# 子进程末行 PAD_SYNC_RESULT 的解析统一由 PadTelemetry 提供，本脚本不再自带正则
+# Parsing of the child process's last-line PAD_SYNC_RESULT is centralised in PadTelemetry; this script no longer carries its own regex
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
 
-# 任务名：flow-ir-<流程名>；流程名里的非法字符与空白统一替换成下划线
+# Task name: flow-ir-<flow name>; characters that are invalid in a task name and whitespace are all replaced with underscores
 function Get-ScheduleTaskName([string]$FlowName) {
     $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
     if (-not $safe) { throw 'flow name is empty; cannot build a task name' }
     return 'flow-ir-' + $safe
 }
 
-# 解析触发时刻，返回合法的 DateTime（只取时分）
+# Parse the trigger time and return a valid DateTime (keeping only the time of day)
 function ConvertTo-ScheduleTime([string]$Time) {
     $t = [datetime]::MinValue
     if (-not [datetime]::TryParse([string]$Time, [ref]$t)) {
@@ -109,10 +113,11 @@ function ConvertTo-ScheduleTime([string]$Time) {
     return $t
 }
 
-# 构造任务动作
-#   WorkdayGate：任务先调本脚本 -RunIfWorkday，由脚本查日历后再决定是否跑 pad-sync
-#   否则直接调 pad-sync -RunOnly（周一到周五都跑）
-# 路径与流程名一律加双引号：仓库路径常含空格，不加会被 -File 截断
+# Build the task action
+#   WorkdayGate: the task calls this script with -RunIfWorkday first; the script checks the calendar
+#   and only then decides whether to run pad-sync
+#   Otherwise it calls pad-sync -RunOnly directly (runs Monday through Friday)
+# Always quote paths and flow names: repository paths often contain spaces, and -File truncates them otherwise
 function New-ScheduleActionSpec {
     param(
         [string]$ScriptPath,
@@ -128,8 +133,9 @@ function New-ScheduleActionSpec {
         [string]$WorkdayScript,
         [int]$RunTimeoutSec = 4200
     )
-    # 只固化运行超时。-LockWaitSec 故意不写进任务命令：由 pad-schedule 运行时取
-    # 自身默认值（当前 5400 秒），避免任务 XML 里残留旧值、与代码默认值漂移
+    # Only the run timeout is frozen here. -LockWaitSec is deliberately kept out of the task command:
+    # pad-schedule takes its own default (currently 5400 seconds) at run time, so the task XML cannot
+    # keep a stale value that drifts from the code default
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', ('"' + $ScriptPath + '"'),
         '-FlowName', ('"' + $FlowName + '"'),
@@ -152,14 +158,14 @@ function New-ScheduleActionSpec {
     if ($AcceptanceFile) { $argList += @('-AcceptanceFile', ('"' + $AcceptanceFile + '"')) }
     if ($ConfigFile) { $argList += @('-ConfigFile', ('"' + $ConfigFile + '"')) }
     if ($AllowProd) { $argList += '-AllowProd' }
-    # 交给 run-hidden.vbs 启动：第一个参数是可执行文件，其余参数原样透传，
-    # 这样计划任务的"上次运行结果"仍能拿到 powershell 的真实退出码
+    # Launched through run-hidden.vbs: the first argument is the executable and the rest are passed
+    # through unchanged, so the scheduled task's "last run result" still gets powershell's real exit code
     $vbsArgs = '//nologo "' + $script:HiddenLauncher + '" "powershell.exe" ' + ($argList -join ' ')
     return [ordered]@{ exe = 'wscript.exe'; args = $vbsArgs }
 }
 
-# 查日历判断今天是否工作日。返回 [ordered]@{ workday; calendarOk }
-# 日历读不到、判断脚本跑不通一律硬失败：绝不按周一至周五猜测继续跑（节假日会误跑）
+# Check the calendar to decide whether today is a workday. Returns [ordered]@{ workday; calendarOk }
+# An unreadable calendar or a failing check script is always a hard failure: never guess Monday-Friday and keep running (that would fire on holidays)
 function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$CalendarPath) {
     if (-not $WorkdayScript -or -not (Test-Path $WorkdayScript)) {
         throw "CALENDAR_SCRIPT_FAILED: workday check script failed: script not found $WorkdayScript"
@@ -176,44 +182,44 @@ function Test-TodayWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$
     if (-not $m.Success) {
         throw "CALENDAR_SCRIPT_FAILED: workday check script failed: $($out.Trim())"
     }
-    # 脚本跑通了但 CALENDAR_OK=0：日历能打开却认不出表头，同样不能猜
+    # The script ran but returned CALENDAR_OK=0: the calendar opens yet its header cannot be recognised, so again we must not guess
     if ($out -match 'CALENDAR_OK=0') {
         throw "CALENDAR_UNAVAILABLE: workday calendar file unreadable or badly formatted: $CalendarPath"
     }
-    # 日历能读但今天不在覆盖范围：不能当成「今天休息」静默跳过，必须硬失败
+    # The calendar is readable but does not cover today: we must not treat that as "a day off" and skip silently; it is a hard failure
     if ($out -match 'CALENDAR_STALE=1') {
         $min = [regex]::Match($out, 'CALENDAR_MIN=([^\r\n]*)').Groups[1].Value.Trim()
         $max = [regex]::Match($out, 'CALENDAR_MAX=([^\r\n]*)').Groups[1].Value.Trim()
-        # 带 Data['code'] 的异常：分类按码判断，不解析中文消息
+        # Exception carrying Data['code']: callers classify by code instead of parsing message text
         $msg = "CALENDAR_STALE: calendar does not cover today: today $((Get-Date).ToString('yyyy-MM-dd')) (covered $min ~ $max); treating the calendar as stale; this run did not execute"
         $ex = [System.Exception]::new($msg)
         $ex.Data['code'] = 'CALENDAR_STALE'
-        # 区间随异常携带，读取方不再从中文消息里正则抽取
+        # The covered range travels with the exception, so callers no longer regex it out of the message
         $ex.Data['calendarRange'] = "$min ~ $max"
         throw $ex
     }
     return [ordered]@{ workday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
 
-# 日历类失败的分类：过期（exit 5）与不可用（exit 1）必须分开
+# Classification of calendar failures: stale (exit 5) and unavailable (exit 1) must stay distinct
 function Get-CalendarFailure([System.Exception]$Exception) {
-    # 分类依据是异常自带的结果码，不再匹配中文消息
+    # Classification relies on the result code carried by the exception, not on matching message text
     if ([string]$Exception.Data['code'] -eq 'CALENDAR_STALE') {
         return [ordered]@{ exitCode = 5; reason = 'calendar-stale'; stale = $true }
     }
     return [ordered]@{ exitCode = 1; reason = 'calendar-unavailable'; stale = $false }
 }
 
-# 失败告警分级与写入的唯一实现见 PadAlerts.psm1：
-# 调度层与直调层（pad-sync / pad-deploy / pad-release）共用同一份 kind 口径与去重规则，
-# 本脚本不再保留副本。
+# The single implementation of alert classification and writing lives in PadAlerts.psm1:
+# the scheduling layer and the direct-call layer (pad-sync / pad-deploy / pad-release) share one
+# set of kind definitions and one de-duplication rule; this script keeps no copy.
 Import-Module (Join-Path $here 'PadAlerts.psm1') -Force
 
-# 查日历判断今天是否「本月最后一个工作日」。返回 [ordered]@{ lastWorkday; calendarOk }
-# 与 Test-TodayWorkday 同一口径：日历/脚本有问题就硬失败，不再按周一到周五猜测
+# Check the calendar to decide whether today is the last workday of this month. Returns [ordered]@{ lastWorkday; calendarOk }
+# Same policy as Test-TodayWorkday: any calendar or script problem is a hard failure; never fall back to Monday-Friday guessing
 function Test-TodayLastWorkday([string]$PythonExe, [string]$WorkdayScript, [string]$CalendarPath) {
-    # 先用 --is-workday 探一次日历可读性：--is-last-workday 不输出 CALENDAR_OK，
-    # 不先探就会把「日历损坏」当成「不是月末工作日」静默跳过
+    # Probe calendar readability with --is-workday first: --is-last-workday does not emit CALENDAR_OK,
+    # so without the probe a corrupted calendar would be misread as "not the month-end workday" and skipped silently
     Test-TodayWorkday $PythonExe $WorkdayScript $CalendarPath | Out-Null
     try {
         $out = & $PythonExe $WorkdayScript --is-last-workday --calendar $CalendarPath 2>&1 | Out-String
@@ -227,7 +233,7 @@ function Test-TodayLastWorkday([string]$PythonExe, [string]$WorkdayScript, [stri
     return [ordered]@{ lastWorkday = ($m.Groups[1].Value -eq '1'); calendarOk = $true }
 }
 
-# ── 主流程 ────────────────────────────────────────────────────
+# ── Main flow ─────────────────────────────────────────────────
 if (-not $NoMain) {
     $exitCode = 1
     $result = [ordered]@{
@@ -239,20 +245,20 @@ if (-not $NoMain) {
         dryRun = [bool]$DryRun; errors = @()
     }
     try {
-        # 计划任务的工作目录不是仓库根，判据/配置必须先转成绝对路径再写进任务动作
+        # The scheduled task's working directory is not the repository root, so criteria/config paths must be turned into absolute paths before they go into the task action
         if ($AcceptanceFile) { $AcceptanceFile = (Resolve-Path -LiteralPath $AcceptanceFile).Path }
         if ($ConfigFile) { $ConfigFile = (Resolve-Path -LiteralPath $ConfigFile).Path }
         if (-not $TaskName) { $TaskName = Get-ScheduleTaskName $FlowName }
         $result.taskName = $TaskName
         $result.taskPath = '\' + $TaskName
 
-        # ── 运行入口（任务计划实际调用的分支） ──
+        # ── Run entry point (the branch Task Scheduler actually calls) ──
         if ($RunIfWorkday -or $RunIfLastWorkday) {
             $result.action = $(if ($RunIfLastWorkday) { 'run-if-last-workday' } else { 'run-if-workday' })
-            # 运行入口所需参数必须显式传入或来自 -ConfigPath；不退回任何内置路径
+            # Parameters needed by the run entry point must come in explicitly or from -ConfigPath; there is no fallback to any built-in path
             if (-not $WorkdayScript) { throw 'CONFIG_MISSING: WorkdayScript not provided (use -ConfigPath or an explicit parameter)' }
             if (-not $PythonExe) { throw 'CONFIG_MISSING: PythonExe not provided (use -ConfigPath or an explicit parameter)' }
-            # 日历必须由任务动作显式传入：缺了就硬失败，绝不退化成「每个工作日都跑」
+            # The calendar must be supplied explicitly by the task action: when it is missing this is a hard failure and never degrades into "run every workday"
             if (-not $CalendarPath) { throw 'CONFIG_MISSING: workday calendar file not provided (use -ConfigPath or -CalendarPath)' }
             if (-not $PadSyncPath) { throw 'CONFIG_MISSING: PadSyncPath not provided (use -ConfigPath or an explicit parameter)' }
 
@@ -285,12 +291,12 @@ if (-not $NoMain) {
                 if (-not $ConfigFile) { throw '-AcceptanceFile requires -ConfigFile' }
                 $syncArgs += @('-AcceptanceFile', $AcceptanceFile, '-ConfigFile', $ConfigFile)
             }
-            # 边跑边打印，同时留存输出以便解析 PAD_SYNC_RESULT（工单/告警要带上 stage）
+            # Stream the output while keeping it, so PAD_SYNC_RESULT can still be parsed (tickets and alerts need the stage)
             $syncLines = @(& powershell @syncArgs 2>&1 | ForEach-Object { Write-Host $_; $_ })
             $result.runExitCode = $LASTEXITCODE
             $result.ok = ($LASTEXITCODE -eq 0)
             $exitCode = $LASTEXITCODE
-            # 只在真正失败时记告警：非工作日跳过在更早就 return 了，不会误报
+            # Write an alert only on a real failure: non-workday skips already returned earlier, so they cannot raise false alarms
             if ($exitCode -ne 0) {
                 $sync = Read-ChildResult -Name 'SYNC' -Lines $syncLines
                 $stage = if ($sync) { [string]$sync.stage } else { 'unknown' }
@@ -305,12 +311,12 @@ if (-not $NoMain) {
                     else { "run failed (stage=$stage)" }
                 Log "$tip; an alert was written to $($alert.path)"
             }
-            # 这里必须 exit，不能 return：return 会跳过脚本末尾的 exit $exitCode，
-            # 导致计划任务 LastTaskResult=0 而告警里却是 exitCode=1（口径不一致）
+            # Here we must exit, not return: return would skip the trailing exit $exitCode and leave
+            # the scheduled task with LastTaskResult=0 while the alert says exitCode=1 (inconsistent)
             exit $exitCode
         }
 
-        # ── 查询 ──
+        # ── Query ──
         if ($List) {
             $result.action = 'list'
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -324,7 +330,7 @@ if (-not $NoMain) {
             return
         }
 
-        # ── 删除 ──
+        # ── Remove ──
         if ($Remove) {
             $result.action = 'remove'
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -336,7 +342,7 @@ if (-not $NoMain) {
             return
         }
 
-        # ── 立即触发（验证用，会真实运行一次流程） ──
+        # ── Trigger now (for verification; it really runs the flow once) ──
         if ($RunNow) {
             $result.action = 'run-now'
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -348,7 +354,7 @@ if (-not $NoMain) {
             return
         }
 
-        # ── 注册/更新 ──
+        # ── Register/update ──
         if (-not $PadSyncPath) { throw 'CONFIG_MISSING: PadSyncPath not provided (use -ConfigPath or an explicit parameter)' }
         if (-not (Test-Path $PadSyncPath)) { throw "pad-sync.ps1 not found: $PadSyncPath" }
         if ($FlowName -ne 'PAD_SYNC_TEST' -and -not $AllowProd) {
@@ -358,7 +364,8 @@ if (-not $NoMain) {
             throw '-AcceptanceFile requires -ConfigFile'
         }
         $gate = -not $IgnoreCalendar
-        # 需要日历的模式（按日历判断 / 仅最后工作日）必须显式给出日历与依赖，不再内置默认路径
+        # Calendar-dependent modes (calendar gate / last-workday only) must be given the calendar and its
+        # dependencies explicitly; there are no built-in default paths any more
         if ($gate -or $LastWorkday) {
             if (-not $CalendarPath) { throw 'CONFIG_MISSING: workday calendar file not provided (use -ConfigPath or -CalendarPath)' }
             if (-not $PythonExe) { throw 'CONFIG_MISSING: PythonExe not provided (use -ConfigPath or an explicit parameter)' }
@@ -398,22 +405,25 @@ if (-not $NoMain) {
 
         $action = New-ScheduledTaskAction -Execute $spec.exe -Argument $spec.args
         if ($gate) {
-            # 每天触发，具体跑不跑交给日历（节假日跳过、调休照跑）
+            # Trigger every day and let the calendar decide whether to actually run (skip holidays, run make-up workdays)
             $trigger = New-ScheduledTaskTrigger -Daily -At $at
         } else {
             $trigger = New-ScheduledTaskTrigger -Weekly `
                 -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At $at
         }
-        # 时限要覆盖「排队等锁 + 流程自身最长路径」的最坏组合：
-        #   等锁 90 分钟 + 自身运行 45 分钟（含长时间 SAP 下载）= 135 分钟，
-        # 150 分钟理论上够，但只余 15 分钟，覆盖不了 SAP 登录重试、机器卡顿等抖动，
-        # 因此取 180 分钟。原来 30 分钟会在流程正常等到 10:00 时被任务计划直接杀掉
-        # 显式关闭补跑（StartWhenAvailable=False）：休眠/关机期间错过的触发不在恢复后补跑，
-        # 否则周末遗失实例会在工作日清晨被日历门禁当作当天任务执行，造成计划外运行。
-        # 取舍：9:00 时机器没开着，当天就不跑。
+        # The time limit must cover the worst combination of "queueing for the lock + the flow's own
+        # longest path": 90 minutes waiting for the lock + 45 minutes running (including a long SAP
+        # download) = 135 minutes. 150 minutes would theoretically suffice but leaves only 15 minutes,
+        # which cannot absorb SAP login retries or a slow machine, so we use 180 minutes. The old
+        # 30-minute limit would kill the task outright while a flow legitimately waited until 10:00.
+        # Catch-up runs are explicitly disabled (StartWhenAvailable=False): triggers missed while the
+        # machine sleeps or is off are not replayed on resume; otherwise a weekend instance would be
+        # taken by the calendar gate as the current-day task at dawn on a workday, causing an
+        # unplanned run.
+        # Trade-off: if the machine is off at 9:00, nothing runs that day.
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable:$false `
             -ExecutionTimeLimit (New-TimeSpan -Minutes 180) -MultipleInstances IgnoreNew
-        # Interactive = 只有该用户已登录时才运行，正是 attended 的语义
+        # Interactive = run only while that user is logged in, which is exactly what attended means
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
         $desc = "flow-ir: runs daily at $Time after the workday-calendar check, PAD flow $FlowName (attended)"
 
@@ -429,7 +439,7 @@ if (-not $NoMain) {
         $msg = $_.Exception.Message
         $result.errors += $msg
         if ($msg -match '^(CALENDAR_UNAVAILABLE|CALENDAR_SCRIPT_FAILED|CALENDAR_STALE)') {
-            # 日历类失败分两种：过期（exit 5 / calendar-stale）与不可用（exit 1）
+            # Calendar failures come in two kinds: stale (exit 5 / calendar-stale) and unavailable (exit 1)
             $cal = Get-CalendarFailure $_.Exception
             $exitCode = $cal.exitCode
             $result.reason = $cal.reason

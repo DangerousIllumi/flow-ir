@@ -1,18 +1,18 @@
-﻿# PadAcceptance.psm1 — V 模型验收判据执行器
+﻿# PadAcceptance.psm1 — executor for V-model acceptance criteria
 #
-# 作用：运行结束后检查产物与业务后置条件，而不是只看「PAD 没报错」。
-# 判据文件（*.acceptance.json）里的路径支持 {{KEY}} 占位符，值来自部署 config。
+# Purpose: after a run finishes, check the artifacts and business postconditions instead of only "PAD reported no error".
+# Paths in the criteria file (*.acceptance.json) support {{KEY}} placeholders whose values come from the deployment config.
 #
-# 支持的检查类型：
-#   fileExists    文件存在（可选 minBytes / match 正则）
-#   globNewerThan 目录下匹配的文件里至少有一个晚于本次运行开始时间
-#   pair          两个文件必须同时存在或同时不存在
-#   json          JSON 可解析且包含指定顶层键
-#   jsonl         每行都是合法 JSON
+# Supported check types:
+#   fileExists    the file exists (optional minBytes / match regex)
+#   globNewerThan at least one file matching the pattern in the directory is newer than this run's start time
+#   pair          the two files must both exist or both be absent
+#   json          the JSON parses and contains the specified top-level keys
+#   jsonl         every line is valid JSON
 #
-# 所有检查都支持 optional=true：不满足时记为 skipped，不算失败。
+# Every check supports optional=true: when unmet it is recorded as skipped, not as a failure.
 
-# VBS 日志可能是 UTF-16LE / ANSI / UTF-8，统一用编码探测模块读取
+# VBS logs may be UTF-16LE / ANSI / UTF-8; read them all through the encoding-detection module
 Import-Module (Join-Path $PSScriptRoot 'TextEncoding.psm1') -Force
 
 function Get-AcceptanceConfig {
@@ -29,7 +29,7 @@ function Get-AcceptanceConfig {
     return $map
 }
 
-# 把 {{KEY}} 替换成 config 里的值；未知占位符原样保留，由具体检查报错
+# Replace {{KEY}} with the value from config; unknown placeholders are left as-is and reported by the individual check
 function Resolve-AcceptancePath {
     param([string]$Text, [hashtable]$Config)
 
@@ -143,7 +143,7 @@ function Test-AcceptanceFile {
                 }
             }
             elseif ($c.type -eq 'logState') {
-                # 读现成的 VBS 日志：按 firstLine / lastLine 取一行，先看 skip，再看 fail，最后看 pass
+                # Read an existing VBS log: take a line by firstLine / lastLine, then check skip first, then fail, then pass
                 $p = Resolve-AcceptancePath ([string]$c.path) $Config
                 if (-not (Test-Path -LiteralPath $p)) {
                     if ($optional) { $item.skipped = $true; $item.detail = 'log not found (optional)' }

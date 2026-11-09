@@ -1,24 +1,24 @@
-﻿# PublishHistory.psm1 — 编排层历史：运行记录 + 版本快照
+﻿# PublishHistory.psm1 — orchestration-layer history: run records + version snapshots
 #
-# 被 pad-sync.ps1（记录每次运行）、pad-release.ps1（写发布快照）、
-# pad-rollback.ps1（读快照、追加回滚记录）共用。
-# 抽成模块而不是 dot-source，是因为 pad-release.ps1 自身带 param 块，
-# dot-source 时会把调用脚本的同类参数一并重置，容易出隐蔽故障。
+# Used by pad-sync.ps1 (records each run), pad-release.ps1 (writes release snapshots), and
+# pad-rollback.ps1 (reads snapshots and appends rollback records).
+# It is a module rather than a dot-sourced script because pad-release.ps1 has its own param block:
+# dot-sourcing it would also reset the caller's parameters of the same name, which tends to cause silent failures.
 #
-# 约定：所有历史都写在 business\manifest.jsonl，一行一个 JSON（JSON Lines），
-# type 区分 run / release / rollback；PAD 画布内不写任何日志动作。
+# Convention: all history goes to business\manifest.jsonl, one JSON per line (JSON Lines),
+# with type distinguishing run / release / rollback; no logging action is ever written into the PAD canvas.
 
-# manifest.jsonl 追加一行（UTF-8 无 BOM，JSON Lines），文件位于 business\manifest.jsonl
+# Append one line to manifest.jsonl (UTF-8 without BOM, JSON Lines); the file lives at business\manifest.jsonl
 function Add-ManifestEntry([string]$Path, $Entry) {
     $line = ($Entry | ConvertTo-Json -Depth 8 -Compress)
     [IO.File]::AppendAllText($Path, $line + "`r`n", (New-Object Text.UTF8Encoding($false)))
 }
 
-# 构造一条运行记录（纯函数，便于单测）
+# Build one run record (a pure function, so it is easy to unit test)
 function New-RunManifestEntry {
     param(
         [string]$FlowName, [string]$RunId, [string]$Mode,
-        # 不声明 [bool]：结果未知时必须保持 null，不能因类型转换变成 false（未知 ≠ 失败）
+        # Not typed [bool]: an unknown result must stay null and must not become false through type coercion (unknown ≠ failure)
         $Ok, [string]$Stage, [string]$Status,
         $Actions, $TotalMs, $ErrorCode, $ErrorMessage,
         [string]$LogPath, $CanvasVerified, $Acceptance,
@@ -30,20 +30,20 @@ function New-RunManifestEntry {
     return [ordered]@{
         ts = [datetime]::UtcNow.ToString('o'); type = 'run'
         flow = $FlowName; runId = $RunId; mode = $Mode
-        # [string] 参数会把 $null 转成空串，这里还原成 null，便于下游判断“没有值”
+        # A [string] parameter turns $null into an empty string; restore it to null so downstream can tell "no value"
         ok = $okValue; stage = $(if ($Stage) { $Stage } else { $null })
         status = $(if ($Status) { $Status } else { $null })
         actions = $Actions; totalMs = $TotalMs
         errorCode = $ErrorCode; errorMessage = $ErrorMessage
         canvasVerified = $CanvasVerified; logPath = $(if ($LogPath) { $LogPath } else { $null })
         acceptance = $Acceptance
-        # @($null) 会得到 1 个元素，显式判空避免“没有警告”被记成 [null]
+        # @($null) yields one element, so test for emptiness explicitly to keep "no warnings" from being recorded as [null]
         warnings = @(if ($null -ne $Warnings) { $Warnings })
     }
 }
 
-# manifest 保留策略：run 记录只留最近 N 天；release / rollback 永久保留（回滚与审计要用）
-# 解析失败的行一律保留，宁可多留也不静默丢证据
+# Manifest retention: keep run records for only the last N days; release / rollback records are kept forever (rollback and audit need them)
+# Lines that fail to parse are always kept: better to keep too much than to silently discard evidence
 function Remove-OldManifestEntries([string]$Path, [int]$KeepDays = 90, [datetime]$Now = [datetime]::UtcNow) {
     if ($KeepDays -lt 1) { throw 'KeepDays must be >= 1' }
     if (-not (Test-Path -LiteralPath $Path)) { return 0 }
@@ -68,8 +68,8 @@ function Remove-OldManifestEntries([string]$Path, [int]$KeepDays = 90, [datetime
     return $removed
 }
 
-# 快照保留：只保留最新 N 个，按文件名（时间戳）升序删除最旧的
-# 文件名格式固定为 yyyyMMdd-HHmmss-<sha8>.robin，字符串排序即时间排序
+# Snapshot retention: keep only the newest N, deleting the oldest first by file name (timestamp) ascending
+# File names are always yyyyMMdd-HHmmss-<sha8>.robin, so lexical order equals chronological order
 function Remove-OldReleaseSnapshots([string]$Dir, [int]$Keep = 20) {
     if ($Keep -lt 1) { throw 'Keep must be >= 1' }
     if (-not (Test-Path -LiteralPath $Dir)) { return @() }
@@ -82,25 +82,25 @@ function Remove-OldReleaseSnapshots([string]$Dir, [int]$Keep = 20) {
     return $remove
 }
 
-# ═══ 版本快照 ═══
-# 每次成功发布都把「已替换变量的成品 .robin」存一份到 business\snapshots\<flowName>\，
-# 文件名 = <时间戳>-<sha前8>.robin。
-# PAD 云端的 flowVersion 只是 ETag，无法直接「切回上一版」，
-# 所以回滚只能靠本地快照重发，这里就是那份快照的唯一来源。
+# ═══ Version snapshots ═══
+# Every successful release stores a copy of "the final .robin with variables substituted" under business\snapshots\<flowName>\,
+# with file name = <timestamp>-<first 8 sha chars>.robin.
+# PAD's cloud flowVersion is only an ETag and cannot "switch back to the previous version" directly,
+# so rollback can only re-send a local snapshot; this is the single source of those snapshots.
 
-# 流程名可能含路径分隔符等非法字符，落成目录名前统一替换
+# Flow names may contain path separators or other illegal characters; replace them before using the name as a directory name
 function Get-SnapshotSafeName([string]$FlowName) {
     $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|]', '_').Trim()
     if (-not $safe) { throw 'flow name is empty; cannot locate the snapshot dir' }
     return $safe
 }
 
-# 某流程的快照目录（不保证已存在）
+# Snapshot directory for a flow (not guaranteed to exist)
 function Get-ReleaseSnapshotDir([string]$SnapshotsRoot, [string]$FlowName) {
     return (Join-Path $SnapshotsRoot (Get-SnapshotSafeName $FlowName))
 }
 
-# 归档一份快照，返回归档后的完整路径
+# Archive one snapshot and return its full path after archiving
 function Save-ReleaseSnapshot([string]$SnapshotsRoot, [string]$FlowName, [string]$DeployedRobin,
                               [string]$Sha256, [datetime]$Timestamp) {
     $dir = Get-ReleaseSnapshotDir $SnapshotsRoot $FlowName
@@ -111,8 +111,8 @@ function Save-ReleaseSnapshot([string]$SnapshotsRoot, [string]$FlowName, [string
     return $dest
 }
 
-# 列出某流程的全部快照，按时间升序（文件名前缀即时间戳，字典序等于时间序）
-# 排除 *.deployed.robin 这类部署中间产物，避免把替换临时文件当成版本
+# List all snapshots of a flow in ascending time order (the file-name prefix is the timestamp, so lexical order equals time order)
+# Exclude deployment intermediates like *.deployed.robin so substitution temp files are never mistaken for versions
 function Get-ReleaseSnapshots([string]$SnapshotsRoot, [string]$FlowName) {
     $dir = Get-ReleaseSnapshotDir $SnapshotsRoot $FlowName
     if (-not (Test-Path $dir)) { return @() }
@@ -121,10 +121,10 @@ function Get-ReleaseSnapshots([string]$SnapshotsRoot, [string]$FlowName) {
         Sort-Object Name)
 }
 
-# 选回滚目标
-#   -To      ：按完整路径 / 文件名 / sha 前缀（8 位）精确指定
-#   -Back N  ：跳过最近 N 个快照，默认 1 = 回退到上一个版本
-# 最近一个快照通常就是当前生效版本，所以默认要跳过它
+# Choose the rollback target
+#   -To      : specify exactly by full path / file name / sha prefix (8 chars)
+#   -Back N  : skip the newest N snapshots; the default 1 = roll back one version
+# The newest snapshot is usually the currently active version, so it is skipped by default
 function Select-RollbackSnapshot([string]$SnapshotsRoot, [string]$FlowName, [int]$Back = 1, [string]$To) {
     $all = @(Get-ReleaseSnapshots $SnapshotsRoot $FlowName)
     if ($all.Count -eq 0) {

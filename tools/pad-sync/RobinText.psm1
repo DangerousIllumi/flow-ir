@@ -1,31 +1,32 @@
-﻿# RobinText.psm1 — .robin 文本规范化、哈希与逐行比对
+﻿# RobinText.psm1 — .robin text normalization, hashing, and line-by-line comparison
 #
-# 这三个函数被两处共用：
-#   1) pad-release.ps1：发布后拿「已发布副本」与「注入内容」做哈希/逐行校验
-#   2) PadDesigner.psm1：-VerifyCanvas 时拿「画布回读内容」与「源 .robin」逐行校验
-# 抽成独立模块是为了避免两处各写一份导致规范化规则漂移。
+# These three functions are shared by two callers:
+#   1) pad-release.ps1: after publishing, hash/compare the "published copy" against the "injected content" line by line
+#   2) PadDesigner.psm1: with -VerifyCanvas, compare the "canvas read-back content" against the "source .robin" line by line
+# They live in a separate module so the two call sites cannot drift apart into two copies of the normalization rules.
 
-# robin 规范化：只保留真正的动作行
-# PAD 落盘/回读的内容与源文件差异有三类，比对前必须剥掉：
-#   1) 元数据行：@@ConnectionString / @@Type / @SENSITIVE 等（以 @ 开头）
-#   2) 注释行：以 # 开头，发布时 PAD 会整行丢弃
-#   3) 缩进与行尾空白：块结构由 IF/END 关键字决定，缩进只影响可读性
-# 以及转义差异：源文件写 \"x\"（单反斜杠转义引号），PAD 落盘时会再转义成 \\"x\\"，
-# 这是同一内容的不同表示，比对前把「一个或多个反斜杠 + 引号」统一成单个引号
+# robin normalization: keep only the real action lines
+# PAD's written / read-back content differs from the source file in three ways, and all three must be stripped before comparing:
+#   1) metadata lines: @@ConnectionString / @@Type / @SENSITIVE and so on (starting with @)
+#   2) comment lines: starting with #, which PAD drops entirely on publish
+#   3) indentation and trailing whitespace: block structure comes from IF/END keywords, indentation only affects readability
+# plus escaping differences: the source writes \"x\" (a single backslash escaping a quote), while PAD re-escapes it to \\"x\\"
+# when writing to disk. These are two representations of the same content, so before comparing we collapse
+# "one or more backslashes + a quote" into a single quote
 function ConvertTo-NormalizedRobin([string]$Text) {
-    # 显式剥掉 BOM：PAD 落盘偶尔会在文件头带 U+FEFF，
-    # 不剥会让首行动作多出一个不可见字符，导致同一内容被判成两份
+    # Strip the BOM explicitly: PAD occasionally leaves a U+FEFF at the start of the file it writes,
+    # and if it is not stripped the first action line gains an invisible character, making identical content compare as two copies
     $text1 = $Text.Replace([string][char]0xFEFF, '')
     $text2 = $text1 -replace '\\+"', '"'
     $lines = $text2 -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object {
         $_ -ne '' -and -not $_.StartsWith('#') -and -not $_.StartsWith('@') -and -not $_.StartsWith('IMPORT ') -and
-        # 折叠区标记只是编辑器辅助，PAD 落盘时可能保留也可能丢弃，不参与比对
+        # Collapsible-region markers are editor aids that PAD may keep or drop when writing to disk; they take no part in the comparison
         -not $_.StartsWith('**REGION') -and -not $_.StartsWith('**ENDREGION')
     }
     return ($lines -join "`n")
 }
 
-# 规范化后的 SHA256（小写 hex），作为「画布内容」的指纹
+# SHA256 (lowercase hex) of the normalized text, used as the fingerprint of "canvas content"
 function Get-RobinHash([string]$Text) {
     $norm = ConvertTo-NormalizedRobin $Text
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -35,8 +36,8 @@ function Get-RobinHash([string]$Text) {
     } finally { $sha.Dispose() }
 }
 
-# 逐行比对两段 robin（规范化后），返回是否一致与首个差异位置（1 起始的行号）
-# lineA 对应第一个参数，lineB 对应第二个参数；一侧行数不足时该侧记为「缺失」
+# Compare two robin texts line by line (after normalization); return whether they match and the first difference position (1-based line number)
+# lineA is the first parameter and lineB the second; when one side runs out of lines, that side is reported as "<missing>"
 function Compare-RobinText([string]$A, [string]$B) {
     $la = @((ConvertTo-NormalizedRobin $A) -split "`n")
     $lb = @((ConvertTo-NormalizedRobin $B) -split "`n")

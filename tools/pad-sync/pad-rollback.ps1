@@ -1,72 +1,72 @@
-﻿# pad-rollback.ps1 — 发布回滚（通用，按流程名定位）
+﻿# pad-rollback.ps1 — release rollback (generic; located by flow name)
 #
-# 原理：PAD 云端的 flowVersion 只是 ETag，不能直接「切回上一版」；
-#       可行的回滚只有一条路 —— 取本地快照里保存的历史成品 .robin，重新注入并发布。
+# Principle: PAD's cloud flowVersion is only an ETag, so you cannot simply "switch back to the previous version";
+#            the only workable rollback is to take a historical finished .robin from the local snapshots, inject it and publish again.
 #
-# 快照由 pad-release.ps1 在每次成功发布后写入 business\snapshots\<flowName>\<时间戳>-<sha前8>.robin，
-# 内容已是变量替换后的成品，因此回滚只还原工作流定义，不受当前 config 取值影响。
+# pad-release.ps1 writes the snapshots after every successful release to business\snapshots\<flowName>\<timestamp>-<first 8 of sha>.robin;
+# their content is already the variable-substituted artefact, so a rollback only restores the workflow definition and is unaffected by the current config values.
 #
-# 用法：
-#   .\pad-rollback.ps1 -FlowName PAD_SYNC_TEST -DryRun      # 只看会回退到哪一版，不发布
-#   .\pad-rollback.ps1 -FlowName PAD_SYNC_TEST              # 回退一个版本
-#   .\pad-rollback.ps1 -FlowName X -Back 2                  # 回退两个版本
+# Usage:
+#   .\pad-rollback.ps1 -FlowName PAD_SYNC_TEST -DryRun      # only show which version would be restored; nothing is published
+#   .\pad-rollback.ps1 -FlowName PAD_SYNC_TEST              # roll back one version
+#   .\pad-rollback.ps1 -FlowName X -Back 2                  # roll back two versions
 #   .\pad-rollback.ps1 -FlowName X -To 20261028-120000-ab12cd34
 #
-# 边界：只回滚工作流定义，不撤销已过账的 SAP 凭证、已发出的邮件、已改动的报表文件；
-#       回滚同样会通过 URL 触发一次真实运行，因此默认要弹确认。
+# Boundary: only the workflow definition is rolled back; already-posted SAP documents, already-sent emails and already-changed report files are not undone;
+#           a rollback also triggers a real run through URL, so it asks for confirmation by default.
 #
-# 输出：最后一行 PAD_ROLLBACK_RESULT=<JSON>；退出码 0 成功 / 1 失败
+# Output: the last line is PAD_ROLLBACK_RESULT=<JSON>; exit code 0 success / 1 failure
 
 [CmdletBinding()]
 param(
     [string]$FlowName,
-    # 快照目录与 manifest 默认在仓库根；ConfigFile 按流程名派生，派生不到必须显式传
+    # Snapshots directory and manifest default to the repository root; ConfigFile is derived from the flow name and must be passed explicitly when derivation fails
     [string]$SnapshotsRoot,
     [string]$ManifestPath,
     [string]$ConfigFile,
     [string]$SchemaFile,
-    # 跳过最近 Back 个快照（1 = 回退到上一个版本）
+    # Skip the most recent Back snapshots (1 = roll back to the previous version)
     [int]$Back = 1,
-    # 直接指定目标：完整路径 / 文件名 / sha 前缀
+    # Point at the target directly: full path / file name / sha prefix
     [string]$To,
     [int]$RunTimeoutSec = 4200,
     [switch]$AllowProd,
     [switch]$DryRun,
-    # 只发布不运行：回滚后只保存到云端，不触发运行
+    # Publish without running: after the rollback only save it to the cloud, without triggering a run
     [switch]$PublishOnly,
-    # 跳过确认弹窗（由上层编排脚本统一确认后使用）
+    # Skip the confirmation dialog (used when an orchestrating script has already confirmed)
     [switch]$SkipConfirm,
-    # 仅供 Pester dot-source 加载函数，不执行主流程
+    # Only for Pester dot-sourcing to load the functions; the main flow is not executed
     [switch]$NoMain
 )
 $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
-# $PSScriptRoot = tools\pad-sync，退两级到仓库根
+# $PSScriptRoot = tools\pad-sync; two levels up is the repository root
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $here)
 $script:DeployPath = Join-Path $here 'pad-deploy.ps1'
 $script:ConfirmPath = Join-Path $here 'confirm-deploy.ps1'
 
-# 快照选择与 manifest 追加共用 PublishHistory.psm1
-# 不要 dot-source pad-release.ps1：它自带 param 块，会把本脚本的
-# FlowName / ConfigFile / DryRun / AllowProd 等同名参数一并重置
+# Snapshot selection and manifest appending are shared through PublishHistory.psm1
+# Do not dot-source pad-release.ps1: it has its own param block, which would reset this
+# script's identically named FlowName / ConfigFile / DryRun / AllowProd parameters
 Import-Module (Join-Path $here 'PublishHistory.psm1') -Force
 Import-Module (Join-Path $here 'RobinText.psm1') -Force
-# 指纹定位/哈希唯一实现：回滚成功后重写基线
+# Single implementation of fingerprint location/hashing: the baseline is rewritten after a successful rollback
 Import-Module (Join-Path $here 'PadFingerprint.psm1') -Force
-# 子进程末行 RESULT 的解析统一由 PadTelemetry 提供
+# Parsing of the child process's last-line RESULT is centralised in PadTelemetry
 Import-Module (Join-Path $here 'PadTelemetry.psm1') -Force
 
 function Log([string]$m) { Write-Host "[rollback] $m" }
 
-# 调 pad-deploy 子进程并解析 PAD_DEPLOY_RESULT（最后一行）
+# Call the pad-deploy child process and parse PAD_DEPLOY_RESULT (the last line)
 function Invoke-DeployFromSnapshot([string]$RobinPath, [string]$CfgFile, [string]$Flow, [string]$Schema, [int]$TimeoutSec, [switch]$PublishOnly) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:DeployPath,
         '-SourceRobin', $RobinPath, '-ConfigFile', $CfgFile, '-FlowName', $Flow,
         '-RunTimeoutSec', $TimeoutSec, '-SkipConfirm')
     if ($Schema) { $argList += @('-SchemaFile', $Schema) }
     if ($PublishOnly) { $argList += '-PublishOnly' }
-    # 回滚本质也是一次发布，生产流必须显式 -AllowProd
+    # A rollback is a release too, so a production flow requires explicit -AllowProd
     if ($AllowProd) { $argList += '-AllowProd' }
     $tmp = Join-Path $env:TEMP ('pad-rollback-' + [guid]::NewGuid().ToString('N') + '.log')
     & powershell @argList > $tmp 2>&1
@@ -77,7 +77,7 @@ function Invoke-DeployFromSnapshot([string]$RobinPath, [string]$CfgFile, [string
     return $json
 }
 
-# ═══ 主流程 ═══
+# ═══ Main flow ═══
 if (-not $NoMain) {
     $exitCode = 1
     $result = [ordered]@{
@@ -92,7 +92,7 @@ if (-not $NoMain) {
         if (-not $SnapshotsRoot) { $SnapshotsRoot = Join-Path $script:RepoRoot 'business\snapshots' }
         if (-not $ManifestPath) { $ManifestPath = Join-Path $script:RepoRoot 'business\manifest.jsonl' }
         if (-not $ConfigFile) {
-            # 不再默认到某个具体业务流程：按 -FlowName 派生，派生不到即报错
+            # No longer default to a particular business flow: derive from -FlowName and error when derivation fails
             $guess = Join-Path $script:RepoRoot ("business\config\{0}.json" -f $FlowName)
             if (Test-Path -LiteralPath $guess) {
                 $ConfigFile = $guess
@@ -105,13 +105,13 @@ if (-not $NoMain) {
             throw 'Safety fuse: only PAD_SYNC_TEST may be rolled back by default. Rolling back a production flow requires explicit -AllowProd.'
         }
 
-        # ── 阶段 1：定位目标版本 ──
+        # ── Stage 1: locate the target version ──
         $result.stage = 'select'
         $all = @(Get-ReleaseSnapshots $SnapshotsRoot $FlowName)
         $target = Select-RollbackSnapshot $SnapshotsRoot $FlowName -Back $Back -To $To
         $result.targetSnapshot = $target.FullName
         $result.targetSha256 = Get-RobinHash ([IO.File]::ReadAllText($target.FullName, [Text.Encoding]::UTF8))
-        # 最近一个快照即当前生效版本
+        # The most recent snapshot is the currently active version
         $current = if ($all.Count -gt 0) { $all[$all.Count - 1] } else { $null }
         if ($current) { $result.fromSha256 = Get-RobinHash ([IO.File]::ReadAllText($current.FullName, [Text.Encoding]::UTF8)) }
         Log "current version snapshot: $(if ($current) { $current.Name } else { 'none' })"
@@ -121,7 +121,7 @@ if (-not $NoMain) {
             $result.ok = $true; $result.stage = 'done'; $exitCode = 0
             Log '[DryRun] target version located; nothing was published'
         } else {
-            # ── 阶段 2：用户确认（回滚也是一次真实发布，会立即跑一次） ──
+            # ── Stage 2: user confirmation (a rollback is a real release and runs immediately) ──
             $result.stage = 'confirm'
             if (-not $SkipConfirm) {
                 $runNote = $(if ($PublishOnly) { 'This run only publishes and does not trigger a run.' } else { 'After rollback a real run is triggered immediately via URL.' })
@@ -131,8 +131,8 @@ if (-not $NoMain) {
                 Log 'user confirmed the rollback'
             }
 
-            # ── 阶段 3：发布（复用 pad-deploy 的注入 / 校验 / 运行链路） ──
-            # 快照已是成品内容（无 {{VAR}}），复制到临时目录再部署，避免污染 snapshots
+            # ── Stage 3: publish (reuse pad-deploy's inject / validate / run chain) ──
+            # The snapshot is already finished content (no {{VAR}}), so copy it to a temp directory before deploying to keep snapshots clean
             $result.stage = 'publish'
             $tmpDir = Join-Path $env:TEMP ('pad-rollback-' + [guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
@@ -147,8 +147,8 @@ if (-not $NoMain) {
                 if ($PublishOnly) { Log 'rollback publish complete (-PublishOnly, no run was triggered)' }
                 else { Log "rollback publish complete; verification run status: $($result.runStatus)" }
 
-                # ── 指纹基线：回滚成功后必须重写，否则准入还按旧定义比对 ──
-                # 基线写失败不推翻已成功的回滚，但必须显式告警
+                # ── Fingerprint baseline: it must be rewritten after a successful rollback, otherwise admission keeps comparing against the old definition ──
+                # A failed baseline write does not undo a successful rollback, but it must raise an explicit warning
                 try {
                     $scriptsRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts'
                     $workspaceRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Workspace'
@@ -184,7 +184,7 @@ if (-not $NoMain) {
         Log "rollback failed at [$($result.stage)]: $($_.Exception.Message)"
     }
     finally {
-        # ── 阶段 4：manifest（DryRun 不写；成功失败都记录，供审计） ──
+        # ── Stage 4: manifest (not written for DryRun; both success and failure are recorded for audit) ──
         if (-not $DryRun -and $result.stage -ne 'init') {
             $entry = [ordered]@{
                 ts = [datetime]::UtcNow.ToString('o'); type = 'rollback'

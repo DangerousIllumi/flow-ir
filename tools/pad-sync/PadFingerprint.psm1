@@ -1,27 +1,28 @@
-﻿# PadFingerprint.psm1 — 流程指纹：Workspace 修订定位、身份解析、基线读写与比对
+﻿# PadFingerprint.psm1 — flow fingerprint: Workspace revision lookup, identity resolution, baseline read/write and comparison
 #
-# 为什么单独成模块：
-#   1) 「精确到修订、禁止取最新」的 Workspace 定位与身份解析必须是唯一实现；
-#      pad-release.ps1（发布后写基线）、pad-rollback.ps1（回滚后重写基线）、
-#      pad-fingerprint.ps1（存量流播种）、pad-admit.ps1（准入的 FINGERPRINT 检查）都从这里取，
-#      避免出现第二套哈希/定位实现。
-#   2) 对所有 flow.json 一视同仁：本模块不含任何「只对某条流程生效」的分支。
+# Why a separate module:
+#   1) The "exact revision, never take the latest" Workspace lookup and identity resolution must have a single implementation;
+#      pad-release.ps1 (writes the baseline after release), pad-rollback.ps1 (rewrites it after rollback),
+#      pad-fingerprint.ps1 (seeds existing flows), and pad-admit.ps1 (the admission FINGERPRINT check) all take it from here,
+#      so a second hashing/lookup implementation never appears.
+#   2) It treats every flow.json alike: the module contains no branch that applies "only to one particular flow".
 #
-# 分层边界：
-#   机制（定位、哈希、比对）在公开层；
-#   基线数据写在 business\fingerprints\<流程名>.json（含流程名、flowGuid、
-#   environmentId、机器名与真实路径），只在业务层，不入库、不推公开库。
+# Layer boundary:
+#   Mechanism (lookup, hashing, comparison) lives in the public layer;
+#   Baseline data is written to business\fingerprints\<flow name>.json (flow name, flowGuid,
+#   environmentId, machine name, and real paths), which is business-layer only: not committed, not pushed to the public repo.
 
-# 规范化与哈希的唯一实现（RobinText.psm1）：本模块不另写一份规范化规则
+# The single implementation of normalization and hashing (RobinText.psm1): this module does not write a second copy of the rules
 Import-Module (Join-Path $PSScriptRoot 'RobinText.psm1') -Force
 
-# 模块所在的仓库根：本模块位于 tools\pad-sync，退两级即仓库根
+# Repository root of this module: it lives in tools\pad-sync, so going up two levels gives the repo root
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-# 脚本指纹清单属于业务层数据（含具体业务脚本路径），配置在 business\config\fingerprint-scripts.json：
-#   repoScripts     —— 仓库内脚本，相对仓库根，统一用正斜杠；
-#   externalScripts —— 仓库外旧拷贝的绝对路径，播种时可用 -ExternalPaths 覆盖（显式参数优先）。
-# 配置缺失或解析失败一律硬失败：静默退化成空清单等于悄悄关掉脚本漂移检测。
+# The script fingerprint list is business-layer data (it contains concrete business script paths) and is configured in
+# business\config\fingerprint-scripts.json:
+#   repoScripts     — scripts inside the repo, relative to the repo root, always with forward slashes;
+#   externalScripts — absolute paths of legacy copies outside the repo; seeding can override them with -ExternalPaths (explicit parameters win).
+# A missing or unparsable config always fails hard: silently degrading to an empty list would quietly switch off script drift detection.
 function Read-FingerprintScriptConfig {
     param(
         [string]$RepoRoot,
@@ -50,15 +51,15 @@ function Read-FingerprintScriptConfig {
     }
 }
 
-# 指纹 v3 的 external 段：仓库外的旧拷贝（只能用绝对路径锁），播种时由调用方显式传入。
-# 公共代码不写死具体业务路径；路径只落进 business\ 下的基线文件。
-# 单开一段而不是混进 scripts：这些文件不在仓库里、路径与本机环境绑定，
-# 混在一起会让人误以为键都能在仓库内找到。
-# 注意：外部旧拷贝与 business\scripts 同名文件本就因路径常量（PS1_PATH / CLOSE_PS1_PATH /
-# 日志路径等）不同而哈希不同，属预期差异；纳入哈希只能发现「某一侧被单独改动」，
-# 不能判断两侧语义是否等价。
+# The external section of fingerprint v3: legacy copies outside the repo (only lockable by absolute path), passed explicitly
+# by the caller when seeding. Public code hard-codes no business path; paths only land in the baseline files under business\.
+# It is a separate section rather than folded into scripts: these files are not in the repo and their paths are bound to the
+# local machine, so mixing them in would suggest every key can be found inside the repo.
+# Note: a legacy external copy and a same-named file in business\scripts already hash differently because of path constants
+# (PS1_PATH / CLOSE_PS1_PATH / log paths, etc.); that difference is expected. Hashing them only reveals "one side was changed
+# on its own"; it cannot tell whether the two sides are semantically equivalent.
 
-# 从 Actions.log 路径解析流程 GUID 与 runId：
+# Parse the flow GUID and runId out of an Actions.log path:
 #   ...\Console\Scripts\<flowGuid>\Runs\<runId>\Actions.log
 function Get-FlowGuidFromLogPath([string]$LogPath) {
     $m = [regex]::Match($LogPath, 'Scripts\\([0-9a-fA-F-]{36})\\Runs\\([0-9a-fA-F-]{36})\\')
@@ -66,10 +67,10 @@ function Get-FlowGuidFromLogPath([string]$LogPath) {
     return [ordered]@{ flowGuid = $m.Groups[1].Value.ToLower(); runId = $m.Groups[2].Value }
 }
 
-# 在本地运行历史里找该流程最近一次运行的定义信息（按 startTime 取最新）
-# 返回：flowGuid / flowVersion（云端版本 ETag）/ startTime / status / path；找不到返回 $null
-# 注意：这里只用于「按流程名解析身份」，不用于定位要比对的定义副本；
-#       定义副本一律走 Find-WorkspaceRobin 的精确修订规则。
+# Find the definition info of the flow's most recent run in the local run history (newest startTime wins)
+# Returns: flowGuid / flowVersion (the cloud version ETag) / startTime / status / path; $null when not found
+# Note: this is only for "resolve identity from the flow name", not for locating the definition copy to compare;
+#       definition copies always go through the exact-revision rule in Find-WorkspaceRobin.
 function Find-LatestFlowRun([string]$ScriptsRoot, [string]$FlowName) {
     if (-not $ScriptsRoot -or -not (Test-Path $ScriptsRoot)) { return $null }
     $best = $null
@@ -91,10 +92,11 @@ function Find-LatestFlowRun([string]$ScriptsRoot, [string]$FlowName) {
     return $best
 }
 
-# 已发布流程的本地定义副本：Console\Workspace\<flowGuid>\<修订目录>\script.robin
-# 精确匹配本次发布/运行的修订，绝不退化成「取最新一份」（同机并发时会拿别人的定义来比对）：
-#   1) 修订目录名等于本次 runId 时直接采用（与 PadDesigner 的运行目录同一口径）；
-#   2) 否则只认「本次发布之后写入」的修订；命中多个视为无法确定并报错。
+# The local definition copy of a published flow: Console\Workspace\<flowGuid>\<revision dir>\script.robin
+# It matches the revision of this release/run exactly and never degrades to "take the newest copy" (under concurrency on the
+# same machine that would compare against someone else's definition):
+#   1) if a revision directory name equals this runId, use it directly (the same rule PadDesigner uses for run directories);
+#   2) otherwise accept only revisions written after this release; more than one match means "cannot determine" and raises an error.
 function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]$RunId, [datetime]$SinceUtc) {
     if (-not $WorkspaceRoot -or -not $FlowGuid) { return $null }
     $dir = Join-Path $WorkspaceRoot $FlowGuid
@@ -105,7 +107,7 @@ function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]
         ($_.LastWriteTime.ToUniversalTime() -ge $SinceUtc.AddMinutes(-2))
     })
     if ($hit.Count -gt 1) {
-        # 带 Data['code'] 的异常：调用方按码分类，不解析中文消息
+        # An exception carrying Data['code']: callers classify by code and never parse the message text
         $msg = "Workspace has $($hit.Count) candidate revisions; cannot determine which one belongs to this release: " +
             (($hit | ForEach-Object { $_.Directory.Name }) -join ', ')
         $ex = [System.Exception]::new($msg)
@@ -116,8 +118,8 @@ function Find-WorkspaceRobin([string]$WorkspaceRoot, [string]$FlowGuid, [string]
     return $null
 }
 
-# 从 PAD 控制台配置读取当前环境 ID（console.config 的 UserConfigs 里首个 EnvironmentId）
-# 读不到返回 $null：基线里记 null，准入时不比较环境，避免臆造身份
+# Read the current environment ID from the PAD console config (the first EnvironmentId in console.config's UserConfigs)
+# Returns $null when unreadable: the baseline records null, and admission then skips the environment comparison instead of inventing an identity
 function Get-PadEnvironmentId([string]$ConsoleConfigPath) {
     if (-not $ConsoleConfigPath) {
         $ConsoleConfigPath = Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\console.config'
@@ -132,7 +134,7 @@ function Get-PadEnvironmentId([string]$ConsoleConfigPath) {
     return $null
 }
 
-# 三份文件的 SHA256（小写）。缺失的文件记 null，调用方据此判「读不到」
+# SHA256 (lowercase) of the three files. A missing file records null, which the caller reads as "unreadable"
 function Get-FingerprintParts([string]$RobinPath, [string]$ConfigPath, [string]$AcceptancePath) {
     $parts = [ordered]@{ robin = $null; config = $null; acceptance = $null }
     foreach ($pair in @(@('robin', $RobinPath), @('config', $ConfigPath), @('acceptance', $AcceptancePath))) {
@@ -143,8 +145,8 @@ function Get-FingerprintParts([string]$RobinPath, [string]$ConfigPath, [string]$
     return $parts
 }
 
-# 指纹 v3 的 scripts 段：逐文件算原始字节 SHA256，键是相对仓库路径（正斜杠），值是哈希。
-# 文件缺失记 null，由比对侧判「当前缺失」，不在计算阶段抛异常（准入要一次报全）。
+# The scripts section of fingerprint v3: SHA256 of raw bytes per file, keyed by repo-relative path (forward slashes), valued by the hash.
+# A missing file records null and is judged "currently missing" on the comparison side; no exception is thrown here (admission must report everything in one pass).
 function Get-ScriptFingerprintParts {
     param(
         [string]$RepoRoot,
@@ -153,13 +155,13 @@ function Get-ScriptFingerprintParts {
     if (-not $RepoRoot) { $RepoRoot = $script:RepoRoot }
     $list = @($Paths)
     if ($list.Count -eq 0) {
-        # 未显式传清单时读业务层配置；配置缺失由 Read-FingerprintScriptConfig 硬失败
+        # When no list is passed, read the business-layer config; Read-FingerprintScriptConfig fails hard if it is missing
         $list = @((Read-FingerprintScriptConfig -RepoRoot $RepoRoot).repoScripts)
     }
     $parts = [ordered]@{}
     foreach ($rel in $list) {
         if (-not $rel) { continue }
-        # 统一成正斜杠再拼本机路径：基线里的键与平台无关，便于跨机器读
+        # Normalize to forward slashes before joining the local path: baseline keys stay platform-independent and readable across machines
         $key = ([string]$rel).Replace('\', '/')
         $full = Join-Path $RepoRoot ($key.Replace('/', '\'))
         if (Test-Path -LiteralPath $full) {
@@ -171,8 +173,8 @@ function Get-ScriptFingerprintParts {
     return $parts
 }
 
-# 指纹 v3 的 external 段：逐个绝对路径算原始字节 SHA256，键保留绝对路径（正斜杠）。
-# 文件缺失同样记 null，由比对侧判「当前缺失」。
+# The external section of fingerprint v3: SHA256 of raw bytes per absolute path, keeping the absolute path as the key (forward slashes).
+# Missing files also record null and are judged "currently missing" on the comparison side.
 function Get-ExternalScriptFingerprintParts {
     param([string[]]$Paths)
     $list = @($Paths)
@@ -190,9 +192,9 @@ function Get-ExternalScriptFingerprintParts {
     return $parts
 }
 
-# 比对基线里的 scripts 段与当前脚本文件，返回 status/code/message/evidence。
-# 观察期只报 warn 不阻断：旧基线没有 scripts 段属于「还没播种」而不是被篡改，
-# 一律 warn（SCRIPT_FINGERPRINT_LEGACY），绝不因为缺段就判 fail。
+# Compare the scripts section in the baseline against the current script files and return status/code/message/evidence.
+# The observation period only warns and never blocks: a pre-v3 baseline without a scripts section means "not seeded yet",
+# not tampering, so it always warns (SCRIPT_FINGERPRINT_LEGACY) and never fails just because the section is absent.
 function Test-ScriptFingerprint {
     param(
         [string]$BaselinePath,
@@ -212,7 +214,7 @@ function Test-ScriptFingerprint {
     $props = @($base.PSObject.Properties.Name)
     $hasScripts = ($props -contains 'scripts') -and $base.scripts
     if (-not $hasScripts) {
-        # 向后兼容：v2 及更早基线没有 scripts 段，按 warn 提示重新播种
+        # Backward compatibility: v2 and earlier baselines have no scripts section; warn and ask for a reseed
         return [ordered]@{
             status = 'warn'; code = 'SCRIPT_FINGERPRINT_LEGACY'
             message = 'Baseline has no scripts section (pre-v3 baseline); reseed before checking script fingerprints'
@@ -221,7 +223,7 @@ function Test-ScriptFingerprint {
     }
     $hasExternal = ($props -contains 'external') -and $base.external
     if (-not $hasExternal) {
-        # 已播种 v3 但还没收录 PAD 旧拷贝的基线：同样按 legacy 提示重播，不判 fail
+        # A baseline seeded with v3 but not yet capturing the PAD legacy copies: also reported as legacy and reseeded, never failed
         return [ordered]@{
             status = 'warn'; code = 'SCRIPT_FINGERPRINT_LEGACY'
             message = 'Baseline has no external section (PAD legacy copies were not captured); reseed before checking script fingerprints'
@@ -236,7 +238,7 @@ function Test-ScriptFingerprint {
     $keys = @($keys | Where-Object { $_ } | ForEach-Object { ([string]$_).Replace('\', '/') })
     $now = Get-ScriptFingerprintParts -RepoRoot $RepoRoot -Paths $keys
 
-    # external 段按基线里的绝对路径键逐项核对（不看 -Paths，避免和仓库相对路径混淆）
+    # Check the external section item by item using the absolute-path keys from the baseline (ignoring -Paths to avoid mixing with repo-relative paths)
     $expectedExternal = $base.external
     $extKeys = @($expectedExternal.PSObject.Properties.Name)
     $nowExt = Get-ExternalScriptFingerprintParts -Paths $extKeys
@@ -280,16 +282,16 @@ function Test-ScriptFingerprint {
     }
 }
 
-# .robin 的规范化哈希（逻辑哈希）：剥掉注释/元数据/缩进与转义差异后再算 SHA256。
-# 源文件与已发布副本的原始字节必然不同（PAD 会加 @@ 头、IMPORT 行、重写转义），
-# 只有逻辑哈希才能安全地跨"落盘格式"比较。
+# Normalized hash (logic hash) of a .robin: strip comments/metadata/indentation and escaping differences, then compute SHA256.
+# The source file and the published copy always differ in raw bytes (PAD adds @@ headers and IMPORT lines and rewrites escapes),
+# so only the logic hash can be compared safely across "on-disk formats".
 function Get-RobinLogicHash([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
     $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
     return (Get-RobinHash $text)
 }
 
-# 由 ScriptsRoot 推 Workspace 根：两者都在 ...\Power Automate Desktop\Console\ 下
+# Derive the Workspace root from ScriptsRoot: both live under ...\Power Automate Desktop\Console\
 function Get-WorkspaceRootFromScriptsRoot([string]$ScriptsRoot) {
     if (-not $ScriptsRoot) { return $null }
     $consoleRoot = Split-Path -Parent $ScriptsRoot
@@ -299,12 +301,12 @@ function Get-WorkspaceRootFromScriptsRoot([string]$ScriptsRoot) {
     return $null
 }
 
-# 基线文件位置：business\fingerprints\<流程名>.json（业务层，不入库）
+# Baseline file location: business\fingerprints\<flow name>.json (business layer, never committed)
 function Get-FingerprintBaselinePath([string]$RepoRoot, [string]$FlowName) {
     return (Join-Path (Join-Path (Join-Path $RepoRoot 'business') 'fingerprints') ($FlowName + '.json'))
 }
 
-# 读基线。不抛异常：返回 ok/code/message，由调用方决定按 warn 还是 fail
+# Read a baseline. It does not throw: it returns ok/code/message and the caller decides whether that means warn or fail
 function Read-FingerprintBaseline([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
         return [ordered]@{ ok = $false; code = 'FINGERPRINT_NO_BASELINE'; message = 'no fingerprint baseline'; data = $null }
@@ -325,7 +327,7 @@ function Read-FingerprintBaseline([string]$Path) {
     return [ordered]@{ ok = $true; code = $null; message = 'baseline is readable'; data = $j }
 }
 
-# 写基线：先写临时文件再原子替换，避免半份 JSON
+# Write a baseline: write a temp file first, then replace atomically, so a half-written JSON can never exist
 function Write-FingerprintBaseline([string]$Path, $Baseline) {
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
@@ -337,25 +339,25 @@ function Write-FingerprintBaseline([string]$Path, $Baseline) {
     return $Path
 }
 
-# 构造一份基线记录（哈希与修改时间都在这里算，避免调用方各写一份）
+# Build one baseline record (hashes and modification time are computed here so callers do not each write their own)
 function New-FingerprintBaseline {
     param(
         [string]$FlowName, [string]$FlowGuid, [string]$EnvironmentId,
         [string]$SourceRobin, [string]$WorkspaceRobin,
         [string]$ConfigPath, [string]$AcceptancePath, [string]$Machine,
-        # 仓库内脚本清单：显式传入优先（测试/特殊流程）；不传时读业务层配置
+        # In-repo script list: an explicit argument wins (tests / special flows); read from the business-layer config when omitted
         [string[]]$ScriptPaths,
-        # 仓库外旧拷贝的绝对路径清单：显式传入优先（含显式空数组）；不传时读业务层配置
+        # Absolute-path list of legacy copies outside the repo: an explicit argument wins (including an explicit empty array); read from the business-layer config when omitted
         [string[]]$ExternalPaths
     )
     $parts = Get-FingerprintParts $SourceRobin $ConfigPath $AcceptancePath
-    # 两段清单都需要走配置时只读一次；显式参数优先，避免与配置语义重叠
+    # Read the config once when either list needs it; explicit parameters win so semantics never overlap with the config
     $needCfg = (-not $PSBoundParameters.ContainsKey('ScriptPaths')) -or (-not $PSBoundParameters.ContainsKey('ExternalPaths'))
     $cfg = $(if ($needCfg) { Read-FingerprintScriptConfig -RepoRoot $script:RepoRoot } else { $null })
-    # v3 新增：流程实际引用的脚本文件（相对仓库路径 + 原始字节 SHA256）
+    # New in v3: the script files the flow actually references (repo-relative path + raw-byte SHA256)
     $scriptList = $(if ($PSBoundParameters.ContainsKey('ScriptPaths')) { @($ScriptPaths) } else { @($cfg.repoScripts) })
     $scripts = Get-ScriptFingerprintParts -RepoRoot $script:RepoRoot -Paths $scriptList
-    # v3 新增：仓库外旧拷贝（绝对路径 + 原始字节 SHA256）
+    # New in v3: legacy copies outside the repo (absolute path + raw-byte SHA256)
     $extList = $(if ($PSBoundParameters.ContainsKey('ExternalPaths')) { @($ExternalPaths) } else { @($cfg.externalScripts) })
     $external = Get-ExternalScriptFingerprintParts -Paths $extList
     $mtime = $null
@@ -370,7 +372,7 @@ function New-FingerprintBaseline {
         flowGuid      = $FlowGuid
         environmentId = $EnvironmentId
         machine       = $(if ($Machine) { $Machine } else { $env:COMPUTERNAME })
-        # 源：仓库里的 .robin（原始字节 + 逻辑哈希），config/acceptance 同源
+        # Source: the .robin in the repo (raw bytes + logic hash); config/acceptance come from the same source
         source        = [ordered]@{
             robinPath      = $SourceRobin
             robinSha256    = $parts.robin
@@ -378,27 +380,27 @@ function New-FingerprintBaseline {
             configSha256   = $parts.config
             acceptanceSha256 = $parts.acceptance
         }
-        # 已发布：Workspace 副本（原始字节 + 逻辑哈希），只允许在这个域内自比
+        # Deployed: the Workspace copy (raw bytes + logic hash); it may only be self-compared within this domain
         deployed      = [ordered]@{
             robinPath   = $WorkspaceRobin
             robinSha256 = $deployedRaw
             logicHash   = (Get-RobinLogicHash $WorkspaceRobin)
             workspaceMtime = $mtime
         }
-        # 兼容旧读取方：robin 仍指源 .robin 的原始字节哈希，别再往里塞已发布哈希
+        # For legacy readers: robin still means the raw-byte hash of the source .robin — do not put the deployed hash in here
         hashes        = $parts
-        # v3：脚本清单（相对仓库路径 -> sha256）；观察期仅告警，不参与 .robin 的严格比对
+        # v3: script list (repo-relative path -> sha256); the observation period only warns and takes no part in the strict .robin comparison
         scripts       = $scripts
-        # v3：PAD 运行目录下的旧拷贝（绝对路径 -> sha256）；与 scripts 分开存放
+        # v3: legacy copies under the PAD run directory (absolute path -> sha256); stored separately from scripts
         external      = $external
         seededAt      = [datetime]::UtcNow.ToString('o')
     }
 }
 
-# 比对当前文件与基线/批准记录，返回统一结果：
-#   status = pass / warn / fail；code + message + evidence
-# 默认 Mode=fail：基线已播种并核对无误，指纹不一致即按 fail 处理；
-# 需要观察期或临时降级时显式传 -Mode warn
+# Compare the current files against the baseline / approval record and return a uniform result:
+#   status = pass / warn / fail; code + message + evidence
+# Mode defaults to fail: the baseline has been seeded and verified, so any fingerprint mismatch is a failure;
+# pass -Mode warn explicitly for an observation period or a temporary downgrade.
 function Test-FlowFingerprint {
     param(
         [string]$FlowName,
@@ -407,13 +409,13 @@ function Test-FlowFingerprint {
         [string]$ScriptsRoot,
         [string]$EnvironmentId, [string]$Machine,
         [string]$ApprovePath,
-        # 部署产物路径（占位符替换后的 .robin）；不传时按「源文件名.deployed.robin」自动派生
+        # Deployment artifact path (the .robin after placeholder substitution); derived automatically as "source file name.deployed.robin" when omitted
         [string]$DeployedRobinPath,
-        # 仅用于「缺基线」提示：把可执行的修复命令拼完整
+        # Used only for the "missing baseline" hint: assembles the complete, runnable fix command
         [string]$FlowFilePath,
         [string]$FlowDisplayName,
         [ValidateSet('warn', 'fail')][string]$Mode = 'fail',
-        # 缺基线时的处置级别：报告模式可降为 warn；生产门禁（-Unattended）必须保持 fail
+        # Severity when the baseline is missing: report mode may downgrade to warn; the production gate (-Unattended) must stay fail
         [ValidateSet('warn', 'fail')][string]$NoBaselineMode = 'fail'
     )
     if (-not $Machine) { $Machine = $env:COMPUTERNAME }
@@ -422,7 +424,7 @@ function Test-FlowFingerprint {
     $fpLine = (@('robin', 'config', 'acceptance') | Where-Object { $parts[$_] } |
         ForEach-Object { "$_=$($parts[$_].Substring(0, 12))" }) -join ' '
 
-    # 读不到 robin：连「这份流程是什么」都无法证明
+    # Cannot read the robin: we cannot even prove what this flow is
     if (-not $parts.robin) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
@@ -431,7 +433,7 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 1) 有批准记录：先按批准记录绑定（这条是硬约束，始终 fail）
+    # 1) Approval record present: bind to the approval record first (a hard constraint, always fail)
     if ($ApprovePath -and (Test-Path -LiteralPath $ApprovePath)) {
         $ok = $false
         foreach ($l in [IO.File]::ReadAllLines($ApprovePath, [Text.Encoding]::UTF8)) {
@@ -451,8 +453,8 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 2) 没有基线：未发布流程的正常状态，报告模式可降为 warn；
-    #    生产门禁必须 fail，不能把「还没播种」当成「已通过」
+    # 2) No baseline: the normal state of an unpublished flow; report mode may downgrade to warn,
+    #    but the production gate must fail — "not seeded yet" must never count as "passed".
     $read = Read-FingerprintBaseline $BaselinePath
     if (-not $read.ok) {
         $status = $nonPass
@@ -460,7 +462,7 @@ function Test-FlowFingerprint {
         $ev = @("baseline=$BaselinePath", "now=$fpLine")
         if ($read.code -eq 'FINGERPRINT_NO_BASELINE') {
             $status = $(if ($NoBaselineMode -eq 'fail') { 'fail' } else { 'warn' })
-            # 报文里直接给可执行命令：首次发布并真实运行一次后即可播种基线
+            # Put the runnable command straight into the message: after the first release and one real run, the baseline can be seeded
             $hintName = [string]$(if ($FlowDisplayName) { $FlowDisplayName } else { $FlowName })
             $hint = @('.\tools\pad-sync\pad-fingerprint.ps1', "-FlowName '$hintName'")
             if ($FlowFilePath) { $hint += "-FlowFile '$FlowFilePath'" }
@@ -477,7 +479,7 @@ function Test-FlowFingerprint {
         }
     }
     $base = $read.data
-    # 新基线把哈希分成 source / deployed 两个域；旧基线只有 hashes（源哈希）与已发布路径。
+    # New baselines split hashes into source / deployed domains; old baselines have only hashes (source hashes) plus the published path.
     $srcBase = $null
     if ($base.PSObject.Properties.Name -contains 'source' -and $base.source) { $srcBase = $base.source }
     $depBase = $null
@@ -487,16 +489,16 @@ function Test-FlowFingerprint {
     $baseShort = if ($baseSource.Length -gt 12) { $baseSource.Substring(0, 12) } else { $baseSource }
     $ev = @("baseline=$BaselinePath", "now=$fpLine", "baselined=$baseShort")
 
-    # 3) 身份：必须用基线里记录的 PAD 显示名去找本地运行历史。
-    #    入参 $FlowName 通常来自 flow.json 的文件名（如 demo-flow），与 PAD 里注册的显示名
-    #    可能完全不同；用文件名去找会让每条流程都永远 UNKNOWN。
+    # 3) Identity: the local run history must be searched with the PAD display name recorded in the baseline.
+    #    The $FlowName argument usually comes from the flow.json file name (e.g. demo-flow), which can differ completely
+    #    from the display name registered in PAD; searching by file name would leave every flow UNKNOWN forever.
     $displayName = [string]$base.flow
     if (-not $displayName) { $displayName = $FlowName }
     if ($ScriptsRoot) {
         $run = Find-LatestFlowRun $ScriptsRoot $displayName
         $searched = $displayName
         if (-not $run -and $displayName -ne $FlowName) {
-            # 兜底：极少数旧基线把业务名写进了 flow 字段
+            # Fallback: a few old baselines wrote the business name into the flow field
             $run = Find-LatestFlowRun $ScriptsRoot $FlowName
             $searched = "$displayName (fallback $FlowName)"
         }
@@ -533,7 +535,7 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 4) 向后兼容：旧基线没有 deployed 段，无法证明已发布副本一致 → 不许当 pass
+    # 4) Backward compatibility: an old baseline has no deployed section, so the published copy cannot be proven consistent → it must not count as pass
     if (-not $depBase -or -not $depBase.logicHash) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_UNKNOWN'
@@ -542,7 +544,7 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 5) 源对源：仓库 .robin 只与基线里的源哈希比（原始字节）
+    # 5) Source against source: the repo .robin is compared only with the source hash in the baseline (raw bytes)
     if ($baseSource -ne [string]$parts.robin) {
         return [ordered]@{
             status = $nonPass; code = 'FINGERPRINT_SOURCE_MISMATCH'
@@ -559,10 +561,11 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 6) 已发布侧只跟部署产物比：源是含 {{VAR}} 占位符的模板，规范化后天然不可能等于
-    #    替换后的发布副本。这里改比「部署产物」，仍然只比规范化哈希，不跨域比原始字节。
+    # 6) The deployed side is compared only against the deployment artifact: the source is a template containing {{VAR}} placeholders,
+    #    which after normalization can never equal the substituted published copy. So compare against "the deployment artifact",
+    #    still only by normalized hash and never by raw bytes across domains.
     if (-not $DeployedRobinPath) {
-        # 自动派生：与源 .robin 同目录的 <源文件名去扩展名>.deployed.robin
+        # Auto-derivation: <source file name without extension>.deployed.robin next to the source .robin
         $srcLeaf = [IO.Path]::GetFileNameWithoutExtension($RobinPath) + '.deployed.robin'
         $srcDir = [IO.Path]::GetDirectoryName($RobinPath)
         $DeployedRobinPath = Join-Path $srcDir $srcLeaf
@@ -586,7 +589,7 @@ function Test-FlowFingerprint {
         }
     }
 
-    # 原始字节不同是常态（源是模板、PAD 落盘还会追加 @@ 头），只记录不判失败
+    # Differing raw bytes are normal (the source is a template and PAD appends @@ headers on write); record it but never fail on it
     $note = ' (source is a template with placeholders; its raw bytes differing from the deployment artifact is expected)'
     $ev += "deployed=$DeployedRobinPath"
     $depRaw = (Get-FileHash -LiteralPath $DeployedRobinPath -Algorithm SHA256).Hash.ToLower()

@@ -1,20 +1,20 @@
-﻿# PadTelemetry.psm1 — PAD 设计器本地运行的遥测解析（RobinRobot.log，JSON Lines）
+﻿# PadTelemetry.psm1 — telemetry parsing for PAD designer local runs (RobinRobot.log, JSON Lines)
 #
-# 设计器内点“运行”不会写 Console\Scripts\<flow>\Runs\<runId>\Actions.log，
-# 而是在 DataCollection 下新建带时间戳的 RobinRobot.log。本模块负责：
-#   1) 定位本次运行对应的日志（触发时间之后的文件里取最新）
-#   2) 解析成统一契约：status / totalMs / timedActions / errorCode / error /
+# Clicking "Run" inside the designer does not write Console\Scripts\<flow>\Runs\<runId>\Actions.log;
+# it creates a timestamped RobinRobot.log under DataCollection instead. This module:
+#   1) locates the log that belongs to this run (the newest file among those written after the trigger time)
+#   2) parses it into one uniform contract: status / totalMs / timedActions / errorCode / error /
 #      failedActions / runId / logPath / telemetry
 #
-# 判定规则：
-#   - 成功/失败只看 run 级事件（robin.execution.success / failure），
-#     动作级异常（*.actionexecution.exception）只作为附加信息收集，不参与状态判定
-#   - 错误码只从 padExceptionInfo 取，不从截图或 UI 猜测
+# Decision rules:
+#   - success/failure comes only from run-level events (robin.execution.success / failure);
+#     action-level exceptions (*.actionexecution.exception) are collected as supplementary information only and never affect the status
+#   - error codes are taken only from padExceptionInfo, never guessed from screenshots or the UI
 
-# 解析日志行数组；没有任何合法事件时返回 $null
+# Parse an array of log lines; return $null when there is no valid event at all
 function ConvertFrom-RobinTelemetryLines {
     param(
-        # 不设 Mandatory：PS 5.1 对 Mandatory 数组里的空字符串会直接拒绝绑定
+        # Not Mandatory: PS 5.1 refuses outright to bind an empty string into a Mandatory array parameter
         [string[]]$Lines = @(),
         [string]$LogPath = ''
     )
@@ -26,13 +26,13 @@ function ConvertFrom-RobinTelemetryLines {
     }
     if ($events.Count -eq 0) { return $null }
 
-    # 本次运行的 runId（取最后一条带 padFlowInfo.runId 的事件）
+    # runId of this run (taken from the last event carrying padFlowInfo.runId)
     $rid = $null
     foreach ($e in $events) {
         if ($e.eventData.padFlowInfo -and $e.eventData.padFlowInfo.runId) { $rid = $e.eventData.padFlowInfo.runId }
     }
 
-    # 动作级异常：sap.actionexecution.exception / outlook.actionexecution.exception 等
+    # Action-level exceptions: sap.actionexecution.exception / outlook.actionexecution.exception and so on
     $failures = @()
     foreach ($e in $events) {
         if ($e.event -match '\.(exception|error|failed)$') {
@@ -45,8 +45,8 @@ function ConvertFrom-RobinTelemetryLines {
         }
     }
 
-    # 模块动作耗时：只有 Outlook/SAP/UIAutomation 这类会写遥测，
-    # SET/IF/LOOP/RunDOSCommand 等内置动作不上报
+    # Duration of module actions: only modules such as Outlook/SAP/UIAutomation write telemetry;
+    # built-in actions such as SET/IF/LOOP/RunDOSCommand never report
     $timed = @()
     foreach ($e in $events) {
         if ($e.event -match 'actionexecution\.') {
@@ -94,12 +94,12 @@ function ConvertFrom-RobinTelemetryLines {
     }
 }
 
-# 共享读文本文件（模块内私有，不导出）
+# Shared text-file read (module-private, not exported)
 #
-# 为什么需要：PAD 的 Console.Host / 机器人在运行期间持续持有日志的写句柄，
-# [IO.File]::ReadAllLines 只请求 FileShare.Read，必然抛“文件正由另一进程使用”。
-# 统一改用 FileShare.ReadWrite：既让 PAD 继续写，也允许我们同时读。
-# 读失败不抛异常，返回 $null，由调用方按“未知”处理（未知不等于失败）。
+# Why it is needed: PAD's Console.Host / the robot hold a write handle on the log for the whole run,
+# and [IO.File]::ReadAllLines requests FileShare.Read only, so it always throws "the file is being used by another process".
+# Switching to FileShare.ReadWrite lets PAD keep writing while we read at the same time.
+# A failed read does not throw: it returns $null and the caller treats the result as "unknown" (unknown is not failure).
 function Read-LogTextShared {
     param([Parameter(Mandatory = $true)][string]$Path)
     try {
@@ -113,18 +113,18 @@ function Read-LogTextShared {
     }
 }
 
-# 解析一个 RobinRobot.log 文件
+# Parse one RobinRobot.log file
 function Get-RobinTelemetryFromFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path $Path)) { return $null }
-    # 机器人进程运行期间持有日志写句柄：必须共享读；读不到返回 $null（由调用方判定）
+    # The robot process holds a write handle on the log while running: reading must be shared; return $null when unreadable (the caller decides)
     $text = Read-LogTextShared -Path $Path
     if ($null -eq $text) { return $null }
     $lines = $text -split "`r?`n"
     return (ConvertFrom-RobinTelemetryLines -Lines $lines -LogPath $Path)
 }
 
-# 在 DataCollection 目录里定位日志：修改时间不早于 Since（容忍 20 秒时钟误差），取最新
+# Locate the log in the DataCollection directory: modification time not earlier than Since (tolerating 20 seconds of clock skew), newest first
 function Find-RobinTelemetryLog {
     param(
         [Parameter(Mandatory = $true)][string]$DataCollectionDir,
@@ -136,22 +136,23 @@ function Find-RobinTelemetryLog {
         Sort-Object LastWriteTime -Descending | Select-Object -First 1)
 }
 
-# 解析子进程输出里的末行结果：PAD_<Name>_RESULT=<JSON>
+# Parse the last-line result of a child process: PAD_<Name>_RESULT=<JSON>
 #
-# 为什么放在本模块：PadTelemetry 的职责就是「把外部进程/日志的文本解析成统一契约」
-# （状态、错误码、日志路径）。子进程末行 RESULT 属于同一类工作。PadDesigner 只管
-# UI 交互，PadLock 只管跨进程互斥，都不适合承载文本解析器，所以不新建第四个模块。
+# Why this lives here: PadTelemetry's job is exactly "parse the text of external processes/logs into a uniform contract"
+# (status, error code, log path). A child process's last-line RESULT is the same kind of work. PadDesigner only handles
+# UI interaction and PadLock only handles cross-process mutual exclusion, so neither can host a text parser; that is why
+# no fourth module was created.
 #
-# 行为约定（与原五处各自实现等价）：
-#   - 取最后一条以 PAD_<Name>_RESULT= 开头的行（不只看最后一行）
-#   - 没有匹配行或 JSON 损坏时返回 $null 并留一条日志，绝不抛异常；
-#     是否因此中止由调用方决定，各脚本原有的抛错/降级语义不变
+# Behaviour contract (equivalent to the five previously separate implementations):
+#   - take the last line starting with PAD_<Name>_RESULT= (not merely the last line of the output)
+#   - with no matching line or corrupt JSON, return $null and leave one log line, never throw;
+#     whether to abort because of it is the caller's decision, and each script keeps its original throw/degrade semantics
 function Read-ChildResult {
     param(
-        # 前缀中段：SYNC / DEPLOY / SCHEDULE / ROLLBACK
+        # Prefix middle segment: SYNC / DEPLOY / SCHEDULE / ROLLBACK
         [Parameter(Mandatory = $true)][string]$Name,
         [string[]]$Lines = @(),
-        # 日志回调；不传时直接写控制台
+        # Logging callback; writes straight to the console when omitted
         [scriptblock]$Logger
     )
     $log = if ($Logger) { $Logger } else { { param($m) Write-Host "[pad-result] $m" } }
@@ -172,20 +173,20 @@ function Read-ChildResult {
     }
 }
 
-# 解析 PadConsole.log 里指定 runId 的结局（URL 触发运行的权威证据）
+# Resolve the outcome of a given runId in PadConsole.log (the authoritative evidence for URL-triggered runs)
 #
-# 为什么需要：PAD 运行结束后会清理 Actions.log，编排层拿不到逐动作日志。
-# 此时不能再用“等待阶段可能为空的 status”判失败，必须回到 Console 遥测取证：
+# Why it is needed: PAD cleans up Actions.log after a run, so the orchestration layer cannot obtain the per-action log.
+# At that point a possibly empty status from the wait phase must not be used to declare a failure; we must go back to Console telemetry:
 #   Succeeded = agent.service.runcompleted(Run result: Success) / flowrunner.start.success /
 #               flow.run.success / rpcprovider.hostprocess.exit(ExitCode=0)
-#   Failed    = 任意 *.exception 事件 / runcompleted(Run result: Failure) /
-#               hostprocess.exit 非 0
-#   没有任何该 runId 的事件 = Unknown（未知不等于失败）
+#   Failed    = any *.exception event / runcompleted(Run result: Failure) /
+#               hostprocess.exit with a non-zero code
+#   no event for that runId at all = Unknown (unknown is not failure)
 function Get-PadConsoleRunOutcome {
     param(
         [Parameter(Mandatory = $true)][string]$RunId,
         [string]$DataCollectionDir,
-        # 只扫描这个时间点之后的日志文件（容忍 2 天日志轮转）
+        # Scan only log files written after this point (tolerating 2 days of log rotation)
         [datetime]$Since = [datetime]::MinValue
     )
     if (-not $DataCollectionDir) {
@@ -193,7 +194,7 @@ function Get-PadConsoleRunOutcome {
     }
     if (-not (Test-Path $DataCollectionDir)) { return $null }
 
-    # MinValue 时不做时间过滤（AddDays 会越界）
+    # With MinValue apply no time filter (AddDays would overflow)
     $cut = if ($Since -eq [datetime]::MinValue) { [datetime]::MinValue } else { $Since.AddDays(-2) }
     $files = @(Get-ChildItem -LiteralPath $DataCollectionDir -Filter '*PadConsole.log' -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -ge $cut } |
@@ -204,14 +205,14 @@ function Get-PadConsoleRunOutcome {
     $failureEvent = $null
     $failureMessage = $null
     $evidencePath = $null
-    # 读不出来的文件名：Console.Host 全程持有当前日志的写句柄，
-    # 独占读（ReadAllLines 只共享 Read）必然抛“文件正由另一进程使用”
+    # Names of files that could not be read: Console.Host holds the write handle of the current log the whole time,
+    # so an exclusive read (ReadAllLines shares Read only) always throws "the file is being used by another process"
     $unreadableFile = $null
     foreach ($f in $files) {
-        # 必须共享读（ReadWrite）：既让 PAD 继续写，也允许我们同时读
+        # Reading must be shared (ReadWrite): let PAD keep writing while we read at the same time
         $text = Read-LogTextShared -Path $f.FullName
         if ($null -eq $text) {
-            # 读不到就跳过该文件，最终按 Unknown 处理；未知不等于失败
+            # Skip that file when it cannot be read and end up as Unknown; unknown is not failure
             if (-not $unreadableFile) { $unreadableFile = $f.Name }
             continue
         }
@@ -219,7 +220,7 @@ function Get-PadConsoleRunOutcome {
             if (-not $line.Trim()) { continue }
             $j = $null
             try { $j = $line | ConvertFrom-Json } catch { continue }
-            # runId 有时在顶层，有时在 eventData，两种都认
+            # runId sometimes sits at the top level and sometimes in eventData; accept both
             $rid = $null
             if ($j.runId) { $rid = [string]$j.runId }
             elseif ($j.eventData -and $j.eventData.runId) { $rid = [string]$j.eventData.runId }
@@ -228,7 +229,7 @@ function Get-PadConsoleRunOutcome {
             $ev = [string]$j.event
             $msg = [string]$j.message
 
-            # 显式括号：PowerShell 的 -and/-or 优先级容易把“或”两侧拆错
+            # Explicit parentheses: PowerShell's -and/-or precedence easily splits the two sides of an "or" incorrectly
             if (($ev -match '\.exception$') -or
                 ($ev -eq 'agent.service.runcompleted' -and $msg -match 'Failure')) {
                 if (-not $failureEvent) { $failureEvent = $ev; $failureMessage = $msg }
@@ -240,7 +241,7 @@ function Get-PadConsoleRunOutcome {
                 continue
             }
             if ($ev -eq 'rpcprovider.hostprocess.exit') {
-                # 退出码写在 message 里的 JSON：{"ExitCode":0,"Exceptions":[]}
+                # The exit code is inside a JSON message: {"ExitCode":0,"Exceptions":[]}
                 $m = [regex]::Match($msg, '"ExitCode"\s*:\s*(-?\d+)')
                 if ($m.Success) {
                     if ([int]$m.Groups[1].Value -eq 0) { if (-not $successEvent) { $successEvent = $ev } }
@@ -253,7 +254,7 @@ function Get-PadConsoleRunOutcome {
     $outcome = 'Unknown'
     if ($failureEvent) { $outcome = 'Failed' }
     elseif ($successEvent) { $outcome = 'Succeeded' }
-    # 无任何证据且日志读不出来：留一条可读说明，供 pad-sync 写进 warning
+    # No evidence at all and the log is unreadable: leave a readable note for pad-sync to write into the warning
     $note = $null
     if ($outcome -eq 'Unknown' -and $unreadableFile) {
         $note = "Console log is not readable yet ($unreadableFile); this run is recorded as Unknown"
@@ -268,14 +269,14 @@ function Get-PadConsoleRunOutcome {
     }
 }
 
-# 准入网关判定（纯函数，便于单测）
+# Admission gate decision (a pure function to ease unit testing)
 #
-# 唯一判定依据：解析出 PAD_ADMIT_RESULT，且 fail=0、ask=0、pass>0。
-# 其余情况一律不放行，并区分三种失灵：
-#   script-missing   准入脚本不存在
-#   execution-failed 准入脚本非零退出（含超时/崩溃/待批）
-#   unparsable       没有结果行或 JSON 损坏
-# warn 不参与阻断（与 pad-admit 既有语义一致：warn 只提示）
+# The only acceptance basis: PAD_ADMIT_RESULT parsed, with fail=0, ask=0 and pass>0.
+# Everything else is rejected, distinguishing three kinds of malfunction:
+#   script-missing   the admit script does not exist
+#   execution-failed the admit script exited non-zero (including timeout/crash/pending approval)
+#   unparsable       no result line or corrupt JSON
+# warn never blocks (consistent with pad-admit's existing semantics: warn is a hint only)
 function Get-AdmitGateDecision {
     param(
         [int]$ExitCode = 0,

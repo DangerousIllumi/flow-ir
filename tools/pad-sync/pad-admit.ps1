@@ -1,23 +1,23 @@
-﻿# pad-admit.ps1 — 只读准入网关：部署/运行前判断"这份流程、这次运行是否被允许"
+﻿# pad-admit.ps1 — read-only admission gate: decides before deploy/run whether "this flow, this run" is allowed
 #
-# 对应 docs/admission-gate.md 的检查项。硬约束：
-#   1) 只读：不启动 PAD、不连 SAP、不发邮件、不写产物
-#   2) 一次返回全部问题，不因第一条失败提前退出
-#   3) 每条失败带 code + 人话 + 证据（节点 id / 参数 / 文件名）
+# Mirrors the checks in docs/admission-gate.md. Hard constraints:
+#   1) Read-only: no PAD launch, no SAP connection, no email sent, no artifact written
+#   2) Reports every problem in one pass instead of exiting at the first failure
+#   3) Every failure carries a code + plain-language message + evidence (node id / parameter / file name)
 #
-# 用法：
+# Usage:
 #   .\pad-admit.ps1 -FlowFile business\flows\sample-report.json -ConfigFile business\config\sample-report.json
-#   .\pad-admit.ps1 -FlowFile ... -Unattended      # 定时任务场景：ask 一律按 deny
-#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # TRIGGER 追加只读的计划任务注册校验
-#   .\pad-admit.ps1 -FlowFile ... -Json            # 只输出 JSON
+#   .\pad-admit.ps1 -FlowFile ... -Unattended      # scheduled-task scenario: every ask counts as deny
+#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # TRIGGER also runs a read-only scheduled-task registration check
+#   .\pad-admit.ps1 -FlowFile ... -Json            # JSON output only
 #
-# 退出码：0 全部通过 / 1 存在 fail / 2 仅存在 ask
-# 与文档的差异（报告模式下更实用，已记录）：
-#   - BUDGET 未声明时记 warn 而不是 fail（否则所有存量流程都过不了）
-#   - INTENT 缺失记 warn（策略仍可用 paramsMatch 兜底）
-#   - FINGERPRINT 与基线/批准记录不一致时 fail；缺基线在报告模式 warn，
-#     -Unattended（发布/部署/定时路径）仍保持 fail
-#   - TRIGGER 在观察期未声明记 warn（存量流程迁移完成后改为 fail）
+# Exit codes: 0 all passed / 1 at least one fail / 2 only ask
+# Differences from the doc (more practical in report mode, and recorded):
+#   - An undeclared BUDGET is a warn, not a fail (otherwise every existing flow would fail)
+#   - Missing INTENT is a warn (the policy can still fall back to paramsMatch)
+#   - FINGERPRINT mismatch against the baseline/approval record fails; a missing baseline warns in report mode
+#     but stays fail under -Unattended (the release/deploy/schedule paths)
+#   - TRIGGER not declared during the observation period is a warn (it becomes fail once existing flows are migrated)
 
 [CmdletBinding()]
 param(
@@ -30,25 +30,25 @@ param(
     [string]$KbPath,
     [string]$FlowName,
     [string]$ApproveFile,
-    # 定时任务/无人值守：ask 按 deny 处理
+    # Scheduled / unattended: treat ask as deny
     [switch]$Unattended,
-    # TRIGGER live 校验：默认关闭，离线可复现；开启后只读查询本机计划任务
+    # TRIGGER live check: off by default so it stays reproducible offline; when on, queries local scheduled tasks read-only
     [switch]$TriggerLive,
     [switch]$Json,
-    # 仅供 Pester dot-source
+    # Only for Pester dot-sourcing
     [switch]$NoMain
 )
 $ErrorActionPreference = 'Stop'
 $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-# 指纹机制唯一实现：定位、哈希、比对都在 PadFingerprint.psm1
+# Single implementation of the fingerprint mechanism: lookup, hashing, and comparison all live in PadFingerprint.psm1
 Import-Module (Join-Path $PSScriptRoot 'PadFingerprint.psm1') -Force
-# 指纹未通过时的处置级别：warn 只提醒、fail 阻断。
-# 基线已播种并核对无误，默认改为 fail：指纹不一致即阻断
+# Severity when the fingerprint does not pass: warn only notifies, fail blocks.
+# The baseline has been seeded and verified, so the default is fail: any fingerprint mismatch blocks
 $script:FingerprintMode = 'fail'
 
 $CONTROL_HINTS = @('IF', 'LOOP', 'SWITCH', 'GUARD', 'WAIT', 'EXIT LOOP', 'EXIT_LOOP')
 
-# 通配符匹配：只支持 * 与 ?，其余字符按字面量，避免正则元字符误伤
+# Wildcard match: only * and ? are special, everything else is literal, so regex metacharacters cannot cause false hits
 function Test-GlobMatch([string]$Pattern, [string]$Text) {
     if ($null -eq $Pattern) { return $false }
     if ($Pattern -eq '*') { return $true }
@@ -57,9 +57,9 @@ function Test-GlobMatch([string]$Pattern, [string]$Text) {
     return ($Text -match $rx)
 }
 
-# 按 PAD 显示名派生 flow.json：先匹配顶层 pad_flow_name，再匹配文件名 / 顶层 name。
-# 命中多条即 ADMIT_AMBIGUOUS_FLOW，绝不退回“取第一个”；命中 0 条返回 $null。
-# pad_flow_name 是可选字段，生成器 / check.js / eval-flow.js 只接受不消费。
+# Derive flow.json from the PAD display name: match the top-level pad_flow_name first, then file name / top-level name.
+# More than one hit means ADMIT_AMBIGUOUS_FLOW — never fall back to "take the first one"; zero hits returns $null.
+# pad_flow_name is an optional field: the generator / check.js / eval-flow.js accept but never consume it.
 function Resolve-FlowFileByName([string]$FlowsDir, [string]$FlowName) {
     if (-not (Test-Path -LiteralPath $FlowsDir)) { return $null }
     $items = @(Get-ChildItem -LiteralPath $FlowsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
@@ -67,7 +67,7 @@ function Resolve-FlowFileByName([string]$FlowsDir, [string]$FlowName) {
         ForEach-Object {
             try {
                 $j = [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
-                # 只认流程定义：必须有非空 nodes，避免配套产物/部署 diff 混进候选
+                # Only accept flow definitions: nodes must be non-empty, so companion artifacts / deploy diffs cannot slip into the candidates
                 if (($j.PSObject.Properties.Name -contains 'nodes') -and (@($j.nodes).Count -gt 0)) {
                     [pscustomobject]@{ File = $_; Json = $j }
                 }
@@ -87,7 +87,7 @@ function Resolve-FlowFileByName([string]$FlowsDir, [string]$FlowName) {
     return $null
 }
 
-# 统一的结果条目
+# Uniform result entry
 function New-AdmitCheck([string]$Id, [string]$Status, [string]$Code, [string]$Message, $Evidence) {
     return [ordered]@{
         id = $Id; status = $Status; code = $Code; message = $Message
@@ -95,7 +95,7 @@ function New-AdmitCheck([string]$Id, [string]$Status, [string]$Code, [string]$Me
     }
 }
 
-# 把参数值转成策略 glob 能匹配的文本（对象/数组按压缩 JSON）
+# Turn a parameter value into text a policy glob can match (objects/arrays become compressed JSON)
 function ConvertTo-MatchText($Value) {
     if ($null -eq $Value) { return '' }
     if ($Value -is [string]) { return $Value }
@@ -103,7 +103,7 @@ function ConvertTo-MatchText($Value) {
     return ($Value | ConvertTo-Json -Depth 6 -Compress)
 }
 
-# 规则 when 段是否全部满足
+# Whether every clause of the rule's when section is satisfied
 function Test-RuleWhen($Rule, $Node, [hashtable]$Ctx) {
     $w = $Rule.when
     if (-not $w) { return $true }
@@ -133,8 +133,8 @@ function Test-RuleWhen($Rule, $Node, [hashtable]$Ctx) {
     return $true
 }
 
-# 收集若干 node id 的全部下游（含 next、branch、loop、switch、guard 的 body）
-# 用于判断「某个副作用是否已被 DRY_RUN 守卫包住」；用 visited 防回边死循环
+# Collect every downstream node of a set of node ids (including next, branch, loop, switch, and guard body)
+# Used to decide "is this side effect already wrapped by a DRY_RUN guard"; the visited set prevents infinite loops on back edges
 function Get-DescendantIds($Flow, [string[]]$Ids) {
     $byId = @{}
     foreach ($n in @($Flow.nodes)) { $byId[[string]$n.id] = $n }
@@ -162,8 +162,8 @@ function Get-DescendantIds($Flow, [string[]]$Ids) {
     return $seen
 }
 
-# 策略评估：固定 deny → ask → allow；同层取第一条命中；全部未命中按 defaultEffect
-# 返回 { checks, hits }，checks 里最多一条 POLICY 结论
+# Policy evaluation: fixed order deny → ask → allow; first matching rule wins within a tier; no match falls back to defaultEffect
+# Returns { checks, hits } with at most one POLICY conclusion inside checks
 function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended) {
     $results = @()
     $rules = @($Policy.rules | Where-Object { $_.enabled })
@@ -171,8 +171,8 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
         $_.pad_hint -and $CONTROL_HINTS -notcontains [string]$_.pad_hint
     })
 
-    # 被 DRY_RUN 守卫包住的节点集合：这些副作用在测试模式下本来就不会执行，
-    # 因此「dryRun 相关的 deny 规则」对它们不成立（否则一开 DRY_RUN 就被准入拦死）
+    # The set of nodes wrapped by a DRY_RUN guard: these side effects would not run in test mode anyway,
+    # so "dryRun-related deny rules" do not apply to them (otherwise turning on DRY_RUN would be blocked by admission itself)
     $guardRoots = @($Flow.nodes | Where-Object {
         $_.pad_hint -eq 'GUARD' -and ([string]$_.when) -match 'DryRun'
     } | ForEach-Object { @($_.body) + @($_.elseBody) })
@@ -190,7 +190,7 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
             if ([string]$rule.resource -ne 'action') { continue }
             if (-not (Test-GlobMatch ([string]$rule.match) ([string]$node.pad_hint))) { continue }
             if (-not (Test-RuleWhen $rule $node $Ctx)) { continue }
-            # 被 DRY_RUN 守卫包住的副作用在测试模式下不会执行，dryRun 类规则对它们不成立
+            # Side effects wrapped by a DRY_RUN guard do not run in test mode, so dryRun-class rules do not apply to them
             if ($rule.when -and $rule.when.dryRun -eq $true -and $guarded.ContainsKey([string]$node.id)) { continue }
             $hit = [ordered]@{ rule = $rule; node = [string]$node.id; hint = [string]$node.pad_hint }
             switch ([string]$rule.effect) {
@@ -227,12 +227,12 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
     return $results
 }
 
-# ---------- TRIGGER：触发声明 ----------
-# 观察期：存量流程还没有 trigger，默认记 warn；迁移完成后单独提交改为 fail。
-# 与指纹同一做法：切换级别是独立改动，不混在本次功能里。
+# ---------- TRIGGER: trigger declaration ----------
+# Observation period: existing flows do not declare a trigger yet, so it defaults to warn; after migration a separate commit makes it fail.
+# Same approach as the fingerprint: switching the severity is its own change, never mixed into this feature.
 $script:TriggerMode = 'warn'
 $script:TriggerKinds = @('manual', 'schedule', 'file')
-# 保留值单列：写 mail/callback 是「支持但 v1 未实现」，与拼错区分开
+# Reserved values are listed separately: mail/callback means "supported but not implemented in v1", which is distinct from a typo
 $script:TriggerReservedKinds = @('mail', 'callback')
 $script:TriggerDays = @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 $script:TriggerGates = @('none', 'workday', 'last-workday')
@@ -240,14 +240,14 @@ $script:TriggerDayNames = @{
     mon = 'Mon'; tue = 'Tue'; wed = 'Wed'; thu = 'Thu'; fri = 'Fri'; sat = 'Sat'; sun = 'Sun'
 }
 
-# 属性存在性判断：兼容 JSON 得到的 PSCustomObject 与测试里直接构造的 Hashtable
+# Property existence test: handles both the PSCustomObject produced by JSON and the Hashtable tests build directly
 function Test-PropExists($Obj, [string]$Name) {
     if ($null -eq $Obj) { return $false }
     if ($Obj -is [hashtable]) { return $Obj.ContainsKey($Name) }
     return (@($Obj.PSObject.Properties.Name) -contains $Name)
 }
 
-# 正整数秒：字符串、小数、0、负数一律不认，避免注册器再猜单位
+# Positive integer seconds: strings, fractions, 0, and negatives are all rejected so the registrar never has to guess units
 function Test-TriggerPositiveInt($Value) {
     if ($null -eq $Value -or $Value -is [string] -or $Value -is [bool]) { return $false }
     if (-not ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal])) { return $false }
@@ -255,14 +255,14 @@ function Test-TriggerPositiveInt($Value) {
     return ($d -gt 0 -and $d -eq [math]::Floor($d))
 }
 
-# 默认任务名：与 pad-schedule 的 Get-ScheduleTaskName 同口径，避免两处派生规则漂移
+# Default task name: the same rule as Get-ScheduleTaskName in pad-schedule, so the two derivations cannot drift apart
 function Get-TriggerTaskName([string]$FlowName) {
     $safe = [regex]::Replace([string]$FlowName, '[\\/:*?"<>|\s]', '_').Trim('_')
     if (-not $safe) { return $null }
     return 'flow-ir-' + $safe
 }
 
-# 静态任务名冲突：扫 business\flows 下其他流程声明的有效任务名，命中即不覆盖
+# Static task-name collision: scan the effective task names declared by other flows under business\flows; a hit means no overwrite
 function Find-TriggerTaskCollision {
     param([string]$Repo, [string]$SelfFile, [string]$TaskName)
     $hits = @()
@@ -285,9 +285,9 @@ function Find-TriggerTaskCollision {
     return $hits
 }
 
-# TRIGGER 主体：静态校验 + 可选 live 校验。
-# -TriggerLive 默认关闭：只读查询本机计划任务与 specHash，
-# 未注册记 TRIGGER_NOT_REGISTERED（warn），声明与任务不一致记 TRIGGER_DRIFT（fail）。
+# TRIGGER body: static validation + optional live validation.
+# -TriggerLive is off by default: it reads the local scheduled tasks and specHash without side effects;
+# an unregistered task is TRIGGER_NOT_REGISTERED (warn), and a mismatch between declaration and task is TRIGGER_DRIFT (fail).
 function Invoke-TriggerCheck {
     param(
         $Flow, [string]$FlowName, [string]$Repo, [string]$SelfFile,
@@ -295,11 +295,12 @@ function Invoke-TriggerCheck {
     )
     $issues = @()
 
-    # 可逆性：与幂等性是两个正交的轴。
-    #   idempotent = 同一输入重跑是否收敛（重跑安全）
-    #   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
-    # 放在 trigger 形状检查之前：manual、缺 trigger、legacy 形状的流程同样要让人看到
-    # “后果能不能撤回”，否则报告模式里永远看不到这条。
+    # Reversibility and idempotency are two orthogonal axes.
+    #   idempotent = does rerunning with the same input converge (is a rerun safe)
+    #   reversible = can the consequences already produced be undone (a deletion can be recreated, a mail can be corrected,
+    #                a posting can only be reversed by another posting)
+    # Checked before the trigger shape test: manual flows, flows without a trigger, and legacy-shaped flows must also show
+    # "can the consequences be undone", otherwise report mode would never surface this.
     $nodes = @($Flow.nodes)
     $irreversible = @($nodes | Where-Object {
         $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $false
@@ -313,7 +314,7 @@ function Invoke-TriggerCheck {
                 if ($note) { "node $($_.id) reversible=false: $note" } else { "node $($_.id) reversible=false" }
             }) }
     }
-    # idempotent=false 却没声明 reversible：提示补声明，不拿默认值糊过去
+    # idempotent=false without a reversible declaration: ask for the declaration instead of papering over it with a default
     $missingRev = @($nodes | Where-Object {
         $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false -and
         -not (Test-PropExists $_ 'reversible')
@@ -326,7 +327,7 @@ function Invoke-TriggerCheck {
             }) }
     }
 
-    # 已知不可逆动作却声明 reversible=true：这是事实错误，直接 fail（对应“发催办邮件被标可逆”的事故）
+    # A known-irreversible action declared reversible=true is a factual error, so fail immediately (this is the incident where a reminder email was marked reversible)
     $mislabeled = @($nodes | Where-Object {
         $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $true -and (
             ($_.pad_hint -match '^Outlook\.SendEmail') -or
@@ -364,7 +365,7 @@ function Invoke-TriggerCheck {
             "kind=$kind is not one of manual/schedule/file" @("kind=$kind"))
     }
 
-    # 任务名：显式给出必须安全；未给出按流程名派生。manual 不注册，不需要任务名
+    # Task name: an explicit one must be safe; otherwise derive it from the flow name. manual never registers, so it needs none
     if ($kind -ne 'manual') {
         $taskName = $null
         if (Test-PropExists $trg 'task_name') {
@@ -384,7 +385,7 @@ function Invoke-TriggerCheck {
     }
 
     if ($kind -eq 'manual') {
-        # manual 声明了时刻/目录也不会执行，直接判非法，避免“写了但没人跑”
+        # A time or directory on a manual declaration would never execute, so reject it outright and prevent "declared but never run"
         foreach ($k in @('time', 'days', 'gate', 'timeout_sec', 'file', 'assisted')) {
             if (Test-PropExists $trg $k) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
@@ -428,7 +429,8 @@ function Invoke-TriggerCheck {
                 message = "timeout_sec=$($trg.timeout_sec) (expected a positive integer in seconds)"; evidence = @('timeout_sec') }
         }
 
-        # assisted：到点自动启动、中途有人确认；必须显式声明 timeout_sec，没人点时靠超时告警兜底
+        # assisted: starts automatically on schedule but needs a human confirmation partway; timeout_sec must be declared explicitly
+        # so that nobody clicking is still caught by the timeout alert
         if (Test-PropExists $trg 'assisted') {
             if (-not ($trg.assisted -is [bool])) {
                 $issues += @{ status = 'fail'; code = 'TRIGGER_INVALID'
@@ -478,8 +480,8 @@ function Invoke-TriggerCheck {
             }
         }
 
-        # 交叉校验：无人值守触发遇到人工确认节点是硬矛盾；
-        # 显式 assisted=true 表示到点自动启动、中途有人确认，放行（没人点时靠 timeout_sec 告警兜底）
+        # Cross-check: an unattended trigger combined with a manual-confirmation node is a hard contradiction;
+        # an explicit assisted=true means "starts on schedule and needs a human partway", which is allowed (the timeout_sec alert covers nobody clicking)
         $nodes = @($Flow.nodes)
         $confirm = @($nodes | Where-Object {
             $_ -and (Test-PropExists $_ 'run_mode') -and [string]$_.run_mode -eq 'confirm'
@@ -491,18 +493,19 @@ function Invoke-TriggerCheck {
         }
     }
 
-    # live 校验：只对 schedule，且静态检查没有 fail 才查本机任务
-    # Test-Trigger 只读（Get-ScheduledTask / Get-ScheduledTaskInfo），不注册、不触发
+    # live validation: only for schedule, and only when static checks produced no fail
+    # Test-Trigger is read-only (Get-ScheduledTask / Get-ScheduledTaskInfo): it never registers or triggers anything
     $staticFails = @($issues | Where-Object { $_.status -eq 'fail' })
     if ($staticFails.Count -eq 0 -and $TriggerLive -and $kind -eq 'schedule' -and
         $SelfFile -and (Test-Path -LiteralPath $SelfFile)) {
         try {
             Import-Module (Join-Path $PSScriptRoot 'TriggerRegistry.psm1') -Force
-            # 不传 -ConfigFile：本轮只校验 schedule，该参数只会被拼进期望动作参数，
-            # 而注册器建任务时不带它，传了会把「一致」误判成 TRIGGER_DRIFT。
+            # Do not pass -ConfigFile: this pass validates only schedule, and that parameter is merely concatenated into the
+            # expected action arguments while the registrar does not pass it when creating the task, so passing it here would
+            # wrongly turn "consistent" into TRIGGER_DRIFT.
             $live = Test-Trigger -FlowFile $SelfFile
         } catch {
-            # 查询失败（含运行时配置缺失）不能静默放过，按 fail 报源码
+            # A failed query (including missing runtime config) must not be silently ignored; report it as fail with the source
             $liveCode = 'TRIGGER_DRIFT'
             if ($_.Exception.Data -and $_.Exception.Data.Contains('code')) {
                 $liveCode = [string]$_.Exception.Data['code']
@@ -541,12 +544,13 @@ function Invoke-TriggerCheck {
     })
 }
 
-# ---------- INPUT：节点级输入文件声明 ----------
-# 口径与 file 触发器一致：目录必须走 {{config.<KEY>}} 引用；候选 ≥2 一律判歧义，绝不“取最新”。
-# 本项只读：只枚举目录、stat 文件，不打开、不移动、不删除任何文件。
-# 能力只用于准入与结构校验，不改变 .robin 生成产物（生成器不认识 inputs）。
+# ---------- INPUT: node-level input-file declarations ----------
+# Same rule as the file trigger: the directory must be referenced through {{config.<KEY>}}; two or more candidates are always
+# ambiguous and never resolved by "take the newest". This item is read-only: it only enumerates directories and stats files,
+# never opens, moves, or deletes anything.
+# The capability serves admission and structural checks only; it does not change the generated .robin (the generator does not know inputs).
 
-# 解析 inputs.dir 的 {{config.<KEY>}}：只读，解析不了就硬失败，绝不退回字面路径
+# Resolve the {{config.<KEY>}} of inputs.dir: read-only; fail hard when it cannot be resolved, never fall back to a literal path
 function Resolve-InputDir {
     param([string]$Token, $Config, [string]$ConfigFile)
     $m = [regex]::Match([string]$Token, '^\{\{config\.(\w+)\}\}$')
@@ -566,7 +570,7 @@ function Resolve-InputDir {
     return @{ dir = [string]$Config.$key; code = $null; message = $null }
 }
 
-# INPUT 主体：静态形状 + 可选的文件系统核对（只读枚举）
+# INPUT body: static shape + optional filesystem verification (read-only enumeration)
 function Invoke-InputCheck {
     param($Flow, $Config, [string]$ConfigFile)
     $issues = @()
@@ -615,7 +619,7 @@ function Invoke-InputCheck {
                     message = "$at.pattern is required and must not be empty"; evidence = @($at) }
                 continue
             }
-            # required 必须显式声明，不默认填充（与 run_mode / idempotent 的必答口径一致）
+            # required must be declared explicitly and is never defaulted (same mandatory-answer rule as run_mode / idempotent)
             if (-not (Test-PropExists $it 'required') -or -not ($it.required -is [bool])) {
                 $issues += @{ status = 'fail'; code = 'INPUT_INVALID'
                     message = "$at.required must be true/false (no default filling)"; evidence = @($at) }
@@ -623,7 +627,7 @@ function Invoke-InputCheck {
             }
             $required = [bool]$it.required
 
-            # 文件系统核对：目录不存在/不可读时，必需项判失败，可选项按“没有”处理
+            # Filesystem verification: when the directory is missing or unreadable, a required entry fails while an optional one counts as "absent"
             $dir = $res.dir
             if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
                 if ($required) {
@@ -665,7 +669,7 @@ function Invoke-InputCheck {
     })
 }
 
-# 主体检查：一次跑完全部检查项（含 SCRIPT_FINGERPRINT：v3 脚本指纹，观察期只 warn）
+# Body of checks: runs every check item in one pass (including SCRIPT_FINGERPRINT: the v3 script fingerprint, warn only during the observation period)
 function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,
@@ -694,8 +698,8 @@ function Invoke-AdmitChecks {
         }
 
         # 2 ARGS
-        # 未知参数 = 硬失败（生成器也会拒绝）；缺必填但 KB 无默认值只提醒：
-        # 生成器会跳过该参数，PAD 实际接受（golden 示例同样省略），不宜阻断
+        # Unknown parameter = hard failure (the generator rejects it too); a missing required one that the KB gives no default for
+        # is only a warning: the generator skips that parameter and PAD actually accepts it (the golden example omits it too), so it should not block
         $argErrs = @()
         $argWarns = @()
         foreach ($n in $actionNodes) {
@@ -709,7 +713,7 @@ function Invoke-AdmitChecks {
             }
             foreach ($p in @($act.input_params)) {
                 if ($p.required -ne $true) { continue }
-                # 句柄类参数由生成器从 Launch 动作自动接上，flow.json 里本来就不写
+                # Handle-type parameters are wired up automatically by the generator from the Launch action, so flow.json never declares them
                 if ([string]$p.type -match '(Instance|Handle)$' -or [string]$p.type -eq 'Browser') { continue }
                 if ($null -ne $p.default) { continue }
                 if ($paramNames -notcontains [string]$p.name) {
@@ -735,7 +739,7 @@ function Invoke-AdmitChecks {
         }
     }
 
-    # 4 STATIC（复用 check.js，不重复实现语法规则）
+    # 4 STATIC (reuse check.js; do not reimplement the syntax rules)
     if ($RobinPath -and (Test-Path -LiteralPath $RobinPath)) {
         $out = & node (Join-Path $Paths.Repo 'tools\pad-robin\check.js') $RobinPath 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
@@ -788,7 +792,7 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'POLICY' 'warn' 'POLICY_MISSING' 'business\policy.json not found; skipping policy evaluation' @()
     }
 
-    # 8 BUDGET（未声明即 warn：报告模式下不阻断存量流程）
+    # 8 BUDGET (undeclared is a warn: report mode must not block existing flows)
     if ($Flow.budget) {
         $b = $Flow.budget
         $ev = @()
@@ -876,9 +880,9 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'PREFLIGHT' 'warn' 'PREFLIGHT_SKIPPED' 'requirements or config missing; skipped' @()
     }
 
-    # 12 FINGERPRINT（机制与哈希在 PadFingerprint.psm1，本脚本不另写一份）
-    # 结果码：pass / FINGERPRINT_MISMATCH / FINGERPRINT_UNKNOWN / FINGERPRINT_NO_BASELINE /
-    #         FINGERPRINT_FLOW_STALE / SOURCE_MISMATCH / CONFIG_STALE / BASELINE_CORRUPT / AMBIGUOUS
+    # 12 FINGERPRINT (the mechanism and hashing live in PadFingerprint.psm1; this script does not write a second copy)
+    # Result codes: pass / FINGERPRINT_MISMATCH / FINGERPRINT_UNKNOWN / FINGERPRINT_NO_BASELINE /
+    #               FINGERPRINT_FLOW_STALE / SOURCE_MISMATCH / CONFIG_STALE / BASELINE_CORRUPT / AMBIGUOUS
     $basePath = $null
     if ($Paths.Repo -and $FlowName) { $basePath = Get-FingerprintBaselinePath $Paths.Repo $FlowName }
     $fp = Test-FlowFingerprint -FlowName $FlowName -RobinPath $RobinPath -ConfigPath $Paths.ConfigFile `
@@ -888,9 +892,9 @@ function Invoke-AdmitChecks {
         -FlowDisplayName $FlowDisplayName -NoBaselineMode $NoBaselineMode -Mode $script:FingerprintMode
     $checks += New-AdmitCheck 'FINGERPRINT' $fp.status $fp.code $fp.message $fp.evidence
 
-    # 13 SCRIPT_FINGERPRINT（v3 观察期：只 warn 不阻断）
-    # 旧基线没有 scripts 段时模块返回 warn（SCRIPT_FINGERPRINT_LEGACY），不会判 fail；
-    # 不一致时 evidence 逐条点名文件与两侧短哈希
+    # 13 SCRIPT_FINGERPRINT (v3 observation period: warn only, never blocks)
+    # The module returns warn (SCRIPT_FINGERPRINT_LEGACY) when an old baseline has no scripts section and never fails;
+    # on a mismatch, evidence names each file and both short hashes
     if ($basePath) {
         $sf = Test-ScriptFingerprint -BaselinePath $basePath -RepoRoot $Paths.Repo
         $checks += New-AdmitCheck 'SCRIPT_FINGERPRINT' $sf.status $sf.code $sf.message $sf.evidence
@@ -907,12 +911,12 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' 'all generic script actions have an intent' @()
     }
 
-    # 15 TRIGGER（静态校验；-TriggerLive 时追加只读的注册校验）
+    # 15 TRIGGER (static validation; adds the read-only registration check with -TriggerLive)
     $checks += @(Invoke-TriggerCheck -Flow $Flow -FlowName $FlowName `
         -Repo $Paths.Repo -SelfFile $Paths.FlowFile -ConfigFile $Paths.ConfigFile `
         -TriggerLive:$TriggerLive)
 
-    # 16 INPUT（节点级输入文件声明：只读枚举，缺文件/多候选在运行前报出）
+    # 16 INPUT (node-level input-file declarations: read-only enumeration; missing files / multiple candidates are reported before the run)
     $checks += @(Invoke-InputCheck -Flow $Flow -Config $Config -ConfigFile $Paths.ConfigFile)
 
     return $checks
@@ -925,18 +929,18 @@ if (-not $NoMain) {
         $repo = $script:RepoRoot
         $nameFromLookup = $false
         if (-not $FlowFile) {
-            # 不再默认到某个具体业务流程：先按流程名派生，否则要求唯一匹配
+            # No longer defaulting to one particular business flow: derive from the flow name first, otherwise require a unique match
             $flowsDir = Join-Path $repo 'business\flows'
             if ($FlowName) {
-                # 先 pad_flow_name，再文件名 / name；多命中直接 ADMIT_AMBIGUOUS_FLOW
+                # pad_flow_name first, then file name / name; more than one hit is ADMIT_AMBIGUOUS_FLOW
                 $FlowFile = Resolve-FlowFileByName $flowsDir $FlowName
                 if (-not $FlowFile) {
                     throw "E_FLOW_FILE_REQUIRED: -FlowFile not provided, and deriving it from the flow name failed: $FlowName (no match on pad_flow_name / file name / name under business\flows); specify it with -FlowFile"
                 }
                 $nameFromLookup = $true
             } else {
-                # 只认流程定义：排除 accept/requirements/schema 等配套 json，
-                # 再用「有非空 nodes 数组」这一结构特征挡掉 deploy_diff.json 之类同目录产物
+                # Only accept flow definitions: exclude companion json files such as accept/requirements/schema,
+                # then use the structural feature "has a non-empty nodes array" to filter out same-directory artifacts like deploy_diff.json
                 $cands = @(Get-ChildItem -LiteralPath $flowsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -notmatch '\.(acceptance|requirements|schema)\.json$' } |
                     Where-Object {
@@ -956,7 +960,8 @@ if (-not $NoMain) {
             }
         }
         $FlowFile = (Resolve-Path -LiteralPath $FlowFile).Path
-        # 按名派生时身份统一取文件名：显示名只是定位键，不能当流程身份（会影响策略 env 与基线路径）
+        # When derived by name, identity always comes from the file name: the display name is only a lookup key and must not
+        # serve as the flow identity (it would affect the policy env and the baseline path)
         if ($nameFromLookup) {
             $FlowName = [IO.Path]::GetFileNameWithoutExtension($FlowFile)
         } elseif (-not $FlowName) { $FlowName = [IO.Path]::GetFileNameWithoutExtension($FlowFile) }
@@ -980,7 +985,7 @@ if (-not $NoMain) {
 
         $flow = [IO.File]::ReadAllText($FlowFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         $config = $null
-        # 配置缺失不算致命：CONFIG / PREFLIGHT / FINGERPRINT 会各自记一条 warn
+        # A missing config is not fatal: CONFIG / PREFLIGHT / FINGERPRINT each record their own warn
         if ($ConfigFile -and (Test-Path -LiteralPath $ConfigFile)) {
             $ConfigFile = (Resolve-Path -LiteralPath $ConfigFile).Path
             $config = [IO.File]::ReadAllText($ConfigFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -996,14 +1001,14 @@ if (-not $NoMain) {
             $policy = [IO.File]::ReadAllText($PolicyFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
         }
 
-        # 指纹检查需要「本地运行历史」与「当前环境」：只读读取，不改任何状态
+        # The fingerprint check needs "local run history" and "current environment": read-only, no state is changed
         $paths = @{
             Repo = $repo; FlowFile = $FlowFile; ConfigFile = $ConfigFile
             ScriptsRoot = (Join-Path $env:LOCALAPPDATA 'Microsoft\Power Automate Desktop\Console\Scripts')
             EnvironmentId = (Get-PadEnvironmentId)
         }
         $result.flow = $FlowName
-        # 报告模式允许「未发布 = 没基线」只告警；-Unattended 是发布/部署/定时路径，必须 fail
+        # Report mode allows "unpublished = no baseline" to warn only; -Unattended is the release/deploy/schedule path and must fail
         $noBaselineMode = $(if ($Unattended) { 'fail' } else { 'warn' })
         $result.checks = @(Invoke-AdmitChecks -Flow $flow -FlowName $FlowName -Config $config -Kb $kb `
             -RobinPath $RobinFile -AcceptancePath $AcceptanceFile -RequirementsPath $RequirementsFile `

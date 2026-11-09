@@ -1,17 +1,17 @@
-﻿# TriggerRegistry.psm1 —— 触发声明解析与计划任务注册
+﻿# TriggerRegistry.psm1 — trigger declaration parsing and scheduled-task registration
 #
-# 只实现 manual 与 schedule；file 分支留桩（第 4 步再做）。
-# 动作构造复用 pad-schedule.ps1（dot-source -NoMain），不复制一份启动方式。
-# 失败一律硬失败：抛异常由调用方转成非零退出码，注册/注销失败写 PadAlerts 告警。
+# Implements manual and schedule only; the file branch is a stub (part 4).
+# Action construction reuses pad-schedule.ps1 (dot-sourced with -NoMain) instead of copying a launcher.
+# Failures are always hard failures: throw an exception, let the caller turn it into a non-zero exit code, and write a PadAlerts alert when registration/unregistration fails.
 
 $moduleHere = $PSScriptRoot
 $moduleRepo = Split-Path -Parent (Split-Path -Parent $moduleHere)
 
 Import-Module (Join-Path $moduleHere 'PadAlerts.psm1') -Force
-# -NoMain：只加载函数与变量，不执行注册主流程
+# -NoMain: load functions and variables only, do not execute the registration main flow
 . (Join-Path $moduleHere 'pad-schedule.ps1') -NoMain
 
-# 触发声明的取值域，与 pad-admit 的 TRIGGER 检查保持一致
+# Value domain of the trigger declaration, kept in sync with the TRIGGER checks in pad-admit
 $script:TriggerKinds = @('manual', 'schedule', 'file')
 $script:TriggerReservedKinds = @('mail', 'callback')
 $script:TriggerDays = @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
@@ -23,7 +23,7 @@ function Test-TriggerProp($Obj, [string]$Name) {
     return (@($Obj.PSObject.Properties.Name) -contains $Name)
 }
 
-# 带结果码的异常：CLI 与 pad-admit 靠 Data['code'] 分类，不解析中文消息
+# Exception carrying a result code: the CLI and pad-admit classify by Data['code'] and never parse the Chinese message
 function New-TriggerException([string]$Code, [string]$Message) {
     $ex = New-Object System.Exception($Message)
     $ex.Data['code'] = $Code
@@ -37,7 +37,7 @@ function Test-TriggerPositiveInt($Value) {
     return ($d -gt 0 -and $d -eq [math]::Floor($d))
 }
 
-# 读取流程文件；FlowFile 缺失/不存在/不是 JSON 一律输入错误
+# Read the flow file; a missing, absent or non-JSON FlowFile is always an input error
 function Read-TriggerFlow([string]$FlowFile) {
     if (-not $FlowFile) { throw (New-TriggerException 'TRIGGER_INPUT_MISSING' 'missing -FlowFile') }
     if (-not (Test-Path -LiteralPath $FlowFile)) {
@@ -51,7 +51,7 @@ function Read-TriggerFlow([string]$FlowFile) {
     }
 }
 
-# 解析 trigger 声明，返回规范化对象；这里不做系统查询
+# Parse the trigger declaration and return a normalized object; no system queries happen here
 function Get-TriggerSpec {
     param(
         [Parameter(Mandatory)][string]$FlowFile,
@@ -77,9 +77,9 @@ function Get-TriggerSpec {
         throw (New-TriggerException 'TRIGGER_UNKNOWN_KIND' "kind=$kind is not one of manual/schedule/file")
     }
 
-    # 流程名：优先 PAD 显示名 pad_flow_name，其次内部 name，最后文件名。
-    # 任务名与 -FlowName 都从这里派生，两处必须同源：内部名与 PAD 显示名不一致时，
-    # 用内部名会派生出错的任务名，pad-sync 也按显示名找不到流程。
+    # Flow name: prefer the PAD display name pad_flow_name, then the internal name, finally the file name.
+    # The task name and -FlowName are both derived from here and must share one source: when the internal name differs from the PAD display name,
+    # using the internal name derives a wrong task name, and pad-sync also fails to find the flow by its display name.
     $flowName = $null
     if ((Test-TriggerProp $flow 'pad_flow_name') -and [string]$flow.pad_flow_name) {
         $flowName = [string]$flow.pad_flow_name
@@ -97,12 +97,12 @@ function Get-TriggerSpec {
     $assisted = $false
     $fileDir = $null
     $filePattern = $null
-    # file 触发默认值，与设计稿 2.1 一致；poll 下限 15 秒，避免空转打满磁盘
+    # Defaults for the file trigger, consistent with design draft 2.1; poll floor of 15 seconds to avoid spinning and hammering the disk
     $filePollSec = 60
     $fileSettleSec = 60
     $fileMaxWaitSec = 7200
     $fileOncePerFile = $true
-    # 声明级提示（warn）：不阻断注册，随 spec 返回给调用方展示
+    # Declaration-level warnings (warn): do not block registration, returned with the spec for the caller to display
     $triggerWarnings = @()
 
     if ($kind -eq 'manual') {
@@ -143,7 +143,7 @@ function Get-TriggerSpec {
             if (-not $fileDir) {
                 throw (New-TriggerException 'TRIGGER_INVALID' 'file.dir is required')
             }
-            # 只接受配置引用：字面路径在别的机器上无法复用，注册时也解析不了
+            # Only config references are accepted: a literal path cannot be reused on another machine and cannot be resolved at registration
             if ($fileDir -notmatch '^\{\{config\.(\w+)\}\}$') {
                 throw (New-TriggerException 'TRIGGER_PATH_LITERAL' "file.dir must be a {{config.<KEY>}} reference: $fileDir")
             }
@@ -179,7 +179,7 @@ function Get-TriggerSpec {
                 $fileOncePerFile = [bool]$f.once_per_file
             }
         }
-        # assisted：到点自动启动、中途有人确认；必须显式声明 timeout_sec，没人点时靠超时告警兜底
+        # assisted: starts automatically at the scheduled time with a human confirming midway; timeout_sec must be declared explicitly because nobody clicking falls back to the timeout alert
         if (Test-TriggerProp $trg 'assisted') {
             if (-not ($trg.assisted -is [bool])) {
                 throw (New-TriggerException 'TRIGGER_INVALID' "assisted=$($trg.assisted) (expected true/false)")
@@ -190,7 +190,7 @@ function Get-TriggerSpec {
                     'assisted=true requires an explicit timeout_sec (the timeout alert is the fallback when nobody confirms)')
             }
         }
-        # 无人值守触发遇到人工确认节点是硬矛盾；显式 assisted=true 表示中途有人确认，放行
+        # An unattended trigger facing manual-confirmation nodes is a hard contradiction; an explicit assisted=true means a human confirms midway and is allowed
         $confirm = @($flow.nodes | Where-Object {
             $_ -and (Test-TriggerProp $_ 'run_mode') -and [string]$_.run_mode -eq 'confirm'
         })
@@ -198,10 +198,10 @@ function Get-TriggerSpec {
             throw (New-TriggerException 'TRIGGER_UNATTENDED_CONFIRM' `
                 ("unattended trigger but nodes require manual confirmation: " + (@($confirm | ForEach-Object { $_.id }) -join ',')))
         }
-        # 可逆性收窄：与幂等性是两个正交的轴。
-        #   idempotent = 同一输入重跑是否收敛（重跑安全）
-        #   reversible = 已经产生的后果能否撤回（删除可重建、发信可补正、过账只能冲销）
-        # 无人值守只对「后果不可回退」提示，不再由 idempotent=false 触发。
+        # Reversibility narrowing: an axis orthogonal to idempotency.
+        #   idempotent = does re-running the same input converge (safe to re-run)
+        #   reversible = can the effects already produced be undone (deletes can be recreated, mail can be corrected, postings can only be reversed)
+        # Unattended only warns about "irreversible consequences" and is no longer triggered by idempotent=false.
         $irreversible = @($flow.nodes | Where-Object {
             $_ -and (Test-TriggerProp $_ 'reversible') -and $_.reversible -eq $false
         })
@@ -214,7 +214,7 @@ function Get-TriggerSpec {
                 evidence = @("node $($n.id) reversible=false" + $(if ($note) { ": $note" } else { '' }))
             }
         }
-        # idempotent=false 却没声明 reversible：提示补声明，不默认填充
+        # idempotent=false without a reversible declaration: prompt to add the declaration, never fill it in by default
         $missingRev = @($flow.nodes | Where-Object {
             $_ -and (Test-TriggerProp $_ 'idempotent') -and $_.idempotent -eq $false -and
             -not (Test-TriggerProp $_ 'reversible')
@@ -228,8 +228,8 @@ function Get-TriggerSpec {
         }
     }
 
-    # 计划任务触发器形态：声明了 days 就按对应星期建 weekly（周末不唤醒，工作日再交日历判断）；
-    # file 守望固定 weekly；没声明 days 且带日历门禁时保持旧行为 daily。
+    # Scheduled-task trigger shape: when days is declared, build a weekly task for those weekdays (no wake-up on weekends, the calendar gate decides on workdays);
+    # the file watcher is always weekly; without days and with a calendar gate, keep the old daily behaviour.
     $scheduleKind = $null
     if ($kind -ne 'manual') {
         $scheduleKind = 'daily'
@@ -266,13 +266,13 @@ function Get-TriggerSpec {
         fileSettleSec = $fileSettleSec
         fileMaxWaitSec = $fileMaxWaitSec
         fileOncePerFile = $fileOncePerFile
-        # 声明级 warn：调用方可直接展示，不阻断注册
+        # Declaration-level warn: the caller can display it directly; it does not block registration
         warnings     = @($triggerWarnings)
         raw          = $trg
     }
 }
 
-# 幂等键：显式规范化字段做 SHA256，键序与空白不影响结果
+# Idempotency key: SHA256 over explicitly normalized fields; key order and whitespace do not affect the result
 function Get-TriggerFingerprint {
     param([Parameter(Mandatory)]$Spec)
     $canon = [ordered]@{
@@ -281,7 +281,7 @@ function Get-TriggerFingerprint {
         taskName   = [string]$Spec.taskName
         time       = [string]$Spec.time
         days       = @($Spec.days)
-        # 触发器形态进 hash：显式 days 与未声明 days 的行为不同，不能判成未变更
+        # The trigger shape enters the hash: explicit days and omitted days behave differently and must not be judged unchanged
         scheduleKind = [string]$Spec.scheduleKind
         gate       = [string]$Spec.gate
         timeoutSec = [int]$Spec.timeoutSec
@@ -305,8 +305,8 @@ function Get-TriggerFingerprint {
     }
 }
 
-# 运行时配置路径：显式 -RuntimeConfigPath 优先；否则只认仓库内唯一的 business\config\runtime.json
-# 单独抽出来，file 注册要把真实路径写进任务动作，不能只拿配置对象
+# Runtime config path: an explicit -RuntimeConfigPath wins; otherwise only the single business\config\runtime.json in the repository is accepted
+# Extracted separately because file registration must write the real path into the task action, not merely take the config object
 function Resolve-TriggerRuntimeConfigPath {
     param([string]$RuntimeConfigPath)
     if ($RuntimeConfigPath) {
@@ -339,7 +339,7 @@ function Resolve-TriggerRuntimeConfig {
     return $cfg
 }
 
-# 把 spec 转成计划任务动作；依然调用 pad-schedule 的 New-ScheduleActionSpec
+# Turn the spec into a scheduled-task action; still calls pad-schedule's New-ScheduleActionSpec
 function Get-TriggerActionSpec {
     param($Spec, $Runtime, [switch]$AllowProd)
     $common = @{
@@ -350,7 +350,7 @@ function Get-TriggerActionSpec {
     if ($AllowProd) { $common.AllowProd = $true }
 
     if ($Spec.gate -eq 'workday' -or $Spec.gate -eq 'last-workday') {
-        # 门禁分支：任务先调 pad-schedule 判日历，再决定是否跑 pad-sync
+        # Gate branch: the task first calls pad-schedule to evaluate the calendar, then decides whether to run pad-sync
         $specArgs = $common.Clone()
         $specArgs.ScriptPath = Join-Path $moduleHere 'pad-schedule.ps1'
         $specArgs.PadSyncPath = [string]$Runtime.PadSyncPath
@@ -364,7 +364,7 @@ function Get-TriggerActionSpec {
     return (New-ScheduleActionSpec @common)
 }
 
-# 任务描述里携带 specHash，用于幂等与回读
+# The task description carries specHash, used for idempotency and read-back
 function Get-TaskSpecHash([string]$Description) {
     if (-not $Description) { return $null }
     $m = [regex]::Match([string]$Description, 'flow-ir-spec:([0-9a-f]{64})')
@@ -372,10 +372,10 @@ function Get-TaskSpecHash([string]$Description) {
     return $null
 }
 
-# 任务是否与声明一致：描述 hash + 动作可执行文件/参数都要对上。
-# -AllowProd 是注册时的调用开关，不在 trigger 的 canonical 指纹里；
-# -Test 只核对声明一致性，忽略该 token，否则生产任务永远被判 drift。
-# 注册/回读仍严格比较，防止漏掉 -AllowProd 后任务在生产里拒绝运行。
+# Whether the task matches the declaration: description hash + action executable/arguments must all agree.
+# -AllowProd is a call switch used at registration and is not part of the trigger's canonical fingerprint;
+# -Test only checks declaration consistency and ignores that token, otherwise a production task would always be judged drift.
+# Registration/read-back still compare strictly, so a task registered without -AllowProd is caught before it is refused in production.
 function Test-TriggerTaskMatch {
     param($Task, $ActionSpec, [string]$SpecHash, [switch]$IgnoreAllowProd)
     if (-not $Task) { return $false }
@@ -410,10 +410,10 @@ function Get-TriggerSummary($Spec) {
     return "$($Spec.kind) $($Spec.time) (gate=$($Spec.gate))"
 }
 
-# ---- file 分支的只读配置解析与目录探测 ----
+# ---- read-only config resolution and directory probing for the file branch ----
 
-# 解析 {{config.<KEY>}}：只读，不碰 PadConfig 的固定键集与校验口径。
-# 允许流程配置里出现任意业务键（PadConfig 管不到的键），解析不了就硬失败，绝不退回字面路径。
+# Resolve {{config.<KEY>}}: read-only, not touching PadConfig's fixed key set or validation criteria.
+# Arbitrary business keys may appear in a flow config (keys PadConfig does not manage); a failed resolution is a hard failure and never falls back to a literal path.
 function Resolve-TriggerConfigRef {
     param([string]$Token, [string]$ConfigFile)
     if (-not $Token) {
@@ -441,7 +441,7 @@ function Resolve-TriggerConfigRef {
     return [string]$cfg.$key
 }
 
-# 列候选：目录/权限问题一律抛 TRIGGER_FILE_DIR_UNREADABLE，不猜
+# List candidates: directory/permission problems always throw TRIGGER_FILE_DIR_UNREADABLE, never guess
 function Get-TriggerFileCandidates {
     param([string]$Dir, [string]$Pattern)
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) {
@@ -454,7 +454,7 @@ function Get-TriggerFileCandidates {
     }
 }
 
-# 状态目录：运行时配置可选 TriggerStateDir；默认 business\state\triggers（业务区，已被 gitignore）
+# State directory: the runtime config may set TriggerStateDir; the default is business\state\triggers (business area, already gitignored)
 function Resolve-TriggerStateDir($Runtime) {
     if ($Runtime -and (Test-TriggerProp $Runtime 'TriggerStateDir') -and [string]$Runtime.TriggerStateDir) {
         return [string]$Runtime.TriggerStateDir
@@ -462,7 +462,7 @@ function Resolve-TriggerStateDir($Runtime) {
     return (Join-Path $moduleRepo 'business\state\triggers')
 }
 
-# 找到最深的已存在祖先：目录尚未创建时，只探测其父目录是否可写
+# Find the deepest existing ancestor: when the directory has not been created yet, probe only whether its parent is writable
 function Get-TriggerExistingAncestor([string]$Path) {
     $cur = $Path
     while ($cur -and -not (Test-Path -LiteralPath $cur)) {
@@ -473,7 +473,7 @@ function Get-TriggerExistingAncestor([string]$Path) {
     return $cur
 }
 
-# 可写性探测：只读 ACL，不写探针文件。按当前用户 SID 及其所属组匹配 Allow 规则
+# Writability probe: read ACLs only, no probe file. Match Allow rules by the current user SID and the groups it belongs to
 function Test-TriggerDirWritable([string]$Path) {
     $target = Get-TriggerExistingAncestor $Path
     if (-not $target) { return $false }
@@ -495,9 +495,9 @@ function Test-TriggerDirWritable([string]$Path) {
     }
 }
 
-# ---- file 分支的运行层：状态账本与守望 ----
+# ---- run layer for the file branch: state ledger and watcher ----
 
-# 账本键：fileName|size|lastWriteUtc，同一文件（含内容未变）只触发一次
+# Ledger key: fileName|size|lastWriteUtc, so the same file (even with unchanged content) triggers only once
 function Get-TriggerFileKey($File) {
     return ('{0}|{1}|{2}' -f $File.Name, $File.Length, $File.LastWriteTimeUtc.ToString('o'))
 }
@@ -507,7 +507,7 @@ function Get-TriggerLedgerPath($Spec, $Runtime) {
     return (Join-Path $dir ($Spec.taskName + '.json'))
 }
 
-# 读账本：文件不存在视为空；存在但不是合法 JSON 就硬失败，避免把历史丢失去重
+# Read the ledger: a missing file counts as empty; an existing but invalid JSON is a hard failure, so history de-duplication is not silently lost
 function Read-TriggerLedger([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return @() }
     try {
@@ -519,12 +519,12 @@ function Read-TriggerLedger([string]$Path) {
     return @($json.keys | ForEach-Object { [string]$_ })
 }
 
-# 追加键：已在账本里返回 $false（重复投放，不再触发）；新增返回 $true
+# Append a key: returns $false when already in the ledger (duplicate delivery, do not trigger again); $true when newly added
 function Add-TriggerLedgerKey([string]$Path, [string]$Key) {
     $keys = @(Read-TriggerLedger $Path)
     if ($keys -contains $Key) { return $false }
     $keys += $Key
-    # 只保留最近 200 条，避免账本无限增长
+    # Keep only the most recent 200 entries so the ledger cannot grow without bound
     if ($keys.Count -gt 200) { $keys = @($keys[($keys.Count - 200)..($keys.Count - 1)]) }
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -534,19 +534,19 @@ function Add-TriggerLedgerKey([string]$Path, [string]$Key) {
     return $true
 }
 
-# ---- 按 kind 拆分的注册器 ----
+# ---- registrars split by kind ----
 
-# 计划任务设置：显式关闭 StartWhenAvailable，不依赖模板默认值。
-# 原因：机器休眠/关机期间错过的触发（例如周末两次 09:00）会在恢复后立刻补跑，
-# 日历门禁只判断“今天是否工作日”，识别不出这是遗失实例，导致计划外执行。
-# 取舍：9:00 时机器没开着，当天就不跑，宁可漏跑也不早跑。
+# Scheduled-task settings: explicitly disable StartWhenAvailable instead of relying on the template default.
+# Reason: triggers missed while the machine is asleep/off (e.g. the two 09:00 runs over a weekend) are made up immediately after resume,
+# and the calendar gate only asks "is today a workday", which cannot tell that this is a missed instance, causing unscheduled execution.
+# Trade-off: if the machine is not on at 9:00 the flow does not run that day; better to miss a run than to run early.
 function New-ScheduleTaskSettings {
     param([int]$ExecutionTimeLimitMinutes)
     return (New-ScheduledTaskSettingsSet -StartWhenAvailable:$false `
         -ExecutionTimeLimit (New-TimeSpan -Minutes $ExecutionTimeLimitMinutes) -MultipleInstances IgnoreNew)
 }
 
-# 任务触发器形态：weekly 按声明/默认的星期建；daily 保持每天唤醒、由日历门禁自行跳过
+# Task trigger shape: weekly builds on the declared/default weekdays; daily keeps waking every day and lets the calendar gate skip by itself
 function New-ScheduleTaskTrigger($Spec) {
     if ([string]$Spec.scheduleKind -eq 'weekly') {
         $dayMap = @{
@@ -586,7 +586,7 @@ function Register-ScheduleTrigger {
     $changed = $(if ($existing) { 'updated' } else { 'created' })
 
     try {
-        # 与 pad-schedule 完全同形态：隐藏窗口 + Interactive 身份 + 忽略新实例
+        # Exactly the same shape as pad-schedule: hidden window + Interactive identity + ignore new instances
         $taskTrigger = New-ScheduleTaskTrigger $Spec
         $settings = New-ScheduleTaskSettings -ExecutionTimeLimitMinutes 180
         $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
@@ -607,7 +607,7 @@ function Register-ScheduleTrigger {
             nextRunTime = $info.NextRunTime.ToString('o'); evidence = @('readback check passed')
         }
     } catch {
-        # 注册/回读失败：硬失败并写告警，不做“继续部署”的降级
+        # Registration/read-back failed: hard failure plus an alert, no "continue deploying" degradation
         if (-not $_.Exception.Data.Contains('code')) {
             $_.Exception.Data['code'] = 'TRIGGER_REGISTER_FAILED'
         }
@@ -687,7 +687,7 @@ function Unregister-ScheduleTrigger {
     }
 }
 
-# file 任务动作：到点调用 pad-trigger.ps1 -Watch，启动方式与 pad-schedule 同形态
+# file task action: at the scheduled time call pad-trigger.ps1 -Watch, launched in the same shape as pad-schedule
 function Get-FileWatchActionSpec {
     param($Spec, [string]$PadTriggerPath, [string]$RuntimeConfigPath, [switch]$AllowProd)
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
@@ -705,7 +705,7 @@ function Get-FileWatchActionSpec {
     return [ordered]@{ exe = 'wscript.exe'; args = $vbsArgs }
 }
 
-# 注册 file 触发：注册/测试时就把 {{config.<KEY>}} 解析成真实路径，解析不了直接硬失败
+# Register a file trigger: resolve {{config.<KEY>}} into a real path at registration/test time; failure to resolve is a hard failure
 function Register-FileTrigger {
     param($Spec, [string]$RuntimeConfigPath, [switch]$DryRun, [switch]$AllowProd)
     try {
@@ -739,7 +739,7 @@ function Register-FileTrigger {
             }
         }
 
-        # 真实注册前才建状态目录；Test/DryRun 一律不写
+        # Create the state directory only before a real registration; Test/DryRun never writes
         if (-not (Test-Path -LiteralPath $stateDir)) {
             New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
         }
@@ -753,7 +753,7 @@ function Register-FileTrigger {
         }
         $changed = $(if ($existing) { 'updated' } else { 'created' })
 
-        # 与 schedule 分支同形态：周几 + 起始时刻；执行上限覆盖整段守望
+        # Same shape as the schedule branch: weekday + start time; the execution limit covers the whole watch window
         $taskTrigger = New-ScheduleTaskTrigger $Spec
         $limitMin = [math]::Max(180, [math]::Ceiling(([double]$Spec.fileMaxWaitSec + 300) / 60))
         $settings = New-ScheduleTaskSettings -ExecutionTimeLimitMinutes $limitMin
@@ -786,7 +786,7 @@ function Register-FileTrigger {
     }
 }
 
-# -Test 只读：目录可读、候选 0/1、状态目录可写；≥2 直接判歧义，不做取最新
+# -Test is read-only: directory readable, 0 or 1 candidate, state directory writable; 2 or more is judged ambiguous and never takes "latest"
 function Test-FileTrigger {
     param($Spec, [string]$RuntimeConfigPath)
     $runtime = Resolve-TriggerRuntimeConfig -RuntimeConfigPath $RuntimeConfigPath
@@ -815,13 +815,13 @@ function Test-FileTrigger {
     return $base
 }
 
-# 注销只动计划任务；状态账本保留，便于排查历史触发
+# Unregistration touches only the scheduled task; the state ledger is kept for diagnosing past triggers
 function Unregister-FileTrigger {
     param($Spec, [switch]$DryRun)
     return (Unregister-ScheduleTrigger -Spec $Spec -DryRun:$DryRun)
 }
 
-# 守望：到点轮询候选，落盘稳定后调用现有 pad-sync -RunOnly，不新开运行入口
+# Watch: poll candidates at the scheduled time and call the existing pad-sync -RunOnly once the file settles; no new run entry point
 function Invoke-TriggerWatch {
     param(
         [Parameter(Mandatory)][string]$FlowFile,
@@ -858,7 +858,7 @@ function Invoke-TriggerWatch {
 
     while ($true) {
         $elapsed = ((Get-Date) - $start).TotalSeconds
-        # 到点静默退出 0：没等到文件不算失败
+        # Exit silently with 0 at the deadline: not receiving a file is not a failure
         if ($elapsed -ge $spec.fileMaxWaitSec) {
             $base.ok = $true; $base.status = 'timeout'
             $base.evidence = @("exceeded max_wait_sec=$($spec.fileMaxWaitSec); exiting silently with 0")
@@ -878,7 +878,7 @@ function Invoke-TriggerWatch {
             $f = $files[0]
             $key = Get-TriggerFileKey $f
             if ($key -eq $candidateKey) {
-                # 连续两次轮询键不变且超过 settle_sec：认为落盘完成
+                # Key unchanged across two consecutive polls for longer than settle_sec: the file is considered fully written
                 if (((Get-Date) - $candidateSince).TotalSeconds -ge $spec.fileSettleSec) {
                     if ($spec.fileOncePerFile) {
                         $isNew = Add-TriggerLedgerKey -Path $ledger -Key $key
@@ -886,7 +886,7 @@ function Invoke-TriggerWatch {
                         $isNew = $true
                     }
                     if ($isNew) {
-                        # 复用现有入口：pad-sync -RunOnly -AllowProd -NonInteractive
+                        # Reuse the existing entry point: pad-sync -RunOnly -AllowProd -NonInteractive
                         $syncArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
                             '-File', ('"' + $padSyncPath + '"'),
                             '-FlowName', ('"' + $spec.flowName + '"'),
@@ -908,12 +908,12 @@ function Invoke-TriggerWatch {
                         $base.evidence = @("triggered: $($f.Name) (size $($f.Length))", "ledger: $ledger")
                         return $base
                     }
-                    # 同一文件已触发过：不重复触发，继续等其它文件
+                    # This file has triggered already: do not trigger again, keep waiting for other files
                     $note = "this file was already triggered earlier; skipping: $($f.Name)"
                     if ($base.evidence -notcontains $note) { $base.evidence += $note }
                 }
             } else {
-                # 新候选或大小/时间变了：重新开始稳定计时
+                # New candidate, or size/time changed: restart the settle timer
                 $candidateKey = $key
                 $candidateSince = Get-Date
             }
@@ -929,7 +929,7 @@ function Invoke-TriggerWatch {
     }
 }
 
-# ---- 对外统一入口 ----
+# ---- unified public entry points ----
 
 function Register-Trigger {
     param(
