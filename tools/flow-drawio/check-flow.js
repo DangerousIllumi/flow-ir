@@ -87,34 +87,34 @@ function checkFlowConsistency(flow) {
 function printReport(res, file) {
   console.log(`[flow-check] ${file}: derived=${res.derivedCount} explicit=${res.explicitCount}`);
   if (res.missing.length) {
-    console.log(`[FAIL] 旧结构有 ${res.missing.length} 条边没写进 edges：`);
+    console.log(`[FAIL] ${res.missing.length} edge(s) derivable from the legacy shape are missing from edges:`);
     for (const e of res.missing) console.log(`  - ${e.from} -> ${e.to} ${e.label || ""}`.trimEnd());
   }
   if (res.duplicates.length) {
-    console.log(`[FAIL] edges 里有 ${res.duplicates.length} 条重复边：`);
+    console.log(`[FAIL] ${res.duplicates.length} duplicate edge(s) in edges:`);
     for (const e of res.duplicates) console.log(`  - ${e.from} -> ${e.to}`);
   }
   if (res.dangling.length) {
-    console.log(`[FAIL] edges 里有 ${res.dangling.length} 条悬空边：`);
+    console.log(`[FAIL] ${res.dangling.length} dangling edge(s) in edges:`);
     for (const e of res.dangling) console.log(`  - ${e.from} -> ${e.to}`);
   }
   if (res.extra.length) {
-    console.log(`[INFO] edges 中有 ${res.extra.length} 条旧结构表达不了的补充边（允许）：`);
+    console.log(`[INFO] ${res.extra.length} extra edge(s) in edges that the legacy shape cannot express (allowed):`);
     for (const e of res.extra) console.log(`  - ${e.from} -> ${e.to} ${e.label || ""}`.trimEnd());
   }
-  console.log(res.ok ? "[OK] edges 与 next/branch 一致" : "[BAD] edges 与 next/branch 不一致");
+  console.log(res.ok ? "[OK] edges agree with next/branch" : "[BAD] edges disagree with next/branch");
 }
 
 if (require.main === module) {
   const file = process.argv[2];
   if (!file) {
-    console.error("用法: node check-flow.js <flow.json>");
+    console.error("Usage: node check-flow.js <flow.json>");
     process.exit(1);
   }
   const flow = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
   // 旧流程没有显式 edges：只提示跳过，不阻断（兼容尚未迁移的 flow.json）
   if (!Array.isArray(flow.edges) || flow.edges.length === 0) {
-    console.log(`[flow-check] ${file}: 没有显式 edges，跳过`);
+    console.log(`[flow-check] ${file}: no explicit edges; skipped`);
     process.exit(0);
   }
   const res = checkFlowConsistency(flow);

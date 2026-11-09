@@ -103,18 +103,18 @@ function Import-GateDenylist {
     foreach ($dl in @($Paths)) {
         if ([string]::IsNullOrWhiteSpace($dl)) { continue }
         if (-not (Test-Path -LiteralPath $dl)) {
-            $errors += "词表不存在：$dl"
+            $errors += "denylist not found: $dl"
             continue
         }
         $sources += $dl
         try {
             $doc = ConvertFrom-Json ([IO.File]::ReadAllText($dl, [Text.Encoding]::UTF8))
         } catch {
-            $errors += "词表解析失败：$dl（$($_.Exception.Message)）"
+            $errors += "failed to parse the denylist: $dl ($($_.Exception.Message))"
             continue
         }
         if (-not $doc.categories) {
-            $errors += "词表缺少 categories：$dl"
+            $errors += "denylist has no categories: $dl"
             continue
         }
 
@@ -130,7 +130,7 @@ function Import-GateDenylist {
                     if ($s) { $listed += $s }
                 }
                 if ($listed.Count -eq 0) {
-                    $errors += "白名单没有域名：$dl"
+                    $errors += "the allowlist has no domains: $dl"
                 } else {
                     $allowDomains += $listed
                 }
@@ -146,7 +146,7 @@ function Import-GateDenylist {
 
                 $pattern = [string]$r.pattern
                 if (-not $pattern) {
-                    $errors += "词表规则缺少 pattern：$dl / $catName"
+                    $errors += "denylist rule is missing pattern: $dl / $catName"
                     continue
                 }
                 $id = [string]$r.id
@@ -164,7 +164,7 @@ function Import-GateDenylist {
                 try {
                     $rx = [Text.RegularExpressions.Regex]::new([string]$src, $opts)
                 } catch {
-                    $errors += "词表规则正则无效：$dl / $catName / $id（$($_.Exception.Message)）"
+                    $errors += "invalid denylist rule regex: $dl / $catName / $id ($($_.Exception.Message))"
                     continue
                 }
 
@@ -210,14 +210,14 @@ function Invoke-PublicSafeScan {
     $resolved = @()
 
     if (-not (Test-Path -LiteralPath $root)) {
-        $errors += "仓库根不存在：$root"
+        $errors += "repository root does not exist: $root"
     }
 
     # 1) 解析待推清单；相对路径一律按仓库根解释，避免受当前目录影响
     #    业务目录是「绝不入库」区：命中即判错，不静默跳过
     $businessRoot = [IO.Path]::GetFullPath((Join-Path $root 'business'))
     if (-not $Files -or @($Files).Count -eq 0) {
-        $errors += '待推文件清单为空（-Files）'
+        $errors += 'the file list to push is empty (-Files)'
     } else {
         foreach ($f in @($Files)) {
             if ([string]::IsNullOrWhiteSpace($f)) { continue }
@@ -225,7 +225,7 @@ function Invoke-PublicSafeScan {
             $fullPath = [IO.Path]::GetFullPath($full)
             $sep = [IO.Path]::DirectorySeparatorChar
             if ($fullPath.StartsWith($businessRoot + $sep, [StringComparison]::OrdinalIgnoreCase)) {
-                $errors += "业务目录禁止推送：$f（business\ 默认绝不入库）"
+                $errors += "business files must not be pushed: $f (business\ never goes into the public repo)"
                 continue
             }
             if (Test-Path -LiteralPath $full -PathType Leaf) {
@@ -235,7 +235,7 @@ function Invoke-PublicSafeScan {
             }
         }
         if ($resolved.Count -eq 0 -and $missing.Count -eq 0) {
-            $errors += '待推文件清单为空（-Files）'
+            $errors += 'the file list to push is empty (-Files)'
         }
     }
 
@@ -257,7 +257,7 @@ function Invoke-PublicSafeScan {
     $allowedDomains = @($imported.AllowDomains)
     if (@($imported.Rules).Count -eq 0) {
         # 没有规则的门禁会静默放行，比直接失败更危险
-        $errors += '词表没有启用任何规则，门禁形同空转'
+        $errors += 'the denylist enables no rules; the gate would be a no-op'
     }
 
     # 3) 逐文件逐行匹配
@@ -322,22 +322,22 @@ if (-not $NoMain) {
         # 命中行固定格式，便于人工定位与管道解析
         foreach ($hit in @($result.Hits)) {
             Write-Output ("{0}:{1}:{2}" -f $hit.File, $hit.Line, $hit.Match)
-            Write-Verbose ("    规则 {0}（{1}）：{2}" -f $hit.RuleId, $hit.Category, $hit.Reason)
+            Write-Verbose ("    rule {0} ({1}): {2}" -f $hit.RuleId, $hit.Category, $hit.Reason)
         }
 
         if (-not $Quiet) {
-            foreach ($d in @($result.Decoded)) { Write-Verbose ("编码判定 {0}：{1}" -f $d.Kind, $d.File) }
-            foreach ($b in @($result.Binary)) { Write-Verbose "二进制文件（仅扫 ASCII）：$b" }
-            foreach ($e in @($result.Errors)) { Write-Host "[publish-gate] 错误：$e" }
-            foreach ($m in @($result.Missing)) { Write-Host "[publish-gate] 缺少文件：$m" }
-            Write-Host ("[publish-gate] 词表 {0}（{1} 条规则），扫描 {2} 个文件（二进制 {3}），命中 {4} 条" -f `
+            foreach ($d in @($result.Decoded)) { Write-Verbose ("encoding {0}: {1}" -f $d.Kind, $d.File) }
+            foreach ($b in @($result.Binary)) { Write-Verbose "binary file (ASCII rules only): $b" }
+            foreach ($e in @($result.Errors)) { Write-Host "[publish-gate] error: $e" }
+            foreach ($m in @($result.Missing)) { Write-Host "[publish-gate] missing file: $m" }
+            Write-Host ("[publish-gate] denylist {0} ({1} rules), scanned {2} files (binary {3}), {4} hit(s)" -f `
                     (@($result.Sources) -join ' + '), @($result.Rules).Count, @($result.Scanned).Count, `
                     @($result.Binary).Count, @($result.Hits).Count)
         }
 
         $exitCode = [int]$result.ExitCode
     } catch {
-        if (-not $Quiet) { Write-Host "[publish-gate] 门禁执行失败：$($_.Exception.Message)" }
+        if (-not $Quiet) { Write-Host "[publish-gate] the gate failed to run: $($_.Exception.Message)" }
         $exitCode = 2
     }
     exit $exitCode

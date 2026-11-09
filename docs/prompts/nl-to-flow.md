@@ -36,6 +36,6 @@ My requirement:
 
 ## Ready-made samples you can copy
 
-`tests/eval/fixtures/` contains 9 copy-ready `flow.json` files:
+`tests/eval/fixtures/` contains 16 copy-ready `flow.json` files (10 flows and 6 triggers):
 foreach iteration, a three-way switch, guard plus mail, a bounded loop with break, file read/write, Excel
 read/write, an HTTP call, multi-condition AND, and early exit with no match.

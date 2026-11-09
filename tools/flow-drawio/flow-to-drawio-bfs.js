@@ -22,7 +22,7 @@ const fs = require("fs");
 const flowPath = process.argv[2];
 const outPath = process.argv[3];
 if (!flowPath || !outPath) {
-  console.error("用法: node flow-to-drawio.js <flow.json> <out.drawio>");
+  console.error("Usage: node flow-to-drawio.js <flow.json> <out.drawio>");
   process.exit(1);
 }
 
@@ -40,7 +40,7 @@ const adjacency = new Map();
 if (explicitEdges) {
   for (const e of explicitEdges) {
     if (!byId.has(e.from) || !byId.has(e.to)) {
-      console.error(`警告：忽略悬空边 ${e.from} -> ${e.to}`);
+      console.error(`warning: ignoring dangling edge ${e.from} -> ${e.to}`);
       continue;
     }
     if (!adjacency.has(e.from)) adjacency.set(e.from, []);
@@ -267,7 +267,7 @@ ${edgeCells.join("\n")}
 </mxfile>`;
 
 fs.writeFileSync(outPath, xml, "utf8");
-console.error(`已生成: ${outPath}（${nodes.length} 节点, ${edgeCells.length} 边）`);
+console.error(`Generated: ${outPath} (${nodes.length} nodes, ${edgeCells.length} edges)`);
 
 function escapeXml(s) {
   return String(s)

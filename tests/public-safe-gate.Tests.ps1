@@ -169,7 +169,7 @@ Describe '推送前内容门禁' {
 
         $r = Invoke-PublicSafeScan -Files @('business\flows\real-flow.json') -DenylistFile @($d) -RepoRoot $work
         $r.ExitCode | Should Be 2
-        (@($r.Errors) -join "`n") | Should Match '业务目录禁止推送'
+        (@($r.Errors) -join "`n") | Should Match 'business files must not be pushed'
         @($r.Hits).Count | Should Be 0
     }
 

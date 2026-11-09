@@ -16,7 +16,7 @@ const drawioPath = process.argv[2];
 const origPath = process.argv[3];
 const outPath = process.argv[4];
 if (!drawioPath || !origPath || !outPath) {
-  console.error("用法: node drawio-to-flow.js <in.drawio> <orig.flow.json> <out.new.json>");
+  console.error("Usage: node drawio-to-flow.js <in.drawio> <orig.flow.json> <out.new.json>");
   process.exit(1);
 }
 
@@ -99,11 +99,11 @@ const changed = [];
 for (const n of newNodes) {
   const o = origById.get(n.id);
   if (!o) continue;
-  if (o.label !== n.label) changed.push(`节点 ${n.id} 改名：${o.label} → ${n.label}`);
-  if (o.pad_hint !== n.pad_hint) changed.push(`节点 ${n.id} pad_hint 变化：${o.pad_hint} → ${n.pad_hint}`);
+  if (o.label !== n.label) changed.push(`node ${n.id} renamed: ${o.label} -> ${n.label}`);
+  if (o.pad_hint !== n.pad_hint) changed.push(`node ${n.id} pad_hint changed: ${o.pad_hint} -> ${n.pad_hint}`);
   const oNext = [...(o.next || [])].sort().join(",");
   const nNext = [...n.next].sort().join(",");
-  if (oNext !== nNext) changed.push(`节点 ${n.id} 连线变化：${oNext} → ${nNext}`);
+  if (oNext !== nNext) changed.push(`node ${n.id} edges changed: ${oNext} -> ${nNext}`);
 }
 
 // ── 组装新 flow.json ──────────────────────────────────────────
@@ -123,14 +123,14 @@ const result = {
 
 fs.writeFileSync(outPath, JSON.stringify(result, null, 2), "utf8");
 
-console.log("=== 画布回读变更摘要 ===");
-console.log(`节点数: ${orig.nodes.length} → ${newNodes.length}`);
-console.log(`新增: ${added.length}  个, 删除: ${removed.length} 个, 变更: ${changed.length} 条`);
-if (added.length) console.log("新增节点:", added.map((n) => `${n.id}(${n.label || n.type})`).join(", "));
-if (removed.length) console.log("删除节点:", removed.map((n) => `${n.id}(${n.label})`).join(", "));
-if (changed.length) changed.forEach((c) => console.log("  • " + c));
+console.log("=== Canvas read-back change summary ===");
+console.log(`nodes: ${orig.nodes.length} -> ${newNodes.length}`);
+console.log(`added: ${added.length}, removed: ${removed.length}, changed: ${changed.length}`);
+if (added.length) console.log("added nodes:", added.map((n) => `${n.id}(${n.label || n.type})`).join(", "));
+if (removed.length) console.log("removed nodes:", removed.map((n) => `${n.id}(${n.label})`).join(", "));
+if (changed.length) changed.forEach((c) => console.log("  - " + c));
 if (needAgentA.length) {
-  console.log("\n需 Agent A 补齐的节点（手工新增，type=unknown 或无 pad_hint）：");
-  needAgentA.forEach((n) => console.log(`  - 节点 ${n.id}「${n.label}」: type=${n.type}, pad_hint=${n.pad_hint}`));
+  console.log("\nNodes that need Agent A to complete them (added by hand, type=unknown or no pad_hint):");
+  needAgentA.forEach((n) => console.log(`  - node ${n.id} "${n.label}": type=${n.type}, pad_hint=${n.pad_hint}`));
 }
-console.log(`\n已写入: ${outPath}`);
+console.log(`\nWritten: ${outPath}`);

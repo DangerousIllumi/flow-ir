@@ -20,14 +20,14 @@ let ELK;
 try {
   ELK = require("elkjs");
 } catch (err) {
-  console.error("缺少 elkjs 依赖：请在仓库根目录执行 npm install");
+  console.error("missing the elkjs dependency: run npm install in the repository root");
   process.exit(1);
 }
 
 const flowPath = process.argv[2];
 const outPath = process.argv[3];
 if (!flowPath || !outPath) {
-  console.error("用法: node flow-to-drawio.js <flow.json> <out.drawio>");
+  console.error("Usage: node flow-to-drawio.js <flow.json> <out.drawio>");
   process.exit(1);
 }
 
@@ -71,7 +71,7 @@ function collectEdges() {
     return flow.edges
       .filter((e) => {
         if (!byId.has(e.from) || !byId.has(e.to)) {
-          console.error(`警告：忽略悬空边 ${e.from} -> ${e.to}`);
+          console.error(`warning: ignoring dangling edge ${e.from} -> ${e.to}`);
           return false;
         }
         return true;
@@ -192,7 +192,7 @@ ${edgeCells.join("\n")}
 </mxfile>`;
 
   fs.writeFileSync(outPath, xml, "utf8");
-  console.error(`已生成: ${outPath}（${nodes.length} 节点, ${edges.length} 边, 页面 ${pageW}x${pageH}）`);
+  console.error(`Generated: ${outPath} (${nodes.length} nodes, ${edges.length} edges, page ${pageW}x${pageH})`);
 }).catch((err) => {
   console.error(err && err.stack ? err.stack : err);
   process.exit(1);
