@@ -75,7 +75,8 @@
 {
   "name": "流程名称（英文 kebab-case）",
   "description": "流程描述（中文）",
-  "trigger": { "type": "schedule | manual | event", "config": { "dayOfMonth": 3 } },
+  "trigger": { "kind": "schedule", "task_name": "flow-ir-<task-name>", "time": "09:00",
+               "days": ["mon", "tue", "wed", "thu", "fri"], "gate": "workday", "timeout_sec": 4200 },
   "variables": [
     { "name": "变量名", "type": "string | number | boolean | list | datatable",
       "default": "默认值", "description": "变量说明", "required": true }
@@ -101,6 +102,10 @@
 }
 
 字段说明：
+- **trigger：只认 `kind`**，取值 `manual` / `schedule` / `file`；`manual` 只允许 `{ "kind": "manual" }`。
+  `schedule` 必填 `time`，可选 `task_name` / `days` / `gate` / `timeout_sec` / `assisted`；
+  `file` 必填 `file.dir`（必须是 `{{config.<KEY>}}`）与 `file.pattern`。旧 `{"type": ..., "config": {...}}`
+  形状会被判 `TRIGGER_LEGACY_SHAPE`，不做静默映射；完整字段见 [trigger-adapter-design.md](trigger-adapter-design.md)。
 - **pad_hint：必填**，必须是 KB 里真实存在的**完整三段式 actionId**（生成器精确查表）
 - **params：键必须是该动作 KB 记录 `input_params` 里的真实参数名**（生成器会核对，写错会被拒绝）。
   值可以是：字符串字面量、数字、布尔、枚举全限定字符串（如 `Outlook.RetrieveMessagesMode.All`）、

@@ -70,7 +70,7 @@ node tools\flow-drawio\flow-to-drawio.js business\flows\<name>.json business\flo
 node tools\pad-robin\flow-to-robin.js business\flows\<name>.json out.robin
 # 4) 静态校验（0 errors 才能继续）
 node tools\pad-robin\check.js out.robin
-# 5) 准入（只读；0 fail 才能交付）
+# 5) 准入（只读；fail=0 且 ask=0 才能交付，ask 时退出码 2 同样阻断）
 .\tools\pad-sync\pad-admit.ps1 -FlowFile business\flows\<name>.json -RobinFile out.robin
 # 6) 结构评估（用例放 business\tests\eval\；公开库只放中性样例）
 node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
@@ -105,7 +105,7 @@ node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 
 1. `flow.json` 通过生成器（0 error）
 2. `check.js` 0 errors
-3. `pad-admit` 0 fail（warn 可以，但要向用户说明）
+3. `pad-admit` fail=0 且 ask=0（warn 可以，但要向用户说明；ask 退出码 2，同样阻断交付）
 4. 产物路径、粘贴步骤、需要人工补的部分（UI 元素 / VBS / 账号）都明确告诉用户
 
 示例见 `docs/nl-to-flow-guide.md`；16 个可抄的样例在 `tests/eval/fixtures/`（10 个流程 + 6 个 trigger）。

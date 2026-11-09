@@ -1,7 +1,7 @@
 ﻿# pad-admit.Tests.ps1 — 准入网关纯函数与端到端测试（Pester 3.4）
 #
 # 覆盖：通配符匹配、策略 deny/ask/allow 三层顺序、无人值守 ask=deny、
-#       真实流程 14 项检查全部可跑（子进程执行，避免 exit 影响测试会话）。
+#       真实流程 16 项检查全部可跑（子进程执行，避免 exit 影响测试会话）。
 
 . (Join-Path $PSScriptRoot '..\tools\pad-sync\pad-admit.ps1') -NoMain
 
@@ -138,8 +138,12 @@ Describe 'pad-admit 策略评估' {
         $tmp = Join-Path $TestDrive ('e2e-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         $robin = Join-Path $tmp 'example-flow.robin'
+        # 生成器把"已生成"写 stderr；这里临时放宽 EAP，避免被当成终止错误
+        $eap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') `
-            (Join-Path $repo 'tools\flow-drawio\example-flow.json') $robin | Out-Null
+            (Join-Path $repo 'tools\flow-drawio\example-flow.json') $robin 2>$null | Out-Null
+        $ErrorActionPreference = $eap
         $LASTEXITCODE | Should Be 0
         $approve = Join-Path $tmp 'approve.jsonl'
         $hash = (Get-FileHash -LiteralPath $robin -Algorithm SHA256).Hash.ToLower()
@@ -163,7 +167,10 @@ Describe 'pad-admit 策略评估' {
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         $flowFile = Join-Path $repo 'examples\smoke-flow.json'
         $robin = Join-Path $tmp 'smoke-flow.robin'
-        & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') $flowFile $robin | Out-Null
+        $eap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') $flowFile $robin 2>$null | Out-Null
+        $ErrorActionPreference = $eap
         $LASTEXITCODE | Should Be 0
 
         $reportOut = Join-Path $tmp 'report.txt'
@@ -190,7 +197,7 @@ Describe 'pad-admit 策略评估' {
     }
 }
 
-Describe 'pad-admit TRIGGER 第 14 项（观察期 warn）' {
+Describe 'pad-admit TRIGGER 第 15 项（观察期 warn）' {
     It '无 trigger：warn + TRIGGER_MISSING' {
         $f = [pscustomobject]@{ nodes = @() }
         $r = @(Invoke-TriggerCheck -Flow $f -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
@@ -302,7 +309,7 @@ Describe 'pad-admit TRIGGER 第 14 项（观察期 warn）' {
     }
 }
 
-Describe 'pad-admit INPUT 第 15 项（节点级输入文件声明）' {
+Describe 'pad-admit INPUT 第 16 项（节点级输入文件声明）' {
 
     function New-InputNode($Entries) {
         return [pscustomobject]@{

@@ -9,7 +9,8 @@
 #   6. 发布后校验：
 #      a) Workspace 里的已发布 script.robin 与 .deployed.robin 规范化哈希一致（验收点）
 #      b) 新运行的 RunDefinition.json：startTime 在本次发布之后、状态 Succeeded、记录 flowVersion
-#   7. business\manifest.jsonl 追加一行（type=release），供回滚（第 20 项）与统一清单（第 21 项）使用
+#   7. 通过 PublishHistory.psm1 向 business\manifest.jsonl 追加一行（type=release），
+#      供 pad-rollback.ps1 回滚与发布清单（PublishHistory.psm1）查询使用
 #
 # 输出：最后一行 PAD_RELEASE_RESULT=<JSON>；退出码 0 成功 / 1 失败
 # -AcceptanceFile：发布触发的运行结束后按判据检查产物；不传时自动找 business\flows\<flow>.acceptance.json

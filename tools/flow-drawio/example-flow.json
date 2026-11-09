@@ -2,8 +2,11 @@
   "name": "monthly-reconciliation",
   "description": "示例对账：从邮箱读取附件，提取金额，跟导出数据核对，差异标红后发邮件给收件人",
   "trigger": {
-    "type": "schedule",
-    "config": { "dayOfMonth": 3 }
+    "kind": "schedule",
+    "task_name": "flow-ir-monthly-reconciliation",
+    "time": "09:00",
+    "gate": "last-workday",
+    "timeout_sec": 4200
   },
   "budget": { "maxLoop": 1, "note": "示例流程无轮询；仅演示结构" },
   "variables": [

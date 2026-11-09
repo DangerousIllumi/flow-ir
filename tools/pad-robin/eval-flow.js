@@ -182,7 +182,7 @@ const INPUT_DIR_RE = /^\{\{config\.\w+\}\}$/;
 
 /**
  * 校验节点级输入文件声明，返回 { errors, warnings }，条目形如 { code, detail }。
- * 只验声明形状，不碰文件系统；“目录可读 / 候选文件计数”属于 pad-admit 第 15 项。
+ * 只验声明形状，不碰文件系统；“目录可读 / 候选文件计数”属于 pad-admit 第 16 项。
  * 老 flow.json 不写 inputs 时只给一条 INPUT_UNDECLARED 提示，不判失败（向后兼容）。
  */
 function validateInputs(flow, opts = {}) {

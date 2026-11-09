@@ -1,6 +1,6 @@
 ﻿# pad-admit.ps1 — 只读准入网关：部署/运行前判断"这份流程、这次运行是否被允许"
 #
-# 对应 docs/admission-gate.md 的 15 项检查。硬约束：
+# 对应 docs/admission-gate.md 的 16 项检查。硬约束：
 #   1) 只读：不启动 PAD、不连 SAP、不发邮件、不写产物
 #   2) 一次返回全部问题，不因第一条失败提前退出
 #   3) 每条失败带 code + 人话 + 证据（节点 id / 参数 / 文件名）
@@ -8,7 +8,7 @@
 # 用法：
 #   .\pad-admit.ps1 -FlowFile business\flows\sample-report.json -ConfigFile business\config\sample-report.json
 #   .\pad-admit.ps1 -FlowFile ... -Unattended      # 定时任务场景：ask 一律按 deny
-#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # 第 14 项追加只读的计划任务注册校验
+#   .\pad-admit.ps1 -FlowFile ... -TriggerLive     # 第 15 项追加只读的计划任务注册校验
 #   .\pad-admit.ps1 -FlowFile ... -Json            # 只输出 JSON
 #
 # 退出码：0 全部通过 / 1 存在 fail / 2 仅存在 ask
@@ -32,7 +32,7 @@ param(
     [string]$ApproveFile,
     # 定时任务/无人值守：ask 按 deny 处理
     [switch]$Unattended,
-    # 第 14 项 live 校验：默认关闭，离线可复现；开启后只读查询本机计划任务
+    # 第 15 项 live 校验：默认关闭，离线可复现；开启后只读查询本机计划任务
     [switch]$TriggerLive,
     [switch]$Json,
     # 仅供 Pester dot-source
@@ -227,7 +227,7 @@ function Invoke-AdmitPolicy($Flow, $Policy, [hashtable]$Ctx, [switch]$Unattended
     return $results
 }
 
-# ---------- TRIGGER（第 14 项）：触发声明 ----------
+# ---------- TRIGGER（第 15 项）：触发声明 ----------
 # 观察期：存量流程还没有 trigger，默认记 warn；迁移完成后单独提交改为 fail。
 # 与指纹同一做法：切换级别是独立改动，不混在本次功能里。
 $script:TriggerMode = 'warn'
@@ -285,7 +285,7 @@ function Find-TriggerTaskCollision {
     return $hits
 }
 
-# 第 14 项主体：静态校验 + 可选 live 校验。
+# 第 15 项主体：静态校验 + 可选 live 校验。
 # -TriggerLive 默认关闭：只读查询本机计划任务与 specHash，
 # 未注册记 TRIGGER_NOT_REGISTERED（warn），声明与任务不一致记 TRIGGER_DRIFT（fail）。
 function Invoke-TriggerCheck {
@@ -523,7 +523,7 @@ function Invoke-TriggerCheck {
     })
 }
 
-# ---------- INPUT（第 15 项）：节点级输入文件声明 ----------
+# ---------- INPUT（第 16 项）：节点级输入文件声明 ----------
 # 口径与 file 触发器一致：目录必须走 {{config.<KEY>}} 引用；候选 ≥2 一律判歧义，绝不“取最新”。
 # 本项只读：只枚举目录、stat 文件，不打开、不移动、不删除任何文件。
 # 能力只用于准入与结构校验，不改变 .robin 生成产物（生成器不认识 inputs）。
@@ -548,7 +548,7 @@ function Resolve-InputDir {
     return @{ dir = [string]$Config.$key; code = $null; message = $null }
 }
 
-# 第 15 项主体：静态形状 + 可选的文件系统核对（只读枚举）
+# 第 16 项主体：静态形状 + 可选的文件系统核对（只读枚举）
 function Invoke-InputCheck {
     param($Flow, $Config, [string]$ConfigFile)
     $issues = @()
@@ -647,7 +647,7 @@ function Invoke-InputCheck {
     })
 }
 
-# 主体检查：一次跑完 15 项 + SCRIPT_FINGERPRINT（v3 脚本指纹，观察期只 warn）
+# 主体检查：一次跑完 16 项（含第 13 项 SCRIPT_FINGERPRINT：v3 脚本指纹，观察期只 warn）
 function Invoke-AdmitChecks {
     param(
         $Flow, [string]$FlowName, $Config, $Kb,
@@ -870,7 +870,7 @@ function Invoke-AdmitChecks {
         -FlowDisplayName $FlowDisplayName -NoBaselineMode $NoBaselineMode -Mode $script:FingerprintMode
     $checks += New-AdmitCheck 'FINGERPRINT' $fp.status $fp.code $fp.message $fp.evidence
 
-    # 12.5 SCRIPT_FINGERPRINT（v3 观察期：只 warn 不阻断）
+    # 13 SCRIPT_FINGERPRINT（v3 观察期：只 warn 不阻断）
     # 旧基线没有 scripts 段时模块返回 warn（SCRIPT_FINGERPRINT_LEGACY），不会判 fail；
     # 不一致时 evidence 逐条点名文件与两侧短哈希
     if ($basePath) {
@@ -878,7 +878,7 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'SCRIPT_FINGERPRINT' $sf.status $sf.code $sf.message $sf.evidence
     }
 
-    # 13 INTENT
+    # 14 INTENT
     $noIntent = @($actionNodes | Where-Object {
         ([string]$_.pad_hint -like 'Scripting.RunDOSCommand*' -or [string]$_.pad_hint -like 'Scripting.RunVBScript*') -and -not $_.intent
     })
@@ -889,12 +889,12 @@ function Invoke-AdmitChecks {
         $checks += New-AdmitCheck 'INTENT' 'pass' 'OK' '通用脚本动作都有 intent' @()
     }
 
-    # 14 TRIGGER（静态校验；-TriggerLive 时追加只读的注册校验）
+    # 15 TRIGGER（静态校验；-TriggerLive 时追加只读的注册校验）
     $checks += @(Invoke-TriggerCheck -Flow $Flow -FlowName $FlowName `
         -Repo $Paths.Repo -SelfFile $Paths.FlowFile -ConfigFile $Paths.ConfigFile `
         -TriggerLive:$TriggerLive)
 
-    # 15 INPUT（节点级输入文件声明：只读枚举，缺文件/多候选在运行前报出）
+    # 16 INPUT（节点级输入文件声明：只读枚举，缺文件/多候选在运行前报出）
     $checks += @(Invoke-InputCheck -Flow $Flow -Config $Config -ConfigFile $Paths.ConfigFile)
 
     return $checks

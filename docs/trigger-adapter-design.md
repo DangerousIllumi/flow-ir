@@ -11,7 +11,7 @@
 | 问题 | 现状证据 | 造成的后果 |
 |---|---|---|
 | **不可见** | 启动方式只存在于 `pad-schedule.ps1` 的命令行参数、计划任务列表、人的口头记忆 | 换人接手、换机器重建时，只能靠翻历史命令反推 |
-| **不可校验** | `eval-flow.js` 只检查节点级 `run_mode`/`idempotent`；`pad-admit` 13 项里没有一项看触发 | “定时每天 09:00 跑”和“节点全 `run_mode=confirm`”可以同时存在而不报错 |
+| **不可校验** | `eval-flow.js` 只检查节点级 `run_mode`/`idempotent`；`pad-admit` 早期没有一项看触发（现已补第 15 项 `TRIGGER`） | “定时每天 09:00 跑”和“节点全 `run_mode=confirm`”可以同时存在而不报错 |
 | **不可注册** | 注册逻辑散落在 `tools/pad-sync/pad-schedule.ps1`，只有 `-Daily/-Weekly`、`-LastWorkday` 两条路径，任务名靠 `Get-ScheduleTaskName` 临时推导 | 新增流程要人肉拼参数；重复注册靠 `-Force` 盲覆盖；注册完没有统一的“是否生效”验证 |
 
 **边界**：`trigger` 只声明“怎么启动”，不替代 `budget`、不替代 `guard`、不描述流程步骤。注册是**本机操作系统层**的动作（Windows 计划任务 / 文件守望），**不新增任何 PAD 动作、不改 `.robin`**。
