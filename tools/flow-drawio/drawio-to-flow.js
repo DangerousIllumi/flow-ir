@@ -75,17 +75,48 @@ for (const e of edges) {
   outEdges[from].push({ to, label: e.label });
 }
 
+// The generator labels an IF's branch edges yes / no (canvases drawn before the labels were translated still say
+// 是 / 否); ordinary next edges and the LOOP / SWITCH edges carry no such label. Grouping by the label rather than
+// by pad_hint keeps the read-back working on canvases where pad_hint was not preserved.
+const TRUE_LABELS = new Set(["yes", "是", "true"]);
+const FALSE_LABELS = new Set(["no", "否", "false"]);
+function labelGroup(label) {
+  const key = String(label == null ? "" : label).trim().toLowerCase();
+  if (TRUE_LABELS.has(key)) return "true";
+  if (FALSE_LABELS.has(key)) return "false";
+  return null;
+}
+
 const newNodes = nodes.map((n) => {
-  const outs = (outEdges[n.id] || []).map((e) => e.to);
-  return {
+  const outs = outEdges[n.id] || [];
+  const trueTargets = outs.filter((e) => labelGroup(e.label) === "true").map((e) => e.to);
+  const falseTargets = outs.filter((e) => labelGroup(e.label) === "false").map((e) => e.to);
+  // Everything that is not a true edge stays in next: for an IF that is the false target, i.e. the join point
+  // after the branch, which is how flow.json writes it. Unlabelled edges end up here too, unchanged.
+  const restTargets = outs.filter((e) => labelGroup(e.label) !== "true").map((e) => e.to);
+
+  const node = {
     id: n.id,
     type: n.nodeType || "unknown",
     pad_hint: n.padHint || "",
     label: n.title || "",
     params: n.params,
     outputs: n.outputs,
-    next: outs,
+    next: outs.map((e) => e.to),
   };
+
+  // A yes edge marks a branch node: the true targets move into branch.*, and next keeps the rest.
+  if (trueTargets.length) {
+    node.next = restTargets;
+    const branch = {};
+    const condition = n.params ? n.params.Condition : undefined;
+    if (condition !== undefined) branch.condition = condition;
+    branch.true = trueTargets[0];
+    if (falseTargets.length) branch.false = falseTargets[0];
+    branch.body = trueTargets;
+    node.branch = branch;
+  }
+  return node;
 });
 
 // ── Change summary ────────────────────────────────────────────────
@@ -106,6 +137,13 @@ for (const n of newNodes) {
   const oNext = [...(o.next || [])].sort().join(",");
   const nNext = [...n.next].sort().join(",");
   if (oNext !== nNext) changed.push(`node ${n.id} edges changed: ${oNext} -> ${nNext}`);
+  const field = (node, key) => (node.branch ? String(node.branch[key] == null ? "" : node.branch[key]) : "");
+  const oTrue = field(o, "true");
+  const nTrue = field(n, "true");
+  if (oTrue !== nTrue) changed.push(`node ${n.id} branch.true changed: ${oTrue} -> ${nTrue}`);
+  const oFalse = field(o, "false");
+  const nFalse = field(n, "false");
+  if (oFalse !== nFalse) changed.push(`node ${n.id} branch.false changed: ${oFalse} -> ${nFalse}`);
 }
 
 // ── Assemble the new flow.json ────────────────────────────────────
