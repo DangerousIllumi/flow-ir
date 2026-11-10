@@ -153,6 +153,14 @@ jobs:
           # ends with "exit $LASTEXITCODE", so clear it explicitly or a green run reports failure
           exit 0
 
+      - name: "Smoke example: the whole toolchain end to end"
+        shell: powershell
+        run: |
+          # keep run bodies ASCII-only: GitHub writes them as ANSI .ps1 and CJK breaks parsing
+          # canvas -> generate -> check.js -> pad-admit -> eval-flow on a neutral example
+          powershell -NoProfile -ExecutionPolicy Bypass -File examples\smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw "smoke example failed: $LASTEXITCODE" }
+
       - name: "flow.json edge consistency check (public samples)"
         run: node tools\flow-drawio\check-flow.js tests\eval\fixtures\file-copy-text.json
 
