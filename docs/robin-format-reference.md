@@ -380,8 +380,7 @@ only for Agent A understanding the requirement and for explicit AI steps**.
 ```
 node tools/flow-drawio/flow-to-drawio.js tools/flow-drawio/example-flow.json tools/flow-drawio/example-flow.drawio
 node tools/flow-drawio/drawio-to-flow.js tools/flow-drawio/example-flow.drawio tools/flow-drawio/example-flow.json /tmp/x.json
-    -> added: 0, removed: 0, changed: 1
-    ->   - node 6 edges changed: 8 -> 7,8
+    -> added: 0, removed: 0, changed: 0
 node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json out.robin
     -> Generated: out.robin (9 nodes)
     -> OK   out.robin: 8 action lines, 0 errors
@@ -390,17 +389,16 @@ node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json out.ro
 
 (the `->` lines above are tool output, quoted as emitted)
 
-**Known limitation — `IF` nodes in `drawio-to-flow.js`.** Read-back rebuilds `next[]` from the outgoing edges drawn
-on the canvas. An `IF` node has two outgoing edges there (the true branch and the false target), so its rebuilt
-`next[]` is `[7, 8]`, while the source `flow.json` keeps `next: ["8"]` — the join point after the branch — and
-describes the true branch through `branch.true`. Those two values cannot be equal, so the `o.next` / rebuilt-`next`
-comparison in `drawio-to-flow.js` emits one `node edges changed` line for every `IF` node, on every run. A flow that
-contains `IF` nodes therefore never reaches `changed: 0` on read-back; the line reports a difference in how the same
-control flow is represented (`edges` versus `next`), while `added: 0, removed: 0` shows that no node or edge was
-dropped.
+Read-back rebuilds each node's control flow from the edge labels: an edge labelled `yes` / `是` / `true` becomes
+`branch.true`, with all of its targets listed in `branch.body`; an edge labelled `no` / `否` / `false` becomes
+`branch.false`; every other edge becomes `next`. That is exactly how `flow.json` writes an `IF` — the false target is
+the join point after the branch — so the round trip above reports `changed: 0`.
 
 `example-flow.json` declares all nine edges explicitly, so `check-flow.js` verifies them and prints
 `derived=9 explicit=9` / `[OK] edges agree with next/branch`.
+
+A canvas whose branch edges carry no label (for example a hand-drawn one) is not guessed at: those edges fall back
+into `next`, no `branch` field is invented, and the read-back reports the difference.
 
 ---
 
