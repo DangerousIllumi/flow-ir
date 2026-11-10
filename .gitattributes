@@ -1,2 +1,2 @@
-# Git 钩子必须保持 LF：带 CRLF 的 sh 脚本在 Git for Windows 下会因解释器行带 \r 而无法执行
+# Git hooks must stay LF: a sh script with CRLF cannot run under Git for Windows, because its interpreter line carries \r
 .githooks/* text eol=lf

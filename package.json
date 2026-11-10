@@ -2,7 +2,7 @@
   "name": "flow-ir",
   "version": "0.1.0",
   "private": true,
-  "description": "flow-ir：引擎无关的流程 IR 与多引擎适配器工具链（Node 依赖目前只用于流程图 ELK 布局）",
+  "description": "flow-ir: an engine-agnostic flow IR with a multi-engine adapter toolchain (the Node dependency is currently used only for ELK flow-diagram layout)",
   "engines": {
     "node": ">=18"
   },

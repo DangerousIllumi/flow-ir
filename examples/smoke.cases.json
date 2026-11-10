@@ -1,10 +1,10 @@
 {
   "flow": "examples/smoke-flow.json",
-  "description": "冒烟流程的结构断言：两个动作、顺序连边、声明齐全",
+  "description": "Structural assertions for the smoke flow: two actions, a sequential edge, complete declarations",
   "cases": [
     {
       "id": "two-actions",
-      "requirement": "只包含写入与读取两个动作",
+      "requirement": "contains exactly the two actions: write and read",
       "expect": [
         { "op": "nodeCount", "equals": 2 },
         { "op": "action", "id": "1", "padHint": "Clipboard.SetText" },
@@ -13,7 +13,7 @@
     },
     {
       "id": "order-and-declarations",
-      "requirement": "先写后读，且触发与必答声明齐全",
+      "requirement": "write comes before read, and the trigger and the mandatory declarations are complete",
       "expect": [
         { "op": "edge", "from": "1", "to": "2" },
         { "op": "triggerComplete" },

@@ -1,22 +1,22 @@
-# ── 业务层：真实流程、业务配置、内部文档、产物与日志 ────────────
-# 该目录默认绝不入库；推送门禁会额外硬拦截该目录下的文件（退出码 2）
+# ── Business layer: real flows, business configuration, internal docs, output and logs ────────────
+# Never committed by default; the push gate additionally hard-blocks files under it (exit code 2)
 business/
 
-# 推送门禁的本地真实词表（含业务名/真实路径/账号），只留占位版
+# Local real-word list for the push gate (business names / real paths / accounts); only the placeholder version ships
 tools/publish/public-safe.denylist.local.json
 
-# PAD 动作知识库：仅以引用方式保留来源，不入库
+# PAD action knowledge base: referenced by source only, never committed
 pad-robin-action-kb/
 
-# Node 依赖（仅流程图 ELK 布局用）
+# Node dependencies (ELK layout for flow diagrams only)
 node_modules/
 
-# Python 缓存
+# Python caches
 __pycache__/
 *.pyc
 .pytest_cache/
 
-# 生成器默认输出与运行产物
+# Generator default output and runtime artifacts
 out.robin
 Results/
 *.log

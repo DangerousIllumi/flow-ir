@@ -1,6 +1,6 @@
 {
   "source": "examples/smoke-kb.json",
-  "note": "冒烟专用最小动作表：只保留两个不依赖 UI 的中性动作，用来让全新 clone 不依赖 pad-robin-action-kb/ 也能生成脚本。不要用它替代正式知识库。",
+  "note": "Minimal action table for the smoke example: only two neutral actions that need no UI, so a fresh clone can generate a script without pad-robin-action-kb/. Never use it in place of the real knowledge base.",
   "actions": [
     {
       "actionId": "Clipboard.SetText",

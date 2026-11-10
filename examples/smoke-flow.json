@@ -1,7 +1,7 @@
 {
   "name": "smoke-example",
   "pad_flow_name": "Smoke Example",
-  "description": "中性冒烟流程：写剪贴板再读剪贴板，不含业务词、UI 选择器和外部依赖",
+  "description": "Neutral smoke flow: write to the clipboard, then read it back; no business terms, UI selectors or external dependencies",
   "trigger": { "kind": "manual" },
   "budget": { "maxLoop": 5 },
   "nodes": [
