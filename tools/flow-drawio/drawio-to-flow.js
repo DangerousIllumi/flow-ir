@@ -89,11 +89,17 @@ function labelGroup(label) {
 
 const newNodes = nodes.map((n) => {
   const outs = outEdges[n.id] || [];
-  const trueTargets = outs.filter((e) => labelGroup(e.label) === "true").map((e) => e.to);
-  const falseTargets = outs.filter((e) => labelGroup(e.label) === "false").map((e) => e.to);
+  // A SWITCH labels each case edge with the case value, which may legitimately read yes / true / 是; such a node
+  // is never a branch, so it skips label grouping entirely. When pad_hint is missing (older or hand-drawn
+  // canvases) this guard cannot fire and the grouping below decides instead.
+  const groupByLabel = n.padHint !== "SWITCH";
+  const trueTargets = groupByLabel ? outs.filter((e) => labelGroup(e.label) === "true").map((e) => e.to) : [];
+  const falseTargets = groupByLabel ? outs.filter((e) => labelGroup(e.label) === "false").map((e) => e.to) : [];
   // Everything that is not a true edge stays in next: for an IF that is the false target, i.e. the join point
   // after the branch, which is how flow.json writes it. Unlabelled edges end up here too, unchanged.
-  const restTargets = outs.filter((e) => labelGroup(e.label) !== "true").map((e) => e.to);
+  const restTargets = groupByLabel
+    ? outs.filter((e) => labelGroup(e.label) !== "true").map((e) => e.to)
+    : outs.map((e) => e.to);
 
   const node = {
     id: n.id,
