@@ -89,6 +89,11 @@ When everything passes, tell the user:
 > Open PAD → create a new flow → paste `out.robin` into the canvas with Ctrl+V → fill in the UI elements the
 > prompts ask for → run.
 
+**Reading local Pester output**: `Invoke-Pester tests` may end with process exit code 1 even when the summary says
+`Failed: 0`, because some tests spawn child `powershell` processes that exit 1/2 by design and the leftover
+`$LASTEXITCODE` becomes the script's exit code. Trust the summary's `failed` count, or clear the variable when you
+need a clean exit status: `Invoke-Pester tests; exit 0`. The CI step already ends with `exit 0` for this reason.
+
 ## 4. How to handle errors
 
 | Symptom | Meaning | What you do |
