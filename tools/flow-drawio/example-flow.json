@@ -42,6 +42,17 @@
       "required": true
     }
   ],
+  "edges": [
+    { "from": "1", "to": "2", "label": "" },
+    { "from": "2", "to": "3", "label": "" },
+    { "from": "3", "to": "4", "label": "" },
+    { "from": "4", "to": "5", "label": "" },
+    { "from": "5", "to": "6", "label": "" },
+    { "from": "6", "to": "7", "label": "yes" },
+    { "from": "6", "to": "8", "label": "no" },
+    { "from": "7", "to": "8", "label": "" },
+    { "from": "8", "to": "9", "label": "" }
+  ],
   "nodes": [
     {
       "id": "1",
