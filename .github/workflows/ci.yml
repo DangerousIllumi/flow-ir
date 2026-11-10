@@ -187,6 +187,9 @@ jobs:
       - name: Generator and comparator unit tests
         run: node --test tools\pad-robin\flow-to-robin.test.js tools\pad-robin\compare-robin.test.js tools\pad-robin\lint-robin.test.js
 
+      - name: Canvas read-back unit tests
+        run: node --test tools\flow-drawio\drawio-to-flow.test.js
+
       - name: "Generation engine: generate a public sample and run static checks"
         shell: powershell
         run: |
