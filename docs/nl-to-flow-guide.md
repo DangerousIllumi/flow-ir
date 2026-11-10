@@ -94,11 +94,11 @@
 
      ```powershell
      .\tools\pad-sync\build-acceptance.ps1 -FlowFile business\flows\copy-text.json -OutFile business\flows\copy-text.acceptance.json
-     # expected tool output: [build-acceptance] 已生成 …（1 条判据）
+     # expected tool output: [build-acceptance] generated business\flows\copy-text.acceptance.json (1 criteria)
      ```
 
      Note that `acceptance.checks` is required: without it the tool reports
-     `Write-Error: flow.json 里没有 acceptance.checks，无法生成验收判据`.
+     `Write-Error: flow.json has no acceptance.checks; cannot build acceptance criteria`.
    - `business/tests/eval/copy-text.cases.json`: turn "the facts that must hold for this requirement" into
      assertions. **Do not run the repository's `tests/eval/*.cases.json` directly** — those score the neutral
      samples shipped with the repository, not the flow you wrote. Copy one and point `flow` at your own file:
@@ -126,12 +126,12 @@ node tools\pad-robin\eval-flow.js business\tests\eval\copy-text.cases.json
 Expected output (the numbers below are measured values from this repository):
 
 ```text
-已生成: out.robin（2 个节点）          <- tool output: the generator writes this to stderr, which is normal
+Generated: out.robin (2 nodes)          <- tool output: the generator writes this to stderr, which is normal
 OK   out.robin: 2 action lines, 0 errors
-[admit] 通过 10 / 警告 6 / 待批 0 / 失败 0
-PASS  read-then-write  需求：先读源文件，再写目标文件
-PASS  content-passed-through  需求：写的内容来自上一步读取结果，不能是空串
-[eval-flow] 通过 2 / 2（1 个流程样例）
+[admit] pass 10 / warn 6 / ask 0 / fail 0
+PASS  read-then-write  requirement: read the source file first, then write the target file
+PASS  content-passed-through  requirement: what gets written comes from the previous read, and must not be an empty string
+[eval-flow] passed 2 / 2 (1 flow samples)
 ```
 
 The 6 warnings are **informational**, not failures. In order:

@@ -477,10 +477,11 @@ You are a PAD code generator agent. You translate flow.json into Robin text that
 > Ran the generator:
 > ```
 > node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json output.txt
-> 已生成: output.txt（11 个节点）
-> 静态自检: 通过（10 行动作，0 处违规）
+> Generated: output.txt (9 nodes)
+> OK   output.txt: 8 action lines, 0 errors
+> Static check: passed
 > ```
-> (the two output lines above are tool output, quoted as emitted)
+> (the three output lines above are tool output, quoted as emitted)
 > The generator looked the actions up precisely in the KB; highlights of the output:
 > - Node 2 → `Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments` (skeleton taken from golden_example)
 > - `AttachFiles` on node 3 is wired automatically to the output variable `RetrievedEmails` of node 2

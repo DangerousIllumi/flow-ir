@@ -375,17 +375,25 @@ only for Agent A understanding the requirement and for explicit AI steps**.
 
 **Known boundary**: blank lines inside multi-line strings, indentation differences, and lines starting with `#` / `@` are absorbed by those line rules, so two definitions that really differ may be judged identical (a false pass). For now we do not write a string-aware parser and do not add `-Strict`, and accept that risk. If a real misjudgement appears: first use `compare-robin.js` to compare line by line and locate the difference, then rewrite that content into an explicitly visible form (for example use `\n` instead of a blank line inside the string); never loosen or tighten the normalization rules for it.
 
-### Verified end to end (example)
+### End-to-end run (example)
 
 ```
 node tools/flow-drawio/flow-to-drawio.js tools/flow-drawio/example-flow.json tools/flow-drawio/example-flow.drawio
 node tools/flow-drawio/drawio-to-flow.js tools/flow-drawio/example-flow.drawio tools/flow-drawio/example-flow.json /tmp/x.json
-    -> 11 节点 / 11 边，回读 0 变更
-node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json tools/pad-robin/samples/monthly-reconciliation.robin
-    -> 静态自检: 通过（10 行动作，0 处违规）
+    -> added: 0, removed: 0, changed: 1
+    ->   - node 6 edges changed: 8 -> 7,8
+node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json out.robin
+    -> Generated: out.robin (9 nodes)
+    -> OK   out.robin: 8 action lines, 0 errors
+    -> Static check: passed
 ```
 
 (the `->` lines above are tool output, quoted as emitted)
+
+The one reported change on read-back is node 6, an `IF` node: the canvas carries both the true-branch edge and the
+false-target edge, so `next[]` comes back as `[7, 8]` instead of `[8]`. No node or edge is lost, and the regenerated
+script reports 0 static-check errors. `example-flow.json` declares no explicit `edges`, so `check-flow.js` skips the
+edge comparison for it.
 
 ---
 

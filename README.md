@@ -330,13 +330,13 @@ A new engine can reuse the contract formats but must rewrite the executors.
 
 | Symptom | Meaning | What to do |
 |---|---|---|
-| `未知动作` / `未知参数` (unknown action / unknown parameter) | The `flow.json` is wrong; the generator is not broken | Fix `flow.json`; do not edit the generator and do not hand-edit `.robin` |
-| `变量 X 未定义` (variable X is undefined) | A variable was used without being SET or produced by an action | Declare the variable, or fix the `{{node-id.output}}` reference |
-| `edges 与 next/branch 不一致` (edges disagree with next/branch) | The diagram edges drifted from the structure used for generation | Add the missing `edges` entries as the error asks |
+| `unknown action pad_hint="..."` / `unknown parameter "..."` | The `flow.json` is wrong; the generator is not broken | Fix `flow.json`; do not edit the generator and do not hand-edit `.robin` |
+| `variable X is used but never set in this script` | A variable was used without being SET or produced by an action | Declare the variable, or fix the `{{node-id.output}}` reference |
+| `[BAD] edges disagree with next/branch` | The diagram edges drifted from the structure used for generation | Add the missing `edges` entries as the error asks |
 | Admission `POLICY_DENY` | A deny rule in `business/policy.json` was hit | Remove the action or change the condition; do not bypass it |
 | Admission `MISSING_INTENT` / `BUDGET_UNKNOWN` | A mandatory declaration is missing | Add `intent` / `budget` |
 | Structural evaluation: missing declaration node / `run_mode=` | "Run mode / idempotency" was never answered | Add `run_mode` / `idempotent` / `idempotency_note`; never fill them in by default |
-| `模块未找到 PAD_Robin_ActionKB.json` (knowledge base not found) | `setup.ps1` was not run | Run the environment setup from Quick start |
+| `[error] PAD_Robin_ActionKB.json not found` | `setup.ps1` was not run | Run the environment setup from Quick start |
 | Pasting into the canvas yields an empty flow and no error | PAD most likely silently dropped the syntax | Run `node tools\pad-robin\check.js out.robin`; it reports the line and identifier |
 
 **`git clone` of the knowledge base fails?** Download the ZIP from

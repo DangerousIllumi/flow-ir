@@ -140,21 +140,23 @@ the overall exit code 1.
       "id": "EDGE",
       "status": "fail",
       "code": "EDGE_DRIFT",
-      "message": "旧结构有 1 条边没写进 edges",
-      "evidence": ["34 -> 35"]
+      "message": "edges disagree with next/branch",
+      "evidence": ["[FAIL] 1 edge(s) derivable from the legacy shape are missing from edges:", "  - 34 -> 35"]
     },
     {
       "id": "POLICY",
       "status": "ask",
       "code": "POLICY_ASK",
-      "message": "生产部署需要操作员确认",
-      "evidence": ["ask-prod-deploy"]
+      "message": "production deploy requires operator confirmation",
+      "evidence": ["node 9 Deploy.Release hit ask-prod-deploy"]
     }
   ]
 }
 ```
 
-(`message` values above are tool output: the checker emits them in their original language.)
+(`message` above is tool output: fixed messages are emitted in English. For `POLICY_ASK` / `POLICY_DENY` the
+`message` is the `reason` field of the matched rule in `business/policy.json`, echoed verbatim; `evidence`
+carries the checker's raw output lines.)
 
 Exit codes:
 

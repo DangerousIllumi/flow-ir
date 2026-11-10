@@ -93,13 +93,13 @@ When everything passes, tell the user:
 
 | Symptom | Meaning | What you do |
 |---|---|---|
-| `未知动作` / `未知参数` (tool output: unknown action / unknown parameter) | `flow.json` is wrong; the generator is not broken | Fix `flow.json`; do not touch the generator and do not hand-edit `.robin` |
-| `变量 X 未定义` (tool output: variable X is undefined) | A variable was used without being SET or produced by an action | Declare the variable, or fix the `{{node-id.output}}` reference |
-| `edges 与 next/branch 不一致` (tool output: edges disagree with next/branch) | The diagram edges drifted from the generation structure | Add the missing `edges` entries |
+| `unknown action pad_hint="..."` / `unknown parameter "..."` (tool output) | `flow.json` is wrong; the generator is not broken | Fix `flow.json`; do not touch the generator and do not hand-edit `.robin` |
+| `variable X is used but never set in this script` (tool output) | A variable was used without being SET or produced by an action | Declare the variable, or fix the `{{node-id.output}}` reference |
+| `[BAD] edges disagree with next/branch` (tool output) | The diagram edges drifted from the generation structure | Add the missing `edges` entries |
 | Admission `POLICY_DENY` | A deny rule in `business/policy.json` was hit | Remove the action or change the condition; do not bypass it |
 | Admission `MISSING_INTENT` / `BUDGET_UNKNOWN` | A mandatory declaration is missing | Add `intent` / `budget` |
 | Structural evaluation: missing declaration node / `run_mode=` | "Run mode / idempotency" was never answered | Ask the user again and add `run_mode` / `idempotent` / `idempotency_note`; never fill them in by default |
-| `模块未找到 PAD_Robin_ActionKB.json` (tool output: knowledge base not found) | `setup.ps1` was not run | Run step 0 first |
+| `[error] PAD_Robin_ActionKB.json not found` (tool output) | `setup.ps1` was not run | Run step 0 first |
 
 ## 5. Things you explicitly do not do
 
