@@ -390,10 +390,17 @@ node tools/pad-robin/flow-to-robin.js tools/flow-drawio/example-flow.json out.ro
 
 (the `->` lines above are tool output, quoted as emitted)
 
-The one reported change on read-back is node 6, an `IF` node: the canvas carries both the true-branch edge and the
-false-target edge, so `next[]` comes back as `[7, 8]` instead of `[8]`. No node or edge is lost, and the regenerated
-script reports 0 static-check errors. `example-flow.json` declares no explicit `edges`, so `check-flow.js` skips the
-edge comparison for it.
+**Known limitation — `IF` nodes in `drawio-to-flow.js`.** Read-back rebuilds `next[]` from the outgoing edges drawn
+on the canvas. An `IF` node has two outgoing edges there (the true branch and the false target), so its rebuilt
+`next[]` is `[7, 8]`, while the source `flow.json` keeps `next: ["8"]` — the join point after the branch — and
+describes the true branch through `branch.true`. Those two values cannot be equal, so the `o.next` / rebuilt-`next`
+comparison in `drawio-to-flow.js` emits one `node edges changed` line for every `IF` node, on every run. A flow that
+contains `IF` nodes therefore never reaches `changed: 0` on read-back; the line reports a difference in how the same
+control flow is represented (`edges` versus `next`), while `added: 0, removed: 0` shows that no node or edge was
+dropped.
+
+`example-flow.json` declares all nine edges explicitly, so `check-flow.js` verifies them and prints
+`derived=9 explicit=9` / `[OK] edges agree with next/branch`.
 
 ---
 
