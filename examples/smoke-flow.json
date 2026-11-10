@@ -8,7 +8,7 @@
     {
       "id": "1",
       "type": "clipboard.write",
-      "label": "写入剪贴板",
+      "label": "Write value to clipboard",
       "pad_hint": "Clipboard.SetText",
       "params": { "Text": "smoke" },
       "output_map": {},
@@ -22,7 +22,7 @@
     {
       "id": "2",
       "type": "clipboard.read",
-      "label": "读取剪贴板",
+      "label": "Read value from clipboard",
       "pad_hint": "Clipboard.GetText",
       "params": {},
       "output_map": { "Text": "ClipboardText" },
