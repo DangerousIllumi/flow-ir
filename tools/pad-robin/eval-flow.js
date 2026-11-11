@@ -44,12 +44,15 @@ function isPositiveInt(v) {
 // and too narrow at the other end (it missed clean-attachments, which deletes via RunDOSCommand).
 // intent_destructive is the primary signal; this regex is the fallback for legacy flows.
 const POSTING_INTENT_RE = /^(sap-migo|posting)$/i;
-// Destructive action hints: actions that modify or remove data and cannot be auto-undone.
-// Enumerated from pad-robin-action-kb/PAD_Robin_ActionKB.json — every actionId listed here
-// is verified to exist in the KB. The old regex ^(File|Folder)\.Delete$ was anchored with $,
-// which missed File.Move / File.RenameFiles.* / Folder.Move / Folder.Rename and every
-// destructive action outside the File and Folder modules (Excel, FTP, Outlook, PowerPoint, …).
-const DESTRUCTIVE_HINT_RE = /^(File\.(Delete|Move|RenameFiles\.)|Folder\.(Delete|Move|Rename$)|Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.|RenameWorksheet\.)|FTP\.(DeleteDirectory|DeleteFiles|RenameFile)|Outlook\.ProcessEmailMessages\.(DeleteEmails|MoveEmails)|PowerPoint\.(DeletePowerPointSlide\.|MovePowerPointSlide)|System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute)|Email\.ProcessEmails\.Move|Exchange\.ProcessExchangeMessages\.MoveEmails)/i;
+// Destructive action hints: actions that remove data or overwrite an existing target and cannot be auto-undone.
+// Enumerated from pad-robin-action-kb/PAD_Robin_ActionKB.json — every actionId listed here is verified to exist
+// in the KB. Kept: true deletes (File/Folder/Excel/FTP/Outlook/PowerPoint/XML/System env var) plus the file
+// move/rename actions whose KB template declares IfFileExists: Overwrite (File.Move, File.RenameFiles.*) — those
+// can destroy an existing same-name target that inverse-move cannot restore. Excluded: pure relocators and
+// in-place renames with no Overwrite capability in the KB (Folder.Move/Rename, FTP.RenameFile,
+// Excel.RenameWorksheet.*, PowerPoint.MovePowerPointSlide, and the mail-move actions), which inverse operation
+// restores. This is an explicit alternation, never a wildcard like .*Delete.*.
+const DESTRUCTIVE_HINT_RE = /^(File\.(Delete|Move|RenameFiles\.)|Folder\.Delete$|Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.)|FTP\.(DeleteDirectory|DeleteFiles)|Outlook\.ProcessEmailMessages\.DeleteEmails|PowerPoint\.DeletePowerPointSlide\.|System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute))/i;
 function irreversibleReason(n) {
   const hint = String((n && n.pad_hint) || "");
   if (/^Outlook\.SendEmail/i.test(hint)) return "sending mail cannot be undone; only a corrective resend is possible";

@@ -48,19 +48,20 @@ $script:FingerprintMode = 'fail'
 
 $CONTROL_HINTS = @('IF', 'LOOP', 'SWITCH', 'GUARD', 'WAIT', 'EXIT LOOP', 'EXIT_LOOP')
 
-# Destructive action hints: actions that modify or remove data and cannot be auto-undone.
-# Enumerated from pad-robin-action-kb/PAD_Robin_ActionKB.json — every actionId listed here
-# is verified to exist in the KB. The old regex ^(File|Folder)\.Delete$ was anchored with $,
-# which missed File.Move / File.RenameFiles.* / Folder.Move / Folder.Rename and every
-# destructive action outside the File and Folder modules (Excel, FTP, Outlook, PowerPoint, …).
-# This is an explicit alternation, never a wildcard like .*Delete.*.
-$DESTRUCTIVE_HINT_RE = '^(File\.(Delete|Move|RenameFiles\.)|Folder\.(Delete|Move|Rename$)|' +
-    'Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.|RenameWorksheet\.)|' +
-    'FTP\.(DeleteDirectory|DeleteFiles|RenameFile)|' +
-    'Outlook\.ProcessEmailMessages\.(DeleteEmails|MoveEmails)|' +
-    'PowerPoint\.(DeletePowerPointSlide\.|MovePowerPointSlide)|' +
-    'System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute)|' +
-    'Email\.ProcessEmails\.Move|Exchange\.ProcessExchangeMessages\.MoveEmails)'
+# Destructive action hints: actions that remove data or overwrite an existing target and cannot be auto-undone.
+# Enumerated from pad-robin-action-kb/PAD_Robin_ActionKB.json — every actionId listed here is verified to exist
+# in the KB. Kept: true deletes (File/Folder/Excel/FTP/Outlook/PowerPoint/XML/System env var) plus the file
+# move/rename actions whose KB template declares IfFileExists: Overwrite (File.Move, File.RenameFiles.*) — those
+# can destroy an existing same-name target that inverse-move cannot restore. Excluded: pure relocators and
+# in-place renames with no Overwrite capability in the KB (Folder.Move/Rename, FTP.RenameFile,
+# Excel.RenameWorksheet.*, PowerPoint.MovePowerPointSlide, and the mail-move actions), which inverse operation
+# restores. This is an explicit alternation, never a wildcard like .*Delete.*.
+$DESTRUCTIVE_HINT_RE = '^(File\.(Delete|Move|RenameFiles\.)|Folder\.Delete$|' +
+    'Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.)|' +
+    'FTP\.(DeleteDirectory|DeleteFiles)|' +
+    'Outlook\.ProcessEmailMessages\.DeleteEmails|' +
+    'PowerPoint\.DeletePowerPointSlide\.|' +
+    'System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute))'
 
 # Known-irreversible intent values for RunDOSCommand / RunVBScript: the posting family.
 # Exact match only — substring matching was too broad (it flagged migo-precheck, which only reads)
