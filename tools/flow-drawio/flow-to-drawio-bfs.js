@@ -268,7 +268,7 @@ ${edgeCells.join("\n")}
 </mxfile>`;
 
 fs.writeFileSync(outPath, xml, "utf8");
-console.error(`Generated: ${outPath} (${nodes.length} nodes, ${edgeCells.length} edges)`);
+console.log(`Generated: ${outPath} (${nodes.length} nodes, ${edgeCells.length} edges)`);
 
 function escapeXml(s) {
   return String(s)

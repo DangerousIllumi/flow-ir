@@ -1,0 +1,22 @@
+{
+  "name": "<流程名>",
+  "description": "For the completeness assertion: the flow declares no trigger, and a mail node falsely claims reversible=true (reversibility mislabel)",
+  "budget": { "maxLoop": 1 },
+  "nodes": [
+    {
+      "id": "1",
+      "type": "outlook.send",
+      "pad_hint": "Outlook.SendEmail",
+      "label": "Send mail",
+      "params": {},
+      "outputs": [],
+      "next": [],
+      "branch": null,
+      "run_mode": "auto",
+      "idempotent": false,
+      "idempotency_note": "each run sends a new mail; there is no dedupe key to check before sending",
+      "reversible": true,
+      "reversibility_note": "a corrective resend can follow up, but the first mail has already left"
+    }
+  ]
+}

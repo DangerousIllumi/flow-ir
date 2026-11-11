@@ -192,7 +192,7 @@ ${edgeCells.join("\n")}
 </mxfile>`;
 
   fs.writeFileSync(outPath, xml, "utf8");
-  console.error(`Generated: ${outPath} (${nodes.length} nodes, ${edges.length} edges, page ${pageW}x${pageH})`);
+  console.log(`Generated: ${outPath} (${nodes.length} nodes, ${edges.length} edges, page ${pageW}x${pageH})`);
 }).catch((err) => {
   console.error(err && err.stack ? err.stack : err);
   process.exit(1);

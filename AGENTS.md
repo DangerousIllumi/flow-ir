@@ -37,7 +37,7 @@
 | `skills/pad-flow-designer/` | Design rules for requirement → `flow.json` |
 | `skills/pad-robin-coder/` | Red lines for writing scripts |
 | `docs/nl-to-flow-guide.md` | Complete example: one sentence → flow.json → the four checks |
-| `tests/eval/` | 16 synthetic samples (10 flows + 6 triggers) plus structural assertions, ready to copy |
+| `tests/eval/` | 17 synthetic samples (10 flows + 6 triggers + 1 reversibility counterexample) plus structural assertions, ready to copy |
 
 ## 1.5 Directory convention (tools and business strictly separated)
 
@@ -127,5 +127,5 @@ A requirement is done only when all of the following hold:
 4. The user is told the artifact path, the paste steps, and everything that still needs human work
    (UI elements / VBS / accounts)
 
-See `docs/nl-to-flow-guide.md` for a worked example; the 16 copy-ready samples are in `tests/eval/fixtures/`
-(10 flows + 6 triggers).
+See `docs/nl-to-flow-guide.md` for a worked example; the 17 copy-ready samples are in `tests/eval/fixtures/`
+(10 flows + 6 triggers + 1 reversibility counterexample).

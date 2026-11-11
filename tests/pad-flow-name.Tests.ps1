@@ -63,7 +63,7 @@ Describe 'pad_flow_name resolution order' {
 
 Describe 'pad_flow_name is accepted but not consumed by the generation chain' {
     It 'the generator and check.js accept the field without writing it into .robin' {
-        # pad-admit sets ErrorAction Stop when dot-sourced, so node's stderr would be treated as a terminating error
+        # Progress goes to stdout now; keep EAP relaxed so genuine node stderr warnings are not terminating errors
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {

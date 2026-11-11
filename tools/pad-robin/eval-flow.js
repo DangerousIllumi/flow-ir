@@ -75,7 +75,7 @@ function reversibleProblems(n) {
   }
   const reason = irreversibleReason(n);
   if (reason && n.reversible === true) {
-    problems.push(`action ${n.pad_hint} is irreversible (${reason}); reversible must be false`);
+    problems.push(`REVERSIBLE_MISLABELED: action ${n.pad_hint} is irreversible (${reason}); reversible must be false`);
   }
   return problems;
 }
@@ -459,7 +459,8 @@ const OPS = {
   },
   // Whole-flow completeness of must-answers: every node must explicitly declare all three (run_mode / idempotent / reversible); one missing fails
   // reversible=false also requires reversibility_note; claiming true for a known-irreversible action is factually wrong and fails too
-  declarationsComplete(flow) {
+  // With a.expect=invalid it asserts "indeed failing and the detail naming a.code", so a deliberately broken flow can be a permanent case
+  declarationsComplete(flow, a = {}) {
     const missing = [];
     for (const n of flow.nodes) {
       const problems = [];
@@ -474,10 +475,12 @@ const OPS = {
       problems.push(...reversibleProblems(n));
       if (problems.length) missing.push(`node ${n.id}: ${problems.join("; ")}`);
     }
-    return {
-      ok: missing.length === 0,
-      detail: missing.length ? `${missing.length} node(s) missing declarations: ${missing.slice(0, 12).join(" | ")}${missing.length > 12 ? "..." : ""}` : `all ${flow.nodes.length} nodes are declared`,
-    };
+    const ok = missing.length === 0;
+    const detail = missing.length ? `${missing.length} node(s) missing declarations: ${missing.slice(0, 12).join(" | ")}${missing.length > 12 ? "..." : ""}` : `all ${flow.nodes.length} nodes are declared`;
+    if (a.expect === "invalid") {
+      return { ok: !ok && detail.includes(String(a.code || "")), detail: `expected ${a.code}, got ${detail}` };
+    }
+    return { ok, detail };
   },
   // Trigger assertion: if a.def is given, validate that object (declaration shape only); otherwise validate the flow's own trigger.
   // With a.expect=invalid it asserts "indeed invalid and hitting a.code", so a counter-example cannot be written as a positive case.

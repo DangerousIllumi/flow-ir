@@ -138,7 +138,7 @@ Describe 'pad-admit policy evaluation' {
         $tmp = Join-Path $TestDrive ('e2e-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         $robin = Join-Path $tmp 'example-flow.robin'
-        # The generator writes "already generated" to stderr; relax EAP here so it is not treated as a terminating error
+        # The generator reports progress on stdout now; keep the relaxed EAP for genuine stderr warnings
         $eap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         & node (Join-Path $repo 'tools\pad-robin\flow-to-robin.js') `

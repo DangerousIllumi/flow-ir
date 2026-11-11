@@ -176,8 +176,9 @@ node tools\pad-robin\eval-flow.js business\tests\eval\<name>.cases.json
 ```
 
 - For how to write `flow.json`, see [docs/agent-prompts.md](docs/agent-prompts.md).
-- Copy-ready neutral samples live in [tests/eval/fixtures](tests/eval/fixtures): 16 synthetic samples
-  (10 flows + 6 triggers), with 11 matching `*.cases.json` files in [tests/eval](tests/eval); the whole directory
+- Copy-ready neutral samples live in [tests/eval/fixtures](tests/eval/fixtures): 17 synthetic samples
+  (10 flows + 6 triggers + 1 reversibility counterexample), with 11 matching `*.cases.json` files in
+  [tests/eval](tests/eval); the whole directory
   runs at once with `node tools\pad-robin\eval-flow.js tests\eval`.
 - Business cases go under `business\tests\eval\` as described in AGENTS.md (never committed).
 - A `trigger` declares only `kind` (`manual` / `schedule` / `file`); the old shape

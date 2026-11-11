@@ -108,8 +108,9 @@
      # open the file, change "flow" to "business/flows/copy-text.json", and add or remove assertions to match your requirement
      ```
 
-> **Boundary between samples and business cases**: `tests/eval/fixtures` (16 neutral synthetic samples:
-> 10 flows + 6 triggers) and `tests/eval/*.cases.json` (11 case files containing structural assertions) ship
+> **Boundary between samples and business cases**: `tests/eval/fixtures` (17 neutral synthetic samples:
+> 10 flows + 6 triggers + 1 reversibility counterexample) and `tests/eval/*.cases.json` (11 case files
+> containing structural assertions) ship
 > with the repository for demos and CI. Assertions for real flows always live in `business/tests/eval/`
 > (that directory is never committed). Both share the same format and the same command: `eval-flow.js` accepts
 > a single case file or a whole directory.
@@ -126,7 +127,7 @@ node tools\pad-robin\eval-flow.js business\tests\eval\copy-text.cases.json
 Expected output (the numbers below are measured values from this repository):
 
 ```text
-Generated: out.robin (2 nodes)          <- tool output: the generator writes this to stderr, which is normal
+Generated: out.robin (2 nodes)          <- progress line: the generator writes it to stdout
 OK   out.robin: 2 action lines, 0 errors
 [admit] pass 10 / warn 6 / ask 0 / fail 0
 PASS  read-then-write  requirement: read the source file first, then write the target file

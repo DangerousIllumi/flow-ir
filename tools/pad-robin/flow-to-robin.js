@@ -592,7 +592,7 @@ if (warnings.length) {
 // Write the file
 if (outPath) {
   fs.writeFileSync(outPath, output, "utf8");
-  console.error(`Generated: ${outPath} (${flow.nodes.length} nodes)`);
+  console.log(`Generated: ${outPath} (${flow.nodes.length} nodes)`);
 } else {
   process.stdout.write(output);
 }
@@ -606,7 +606,7 @@ if (!noCheck && outPath) {
   if (fs.existsSync(checkFlows)) {
     try {
       execFileSync(process.execPath, [checkFlows, kbPath, outPath], { stdio: "inherit" });
-      console.error("Static check: passed");
+      console.log("Static check: passed");
     } catch (e) {
       console.error("Static check: issues found (see the check-flows output above)");
       process.exit(1);

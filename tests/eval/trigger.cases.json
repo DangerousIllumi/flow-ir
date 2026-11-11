@@ -140,6 +140,14 @@
       "expect": [
         { "op": "trigger", "expect": "invalid", "code": "TRIGGER_MISSING_REVERSIBILITY" }
       ]
+    },
+    {
+      "id": "reversible-mislabeled-without-trigger",
+      "requirement": "A mail node claiming reversible=true still fails the completeness check with REVERSIBLE_MISLABELED when the flow declares no trigger (the code is not tied to the trigger path)",
+      "flow": "tests/eval/fixtures/reversible-mislabeled-no-trigger.json",
+      "expect": [
+        { "op": "declarationsComplete", "expect": "invalid", "code": "REVERSIBLE_MISLABELED" }
+      ]
     }
   ]
 }

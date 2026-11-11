@@ -102,7 +102,10 @@ Decision criteria:
   `TRIGGER_MISSING_REVERSIBILITY`) or fails outright (see "Admission red lines").
 - Consequence of a missing field: `eval-flow.js` **unconditionally** runs `declarationsComplete` once for every
   flow under test (it no longer depends on cases declaring it); `nodeDeclaration` is used for single-node
-  assertions. A missing item fails outright (exit code 1) and is never downgraded to a warning. Self-check:
+  assertions. A missing item fails outright (exit code 1) and is never downgraded to a warning. A deliberately
+  broken flow can be pinned as a permanent case with `declarationsComplete` + `expect=invalid` + `code` (it must
+  fail and name that code); a reversible=true mislabel is reported as `REVERSIBLE_MISLABELED` on this path too,
+  whether or not the flow declares a trigger. Self-check:
   
 ```bash
 node tools/pad-robin/eval-flow.js business/tests/eval/<name>.cases.json
