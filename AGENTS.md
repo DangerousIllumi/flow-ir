@@ -37,6 +37,7 @@
 | `skills/pad-flow-designer/` | Design rules for requirement → `flow.json` |
 | `skills/pad-robin-coder/` | Red lines for writing scripts |
 | `docs/nl-to-flow-guide.md` | Complete example: one sentence → flow.json → the four checks |
+| `docs/engine-selection.md` | Which lane (Python / PowerShell / PAD) a step belongs to; records that only the PAD adapter exists |
 | `tests/eval/` | 17 synthetic samples (10 flows + 6 triggers + 1 reversibility counterexample) plus structural assertions, ready to copy |
 
 ## 1.5 Directory convention (tools and business strictly separated)

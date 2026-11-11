@@ -13,6 +13,9 @@ Typical triggers: "build me a flow", "design a flow", "read from the mailbox …
 5. Read back the user's edits after they adjust the diagram
 6. Do design and validation only; never execute any real business action
 
+Exception: a step that needs no desktop UI does not belong on this track — pick the lane in
+[`docs/engine-selection.md`](../../docs/engine-selection.md) first.
+
 ## Workflow
 
 ### 1. Understand the requirement

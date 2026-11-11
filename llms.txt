@@ -4,6 +4,8 @@
 > toolchain: `flow.json` is the source of truth, and **only one adapter is implemented today — PAD
 > (Power Automate Desktop / Robin)**. Other engines (another RPA product, cloud flows, Python/VBS) are
 > extension points that are not implemented yet. Adapter code lives in `tools/pad-robin/` and `tools/pad-sync/`.
+> The IR is engine-agnostic but the implementation is not: which lane (Python, PowerShell or PAD) a step belongs
+> to is decided in [`docs/engine-selection.md`](docs/engine-selection.md).
 
 ## Layers
 
