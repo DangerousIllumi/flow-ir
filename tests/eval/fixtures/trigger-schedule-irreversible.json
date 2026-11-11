@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "trigger-schedule-irreversible",
   "description": "For trigger assertion: schedule trigger plus one node whose effect cannot be reverted (reversibility counterexample)",
   "trigger": {
     "kind": "schedule",

@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "trigger-schedule-missing-reversibility",
   "description": "For trigger assertion: schedule trigger with idempotent=false but no reversible declared (missing-declaration counterexample)",
   "trigger": {
     "kind": "schedule",

@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "trigger-schedule-reversible",
   "description": "For trigger assertion: schedule trigger with all nodes reversible=true (reversibility positive case)",
   "trigger": {
     "kind": "schedule",

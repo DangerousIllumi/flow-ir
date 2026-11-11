@@ -69,7 +69,7 @@ machine-consumed output are always English.
 
 One question decides every borderline case:
 
-> 把这段中文删掉，会不会有某个外部系统读不到它需要的东西？
+> If this Chinese text were deleted, would any external system fail to read something it needs?
 
 If the answer is **no**, the Chinese is prose and must be translated. If the answer is **yes**, it is a value: keep
 it, and register the file that holds it.

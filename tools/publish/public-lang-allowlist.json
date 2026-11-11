@@ -22,9 +22,6 @@
       "tools/flow-drawio/drawio-to-flow.test.js",
       "docs/robin-format-reference.md"
     ],
-    "policy text quoting the decision question": [
-      "docs/doc-language.md"
-    ],
     "documented encoding and UI literals": [
       "docs/script-standards.md"
     ],
@@ -61,11 +58,7 @@
       "tests/eval/fixtures/multi-condition.json",
       "tests/eval/fixtures/no-match-early-exit.json",
       "tests/eval/fixtures/switch-exit-code.json",
-      "tests/eval/fixtures/trigger-manual.json",
-      "tests/eval/fixtures/trigger-schedule-assisted.json",
-      "tests/eval/fixtures/trigger-schedule-confirm.json",
       "tests/eval/fixtures/trigger-schedule-irreversible.json",
-      "tests/eval/fixtures/trigger-schedule-missing-reversibility.json",
       "tests/eval/fixtures/trigger-schedule-reversible.json",
       "tests/eval/input-files.cases.json",
       "tests/eval/trigger.cases.json"

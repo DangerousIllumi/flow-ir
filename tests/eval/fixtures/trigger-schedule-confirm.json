@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "trigger-schedule-confirm",
   "description": "For trigger assertion: schedule trigger with a node requiring manual confirmation (unattended counterexample)",
   "trigger": {
     "kind": "schedule",

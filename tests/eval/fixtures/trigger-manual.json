@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "trigger-manual",
   "description": "For trigger assertion: minimal manual declaration, all nodes run automatically",
   "trigger": { "kind": "manual" },
   "nodes": [

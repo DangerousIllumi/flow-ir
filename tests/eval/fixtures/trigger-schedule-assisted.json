@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "trigger-schedule-assisted",
   "description": "For trigger assertion: schedule trigger with assisted=true plus a node requiring manual confirmation (attended mid-run)",
   "trigger": {
     "kind": "schedule",
