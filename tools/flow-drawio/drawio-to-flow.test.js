@@ -79,11 +79,11 @@ test("IF with yes/no labels: branch.true, branch.body, branch.false and next are
   assert.strictEqual(n1.branch.condition, "X > 0", "branch.condition must be copied from params.Condition");
 });
 
-test("IF with legacy Chinese 是/否 labels: identical result to the yes/no case", () => {
+test("IF with the legacy translated labels: identical result to the yes/no case", () => {
   const { flow } = roundTrip(ifFlow(), (xml) => xml.replace('label="yes"', 'label="是"').replace('label="no"', 'label="否"'));
   const n1 = nodeById(flow, "1");
-  assert.strictEqual(n1.branch.true, "2", "是 must be read as the true branch");
-  assert.strictEqual(n1.branch.false, "3", "否 must be read as the false branch");
+  assert.strictEqual(n1.branch.true, "2", "the legacy true label must be read as the true branch");
+  assert.strictEqual(n1.branch.false, "3", "the legacy false label must be read as the false branch");
   assert.deepStrictEqual(n1.next, ["3"], "next must still hold only the join point");
 });
 

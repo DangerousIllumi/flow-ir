@@ -1,5 +1,5 @@
 {
-  "name": "<流程名>",
+  "name": "reversible-mislabeled-no-trigger",
   "description": "For the completeness assertion: the flow declares no trigger, and a mail node falsely claims reversible=true (reversibility mislabel)",
   "budget": { "maxLoop": 1 },
   "nodes": [
