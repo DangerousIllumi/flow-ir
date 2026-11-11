@@ -35,7 +35,7 @@
       "run_mode": "auto",
       "idempotent": false,
       "reversible": true,
-      "reversibility_note": "脚本只读运行目录下的中间结果，删除的是可重新生成的临时文件，重跑一次即可重建",
+      "reversibility_note": "演示样例：以 intent_destructive=true 与 reversible=true 的脚本节点展示合法声明形态，实际副作用由被调用命令决定；本流程不重建被删内容",
       "intent_destructive": true,
       "idempotency_note": "重跑会再执行一次同一命令，副作用取决于脚本本身"
     },

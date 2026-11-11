@@ -25,7 +25,7 @@
     },
     {
       "id": "destructive-intent-legal",
-      "requirement": "A script node that deletes regenerable artifacts is legal when intent_destructive=true, reversible=true and a reversibility_note explains the regeneration; the trigger cross-check must report no error",
+      "requirement": "A script node declaring intent_destructive=true is legal when it also declares reversible=true and a reversibility_note describes the demo shape (no claim that rerunning rebuilds deleted content); the trigger cross-check must report no error",
       "expect": [
         { "op": "trigger" },
         { "op": "nodeDeclaration", "id": "1", "runMode": "auto", "idempotent": false }
