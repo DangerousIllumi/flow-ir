@@ -1,0 +1,74 @@
+{
+  "_comment": "Files where Chinese is a value rather than prose. check-public-lang.ps1 allows Chinese only here and fails on stale or missing entries. Grouped by the reason the Chinese has to stay; each path appears exactly once.",
+  "reasons": {
+    "denylist business words": [
+      "tools/publish/public-safe.denylist.json"
+    ],
+    "excel and calendar contracts": [
+      "tools/xlsx/xlsx_io.py",
+      "tools/workday/workday.py"
+    ],
+    "PAD UI matching strings": [
+      "tools/pad-sync/PadDesigner.psm1"
+    ],
+    "error-text match patterns": [
+      "tools/pad-sync/repair-rules.json"
+    ],
+    "example flow parameters": [
+      "tools/flow-drawio/example-flow.json"
+    ],
+    "legacy canvas label values": [
+      "tools/flow-drawio/drawio-to-flow.js",
+      "tools/flow-drawio/drawio-to-flow.test.js",
+      "docs/robin-format-reference.md"
+    ],
+    "policy text quoting the decision question": [
+      "docs/doc-language.md"
+    ],
+    "documented encoding and UI literals": [
+      "docs/script-standards.md"
+    ],
+    "pester and pytest test data": [
+      "tests/pad-admit.Tests.ps1",
+      "tests/pad-alerts.Tests.ps1",
+      "tests/PadConfigure.Tests.ps1",
+      "tests/PadDesigner.Tests.ps1",
+      "tests/pad-fingerprint.Tests.ps1",
+      "tests/pad-flow-name.Tests.ps1",
+      "tests/pad-release.Tests.ps1",
+      "tests/pad-rollback.Tests.ps1",
+      "tests/pad-schedule.Tests.ps1",
+      "tests/PadTelemetry.Tests.ps1",
+      "tests/policy-docs.Tests.ps1",
+      "tests/public-safe-gate.Tests.ps1",
+      "tests/repair-executor.Tests.ps1",
+      "tests/TextEncoding.Tests.ps1",
+      "tests/trigger-registry.Tests.ps1",
+      "tests/test_vbs_text.py",
+      "tests/test_workday.py",
+      "tests/test_xlsx_io.py"
+    ],
+    "node test data": [
+      "tools/pad-robin/compare-robin.test.js",
+      "tools/pad-robin/flow-to-robin.test.js",
+      "tools/pad-robin/lint-robin.test.js"
+    ],
+    "eval fixture parameters, notes and names": [
+      "tests/eval/fixtures/foreach-archive.json",
+      "tests/eval/fixtures/guard-notify.json",
+      "tests/eval/fixtures/http-webhook.json",
+      "tests/eval/fixtures/loop-with-break.json",
+      "tests/eval/fixtures/multi-condition.json",
+      "tests/eval/fixtures/no-match-early-exit.json",
+      "tests/eval/fixtures/switch-exit-code.json",
+      "tests/eval/fixtures/trigger-manual.json",
+      "tests/eval/fixtures/trigger-schedule-assisted.json",
+      "tests/eval/fixtures/trigger-schedule-confirm.json",
+      "tests/eval/fixtures/trigger-schedule-irreversible.json",
+      "tests/eval/fixtures/trigger-schedule-missing-reversibility.json",
+      "tests/eval/fixtures/trigger-schedule-reversible.json",
+      "tests/eval/input-files.cases.json",
+      "tests/eval/trigger.cases.json"
+    ]
+  }
+}

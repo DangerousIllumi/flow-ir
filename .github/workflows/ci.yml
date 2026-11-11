@@ -35,6 +35,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-public-safe.ps1' -Files (git ls-files) -DenylistFile 'tools\publish\public-safe.denylist.json'"
           if ($LASTEXITCODE -ne 0) { throw "public-safe gate failed: $LASTEXITCODE" }
 
+      - name: "Public layer language gate (Chinese only as registered values)"
+        shell: powershell
+        run: |
+          # Chinese is allowed only in the files registered in public-lang-allowlist.json
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "& '.\tools\publish\check-public-lang.ps1' -Files (git ls-files)"
+          if ($LASTEXITCODE -ne 0) { throw "public-lang gate failed: $LASTEXITCODE" }
+
       - name: Install Python 3.13
         uses: actions/setup-python@v5
         with:
