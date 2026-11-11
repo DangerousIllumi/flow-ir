@@ -60,7 +60,29 @@ How to apply it:
 - New rule ids are English and get a separate human description; never use a prose sentence as an id.
 - Prose wording may change between versions; the part that is asserted must stay stable.
 
-## 4. Checklist before touching documentation
+## 4. Chinese in the public layer: values only
+
+The public layer is English by default. Chinese may appear **only as a literal value that an external system
+consumes**: PAD UI text, Excel column headers and sheet names, the labels on canvases drawn before the labels were
+translated, and match strings fixed by a third-party system. Explanation text, comments, identifiers and
+machine-consumed output are always English.
+
+One question decides every borderline case:
+
+> 把这段中文删掉，会不会有某个外部系统读不到它需要的东西？
+
+If the answer is **no**, the Chinese is prose and must be translated. If the answer is **yes**, it is a value: keep
+it, and register the file that holds it.
+
+Exemptions are recorded in one machine-readable place, never in document prose:
+[`tools/publish/public-lang-allowlist.json`](../tools/publish/public-lang-allowlist.json), enforced by
+`tools/publish/check-public-lang.ps1`. That gate also fails on stale entries, so a file that no longer contains
+Chinese must be removed from the list.
+
+Machine-consumed output keeps its ASCII anchor; see
+[section 3](#3-hard-rule-two-machine-consumed-output-must-keep-an-ascii-anchor).
+
+## 5. Checklist before touching documentation
 
 - [ ] Who is the reader of this document? Pick the language per section 1 and do not mix languages.
 - [ ] Is any fact restated from somewhere else? Delete the copy and replace it with a link.
