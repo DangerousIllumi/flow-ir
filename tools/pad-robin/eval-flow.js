@@ -220,6 +220,17 @@ function validateTrigger(flow, trg, opts = {}) {
         `nodes with idempotent=false declare no reversible: ${missingRev.map((n) => n.id).join(",")}`);
     }
 
+    // A known-irreversible action declared reversible=true is a factual error, fail immediately regardless of
+    // reversibility_note (the note cannot make mail/delete/posting reversible). This is REVERSIBLE_MISLABELED,
+    // emitted unconditionally on note — mirror of pad-admit's TRIGGER/REVERSIBLE_MISLABELED check.
+    const mislabeled = nodes.filter((n) => n && n.reversible === true && irreversibleReason(n) !== null);
+    if (mislabeled.length > 0) {
+      err("REVERSIBLE_MISLABELED",
+        `an irreversible action must not declare reversible=true (mail/delete/posting cannot be undone): ${mislabeled
+          .map((n) => `${n.id} ${n.pad_hint}`)
+          .join(", ")}`);
+    }
+
     // intent_destructive: the primary signal for script nodes. pad_hint alone cannot tell a read script from a delete script.
     const scriptNodes = nodes.filter(
       (n) => n && /^Scripting\.(RunDOSCommand|RunVBScript)/i.test(String((n && n.pad_hint) || "")) && hasOwn(n, "intent"));
