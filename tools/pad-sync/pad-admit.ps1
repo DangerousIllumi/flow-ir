@@ -48,6 +48,26 @@ $script:FingerprintMode = 'fail'
 
 $CONTROL_HINTS = @('IF', 'LOOP', 'SWITCH', 'GUARD', 'WAIT', 'EXIT LOOP', 'EXIT_LOOP')
 
+# Destructive action hints: actions that modify or remove data and cannot be auto-undone.
+# Enumerated from pad-robin-action-kb/PAD_Robin_ActionKB.json — every actionId listed here
+# is verified to exist in the KB. The old regex ^(File|Folder)\.Delete$ was anchored with $,
+# which missed File.Move / File.RenameFiles.* / Folder.Move / Folder.Rename and every
+# destructive action outside the File and Folder modules (Excel, FTP, Outlook, PowerPoint, …).
+# This is an explicit alternation, never a wildcard like .*Delete.*.
+$DESTRUCTIVE_HINT_RE = '^(File\.(Delete|Move|RenameFiles\.)|Folder\.(Delete|Move|Rename$)|' +
+    'Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.|RenameWorksheet\.)|' +
+    'FTP\.(DeleteDirectory|DeleteFiles|RenameFile)|' +
+    'Outlook\.ProcessEmailMessages\.(DeleteEmails|MoveEmails)|' +
+    'PowerPoint\.(DeletePowerPointSlide\.|MovePowerPointSlide)|' +
+    'System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute)|' +
+    'Email\.ProcessEmails\.Move|Exchange\.ProcessExchangeMessages\.MoveEmails)'
+
+# Known-irreversible intent values for RunDOSCommand / RunVBScript: the posting family.
+# Exact match only — substring matching was too broad (it flagged migo-precheck, which only reads)
+# and too narrow at the other end (it missed clean-attachments, which deletes via RunDOSCommand).
+# intent_destructive is the primary signal; this regex is the fallback for legacy flows.
+$POSTING_INTENT_RE = '^(sap-migo|posting)$'
+
 # Wildcard match: only * and ? are special, everything else is literal, so regex metacharacters cannot cause false hits
 function Test-GlobMatch([string]$Pattern, [string]$Text) {
     if ($null -eq $Pattern) { return $false }
@@ -314,10 +334,25 @@ function Invoke-TriggerCheck {
                 if ($note) { "node $($_.id) reversible=false: $note" } else { "node $($_.id) reversible=false" }
             }) }
     }
-    # idempotent=false without a reversible declaration: ask for the declaration instead of papering over it with a default
+    # Script nodes (RunDOSCommand / RunVBScript) must declare reversible regardless of idempotency:
+    # a script can read or write files, and the gate cannot tell from pad_hint alone.
+    $scriptMissingRev = @($nodes | Where-Object {
+        $_ -and ($_.pad_hint -match '^Scripting\.(RunDOSCommand|RunVBScript)') -and
+        -not (Test-PropExists $_ 'reversible')
+    })
+    if ($scriptMissingRev.Count -gt 0) {
+        $issues += @{ status = 'ask'; code = 'TRIGGER_MISSING_REVERSIBILITY'
+            message = 'script node (RunDOSCommand/RunVBScript) must declare reversible; the gate cannot tell from pad_hint alone whether it reads or writes'
+            evidence = @($scriptMissingRev | ForEach-Object {
+                $intent = if (Test-PropExists $_ 'intent') { [string]$_.intent } else { '(no intent)' }
+                "node $($_.id) pad_hint=$($_.pad_hint) intent=$intent reversible not declared"
+            }) }
+    }
+    # idempotent=false without a reversible declaration (non-script nodes): ask for the declaration instead of papering over it with a default
     $missingRev = @($nodes | Where-Object {
         $_ -and (Test-PropExists $_ 'idempotent') -and $_.idempotent -eq $false -and
-        -not (Test-PropExists $_ 'reversible')
+        -not (Test-PropExists $_ 'reversible') -and
+        -not ($_.pad_hint -match '^Scripting\.(RunDOSCommand|RunVBScript)')
     })
     if ($missingRev.Count -gt 0) {
         $issues += @{ status = 'warn'; code = 'TRIGGER_MISSING_REVERSIBILITY'
@@ -331,15 +366,97 @@ function Invoke-TriggerCheck {
     $mislabeled = @($nodes | Where-Object {
         $_ -and (Test-PropExists $_ 'reversible') -and $_.reversible -eq $true -and (
             ($_.pad_hint -match '^Outlook\.SendEmail') -or
-            ($_.pad_hint -match '^(File|Folder)\.Delete$') -or
-            (($_.pad_hint -match '^Scripting\.RunDOSCommand') -and
-             (Test-PropExists $_ 'intent') -and ([string]$_.intent -match '(migo|posting)'))
+            ($_.pad_hint -match $DESTRUCTIVE_HINT_RE) -or
+            (($_.pad_hint -match '^Scripting\.(RunDOSCommand|RunVBScript)') -and
+             (Test-PropExists $_ 'intent') -and ([string]$_.intent -match $POSTING_INTENT_RE))
         )
     })
     if ($mislabeled.Count -gt 0) {
         $issues += @{ status = 'fail'; code = 'REVERSIBLE_MISLABELED'
             message = 'an irreversible action must not declare reversible=true (mail/delete/posting cannot be undone)'
             evidence = @($mislabeled | ForEach-Object { "node $($_.id) $($_.pad_hint) is marked reversible=true" }) }
+    }
+
+    # intent_destructive: the primary signal for script nodes. pad_hint alone cannot tell a read script from a delete script.
+    # 1. Script node with intent but no intent_destructive: ask for the declaration.
+    $scriptNodes = @($nodes | Where-Object {
+        $_ -and ($_.pad_hint -match '^Scripting\.(RunDOSCommand|RunVBScript)') -and
+        (Test-PropExists $_ 'intent')
+    })
+    $missingDestructive = @($scriptNodes | Where-Object {
+        -not (Test-PropExists $_ 'intent_destructive')
+    })
+    if ($missingDestructive.Count -gt 0) {
+        $issues += @{ status = 'ask'; code = 'INTENT_DESTRUCTIVE_MISSING'
+            message = 'script node has intent but no intent_destructive; declare whether the script deletes or overwrites data'
+            evidence = @($missingDestructive | ForEach-Object {
+                "node $($_.id) intent=$([string]$_.intent) intent_destructive not declared"
+            }) }
+    }
+    # 2. intent_destructive must be a boolean.
+    $badDestructive = @($scriptNodes | Where-Object {
+        (Test-PropExists $_ 'intent_destructive') -and
+        ($_.intent_destructive -ne $true -and $_.intent_destructive -ne $false)
+    })
+    if ($badDestructive.Count -gt 0) {
+        $issues += @{ status = 'fail'; code = 'INTENT_DESTRUCTIVE_INVALID'
+            message = 'intent_destructive must be a boolean (true/false)'
+            evidence = @($badDestructive | ForEach-Object {
+                "node $($_.id) intent=$([string]$_.intent) intent_destructive=$($_.intent_destructive)"
+            }) }
+    }
+    # 3. intent_destructive=true must carry a reversibility_note: a destructive script deletes or overwrites data,
+    #    and the note must explain how that data is recovered (regenerated, re-exported, …).
+    $noNote = @($scriptNodes | Where-Object {
+        (Test-PropExists $_ 'intent_destructive') -and $_.intent_destructive -eq $true -and (
+            (-not (Test-PropExists $_ 'reversibility_note')) -or
+            ($null -eq $_.reversibility_note) -or
+            ([string]($_.reversibility_note)).Trim() -eq ''
+        )
+    })
+    if ($noNote.Count -gt 0) {
+        $issues += @{ status = 'fail'; code = 'INTENT_DESTRUCTIVE_NO_NOTE'
+            message = 'intent_destructive=true requires a reversibility_note explaining how the deleted/overwritten data is recovered'
+            evidence = @($noNote | ForEach-Object {
+                "node $($_.id) intent=$([string]$_.intent) intent_destructive=true has no reversibility_note"
+            }) }
+    }
+    # 4. Same intent value with different intent_destructive across nodes: a factual conflict.
+    $byIntent = @{}
+    foreach ($n in $scriptNodes) {
+        if (-not (Test-PropExists $n 'intent_destructive')) { continue }
+        $iv = [string]$n.intent
+        $dv = [bool]$n.intent_destructive
+        if (-not $byIntent.ContainsKey($iv)) { $byIntent[$iv] = @() }
+        $byIntent[$iv] += $dv
+    }
+    $intentConflicts = @()
+    foreach ($iv in $byIntent.Keys) {
+        $vals = @($byIntent[$iv] | Sort-Object -Unique)
+        if ($vals.Count -gt 1) {
+            $nodesWith = @($scriptNodes | Where-Object { [string]$_.intent -eq $iv } | ForEach-Object {
+                "$($_.id)=$($_.intent_destructive)"
+            }) -join ', '
+            $intentConflicts += "$iv : $($nodesWith)"
+        }
+    }
+    if ($intentConflicts.Count -gt 0) {
+        $issues += @{ status = 'fail'; code = 'INTENT_DESTRUCTIVE_CONFLICT'
+            message = 'the same intent value declares different intent_destructive on different nodes'
+            evidence = $intentConflicts }
+    }
+    # 5. Fallback: a known posting intent (migo/posting) must not be self-declared as non-destructive.
+    $downgraded = @($scriptNodes | Where-Object {
+        (Test-PropExists $_ 'intent_destructive') -and
+        ([string]$_.intent -match $POSTING_INTENT_RE) -and
+        $_.intent_destructive -ne $true
+    })
+    if ($downgraded.Count -gt 0) {
+        $issues += @{ status = 'fail'; code = 'INTENT_DESTRUCTIVE_DOWNGRADED'
+            message = 'a known posting intent (migo/posting) must not declare intent_destructive=false; posting creates documents that can only be reversed by another posting'
+            evidence = @($downgraded | ForEach-Object {
+                "node $($_.id) intent=$([string]$_.intent) intent_destructive=$($_.intent_destructive)"
+            }) }
     }
 
     $trg = $null
@@ -1042,3 +1159,4 @@ if (-not $NoMain) {
     Write-Output ('PAD_ADMIT_RESULT=' + ($result | ConvertTo-Json -Depth 8 -Compress))
     exit $exitCode
 }
+# end of pad-admit.ps1

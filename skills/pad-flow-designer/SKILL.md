@@ -46,6 +46,7 @@ the overall process, split it into nodes and ask again.
 | 1 | How does this node run | `auto` runs automatically / `confirm` needs human confirmation / `observe` read-only observation | node-level `run_mode` |
 | 2 | What happens on a rerun (rerun safety) | `true` a rerun gives the same result / `false` a rerun changes state or loses input | node-level `idempotent`; when `false`, `idempotency_note` is also required |
 | 2b | Can the consequence be undone (reversibility) | `true` deleting rebuilds it or it can be reverted (saved attachment / exported file / reconciliation file / marked as read) / `false` sending mail, posting documents and similar cannot be undone | node-level `reversible`; when `false`, `reversibility_note` is also required (state how to revert, e.g. "a posting needs a reversal document to be undone") |
+| 2c | Does this script delete or overwrite data (destructive) | `true` the script removes files, directories, rows, or cells, or overwrites existing files / `false` the script only reads or creates new files | node-level `intent_destructive` on `Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` nodes; when `true`, `reversibility_note` is also required (state how the deleted/overwritten data is recovered) |
 | 3 | With multiple files written to disk and old files to clean up, how do you tell "this run's artifacts" apart | `yes` use a run-timestamp directory / `no` describe which reliable marker you use instead | this run's output directory + the selection condition of the cleanup node |
 | 4 | Which input files must exist before this step starts | `none` / for each file: directory (config key), filename wildcard, `true` required / `false` optional | node-level `inputs[]` (see "Input file declarations" below) |
 | 5 | How is this flow triggered | `manual` / `schedule` (`time` + `days` + `gate=workday|last-workday`) / `file` (`dir` must be `{{config.<KEY>}}`) | top-level `trigger`; fields and values in `docs/trigger-adapter-design.md`; `assisted=true` requires `timeout_sec` |
@@ -59,6 +60,14 @@ Decision criteria:
 - **A node with `reversible=false` must be able to state how to revert** (e.g. "a submission needs a reversal
   document to be withdrawn", "the mail has been sent, so all we can do is send another explanation").
   If no revert path can be stated, the side effect does not belong in an unattended flow.
+- **`Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` nodes must declare `intent_destructive`**:
+  `pad_hint` cannot tell a read script from a delete script, so the boolean must be declared explicitly by reading
+  the script source. `true` when the script deletes files/directories/rows/cells or overwrites existing files;
+  `false` when it only reads or creates new files. `intent_destructive=true` additionally requires a
+  `reversibility_note` saying how the deleted/overwritten data is recovered (regenerated, re-exported, …).
+- **`reversible` is also mandatory on script nodes** (not only when `idempotent=false`): the admission gate
+  cannot infer reversibility for a script from its `pad_hint` alone, so a script node without `reversible`
+  reports `TRIGGER_MISSING_REVERSIBILITY` (ask).
 - **Control nodes (SET / IF / LOOP / SWITCH / GUARD) must be annotated too**; do not annotate only business actions.
 - For side-effect nodes such as sending mail, posting documents, deleting files and changing state, always ask
   about the rerun consequence; if it cannot be established, treat it as `idempotent=false`.
@@ -81,12 +90,16 @@ Decision criteria:
     and `idempotency_note` states the manual pre-check (e.g. "confirm the state ledger is complete before
     rerunning"); also `reversible=false`, with `reversibility_note` saying "a submission needs a reversal
     document to be undone".
+  - **A cleanup script is destructive**: it removes directories or attachments, so `intent_destructive=true`,
+    `reversible=true` when a rerun of the whole flow re-drops the same batch (the individual directory is lost,
+    but the data can be regenerated from the mailbox) and `reversibility_note` states that.
 
 - **Catch-up runs are always disabled**: `StartWhenAvailable` for a scheduled trigger must be `false`. A catch-up
   run would execute instances missed over the weekend early on a workday morning, and the calendar gate only
   looks at "today", so it cannot detect that.
 - **Every flow must declare `budget`**; `Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` nodes must carry
-  `intent`, otherwise admission fails outright (see "Admission red lines").
+  `intent`, `reversible` and `intent_destructive`, otherwise admission asks (`INTENT_DESTRUCTIVE_MISSING` /
+  `TRIGGER_MISSING_REVERSIBILITY`) or fails outright (see "Admission red lines").
 - Consequence of a missing field: `eval-flow.js` **unconditionally** runs `declarationsComplete` once for every
   flow under test (it no longer depends on cases declaring it); `nodeDeclaration` is used for single-node
   assertions. A missing item fails outright (exit code 1) and is never downgraded to a warning. Self-check:
@@ -174,6 +187,8 @@ At design time you only need to hold two lines:
 - Never use `Outlook.Close*` (it also closes the main window the user already has open)
 - Always put side effects (sending mail, posting documents, deleting files) inside a `guard` node with the
   condition `DryRun <> $'''1'''`
+- Every `Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` node declares `reversible` and `intent_destructive`;
+  `intent_destructive=true` also requires `reversibility_note`
 
 Before submitting, run the read-only admission check (generate the `.robin` first; without `-RobinFile`, a
 missing same-name script silently skips the static check):

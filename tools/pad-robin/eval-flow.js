@@ -40,12 +40,21 @@ function isPositiveInt(v) {
 
 // Known-irreversible actions: once done they cannot be taken back, so declaring reversible=true is factually wrong and fails the check.
 // Sending mail, deleting files/directories, posting scripts (recognized by intent, not by parameter name).
-const POSTING_INTENT_RE = /(migo|posting)/i;
+// Exact match only — substring matching was too broad (it flagged migo-precheck, which only reads)
+// and too narrow at the other end (it missed clean-attachments, which deletes via RunDOSCommand).
+// intent_destructive is the primary signal; this regex is the fallback for legacy flows.
+const POSTING_INTENT_RE = /^(sap-migo|posting)$/i;
+// Destructive action hints: actions that modify or remove data and cannot be auto-undone.
+// Enumerated from pad-robin-action-kb/PAD_Robin_ActionKB.json — every actionId listed here
+// is verified to exist in the KB. The old regex ^(File|Folder)\.Delete$ was anchored with $,
+// which missed File.Move / File.RenameFiles.* / Folder.Move / Folder.Rename and every
+// destructive action outside the File and Folder modules (Excel, FTP, Outlook, PowerPoint, …).
+const DESTRUCTIVE_HINT_RE = /^(File\.(Delete|Move|RenameFiles\.)|Folder\.(Delete|Move|Rename$)|Excel\.(DeleteCells\.|DeleteColumn|DeleteRow|DeleteWorksheet\.|RenameWorksheet\.)|FTP\.(DeleteDirectory|DeleteFiles|RenameFile)|Outlook\.ProcessEmailMessages\.(DeleteEmails|MoveEmails)|PowerPoint\.(DeletePowerPointSlide\.|MovePowerPointSlide)|System\.DeleteEnvironmentVariable|XML\.(RemoveElement|RemoveElementAttribute)|Email\.ProcessEmails\.Move|Exchange\.ProcessExchangeMessages\.MoveEmails)/i;
 function irreversibleReason(n) {
   const hint = String((n && n.pad_hint) || "");
   if (/^Outlook\.SendEmail/i.test(hint)) return "sending mail cannot be undone; only a corrective resend is possible";
-  if (/^(File|Folder)\.Delete$/i.test(hint)) return "deleting files/directories cannot be undone";
-  if (/^Scripting\.RunDOSCommand/i.test(hint) && POSTING_INTENT_RE.test(String((n && n.intent) || ""))) {
+  if (DESTRUCTIVE_HINT_RE.test(hint)) return "deleting/moving/renaming files or directories cannot be undone";
+  if (/^Scripting\.(RunDOSCommand|RunVBScript)/i.test(hint) && POSTING_INTENT_RE.test(String((n && n.intent) || ""))) {
     return "re-running a posting script creates duplicate documents; only a reversing entry can correct it";
   }
   return null;
@@ -194,12 +203,77 @@ function validateTrigger(flow, trg, opts = {}) {
           .map((n) => `${n.id}${n.reversibility_note ? `（${n.reversibility_note}）` : ""}`)
           .join("、")}`);
     }
-    // idempotent=false but no reversible declared: ask for the missing declaration, never fill it in by default
+    // Script nodes (RunDOSCommand / RunVBScript) must declare reversible regardless of idempotency:
+    // a script can read or write files, and the gate cannot tell from pad_hint alone.
+    const scriptMissingRev = nodes.filter(
+      (n) => n && /^Scripting\.(RunDOSCommand|RunVBScript)/i.test(String((n && n.pad_hint) || "")) && !hasOwn(n, "reversible"));
+    if (scriptMissingRev.length > 0) {
+      err("TRIGGER_MISSING_REVERSIBILITY",
+        `script nodes (RunDOSCommand/RunVBScript) must declare reversible; the gate cannot tell from pad_hint alone whether it reads or writes: ${scriptMissingRev.map((n) => n.id).join(",")}`);
+    }
+    // idempotent=false but no reversible declared (non-script nodes): ask for the missing declaration, never fill it in by default
     const missingRev = nodes.filter(
-      (n) => n && n.idempotent === false && !hasOwn(n, "reversible"));
+      (n) => n && n.idempotent === false && !hasOwn(n, "reversible") &&
+      !/^Scripting\.(RunDOSCommand|RunVBScript)/i.test(String((n && n.pad_hint) || "")));
     if (missingRev.length > 0) {
       warn("TRIGGER_MISSING_REVERSIBILITY",
         `nodes with idempotent=false declare no reversible: ${missingRev.map((n) => n.id).join(",")}`);
+    }
+
+    // intent_destructive: the primary signal for script nodes. pad_hint alone cannot tell a read script from a delete script.
+    const scriptNodes = nodes.filter(
+      (n) => n && /^Scripting\.(RunDOSCommand|RunVBScript)/i.test(String((n && n.pad_hint) || "")) && hasOwn(n, "intent"));
+    // 1. Script node with intent but no intent_destructive: ask for the declaration.
+    const missingDestructive = scriptNodes.filter((n) => !hasOwn(n, "intent_destructive"));
+    if (missingDestructive.length > 0) {
+      err("INTENT_DESTRUCTIVE_MISSING",
+        `script nodes have intent but no intent_destructive; declare whether the script deletes or overwrites data: ${missingDestructive.map((n) => n.id).join(",")}`);
+    }
+    // 2. intent_destructive must be a boolean.
+    const badDestructive = scriptNodes.filter((n) => hasOwn(n, "intent_destructive") && typeof n.intent_destructive !== "boolean");
+    if (badDestructive.length > 0) {
+      err("INTENT_DESTRUCTIVE_INVALID",
+        `intent_destructive must be a boolean (true/false): ${badDestructive.map((n) => n.id).join(",")}`);
+    }
+    // 3. intent_destructive=true with no reversibility_note: the script self-declares as destructive, so the rollback
+    //    path must be stated in words. reversible may still be true here — a cleanup script whose deletions are
+    //    regenerated by a rerun is exactly the legal pattern — so reversible is deliberately not part of this predicate.
+    //    The missing note is what fails. Mirrors pad-admit's INTENT_DESTRUCTIVE_NO_NOTE (§2.2b of docs/admission-gate.md).
+    const noNote = scriptNodes.filter(
+      (n) => hasOwn(n, "intent_destructive") && n.intent_destructive === true &&
+        (!hasOwn(n, "reversibility_note") || n.reversibility_note === null || String(n.reversibility_note || "").trim() === ""));
+    if (noNote.length > 0) {
+      err("INTENT_DESTRUCTIVE_NO_NOTE",
+        `intent_destructive=true requires reversibility_note explaining the rollback path: ${noNote.map((n) => n.id).join(",")}`);
+    }
+    // 4. Same intent value with different intent_destructive across nodes: a factual conflict.
+    const byIntent = {};
+    for (const n of scriptNodes) {
+      if (!hasOwn(n, "intent_destructive")) continue;
+      const iv = String(n.intent);
+      if (!byIntent[iv]) byIntent[iv] = new Set();
+      byIntent[iv].add(n.intent_destructive);
+    }
+    const intentConflicts = [];
+    for (const iv of Object.keys(byIntent)) {
+      if (byIntent[iv].size > 1) {
+        const nodesWith = scriptNodes
+          .filter((n) => String(n.intent) === iv && hasOwn(n, "intent_destructive"))
+          .map((n) => `${n.id}=${n.intent_destructive}`)
+          .join(", ");
+        intentConflicts.push(`${iv}: ${nodesWith}`);
+      }
+    }
+    if (intentConflicts.length > 0) {
+      err("INTENT_DESTRUCTIVE_CONFLICT",
+        `the same intent value declares different intent_destructive on different nodes: ${intentConflicts.join("; ")}`);
+    }
+    // 5. Fallback: a known posting intent (migo/posting) must not be self-declared as non-destructive.
+    const downgraded = scriptNodes.filter(
+      (n) => hasOwn(n, "intent_destructive") && POSTING_INTENT_RE.test(String(n.intent)) && n.intent_destructive !== true);
+    if (downgraded.length > 0) {
+      err("INTENT_DESTRUCTIVE_DOWNGRADED",
+        `a known posting intent (migo/posting) must not declare intent_destructive=false: posting creates documents that can only be reversed by another posting: ${downgraded.map((n) => n.id).join(",")}`);
     }
   }
 

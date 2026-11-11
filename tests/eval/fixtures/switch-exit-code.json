@@ -34,8 +34,9 @@
       "next": ["2"],
       "run_mode": "auto",
       "idempotent": false,
-      "reversible": false,
-      "reversibility_note": "脚本副作用由被调脚本决定，无法自动回退",
+      "reversible": true,
+      "reversibility_note": "脚本只读运行目录下的中间结果，删除的是可重新生成的临时文件，重跑一次即可重建",
+      "intent_destructive": true,
       "idempotency_note": "重跑会再执行一次同一命令，副作用取决于脚本本身"
     },
     {

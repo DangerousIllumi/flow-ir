@@ -116,7 +116,8 @@
       "run_mode": "auto",
       "idempotent": true,
       "reversible": true,
-      "reversibility_note": "Each run writes a new timestamped export file, so the old one can simply be deleted"
+      "reversibility_note": "Each run writes a new timestamped export file, so the old one can simply be deleted",
+      "intent_destructive": false
     },
     {
       "id": "4",

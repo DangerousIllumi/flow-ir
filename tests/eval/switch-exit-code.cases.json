@@ -24,6 +24,14 @@
       ]
     },
     {
+      "id": "destructive-intent-legal",
+      "requirement": "A script node that deletes regenerable artifacts is legal when intent_destructive=true, reversible=true and a reversibility_note explains the regeneration; the trigger cross-check must report no error",
+      "expect": [
+        { "op": "trigger" },
+        { "op": "nodeDeclaration", "id": "1", "runMode": "auto", "idempotent": false }
+      ]
+    },
+    {
       "id": "no-extra-branch",
       "requirement": "Out-of-scope actions such as closing Outlook are not allowed",
       "expect": [

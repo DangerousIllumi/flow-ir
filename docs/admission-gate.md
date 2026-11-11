@@ -31,7 +31,7 @@
 | 12 | FINGERPRINT | SHA256 of three files + baseline | Matches the approval record or `business/fingerprints/<flow name>.json` | `pass` / `FINGERPRINT_*` (see 2.1) | `PadFingerprint.psm1` (mismatch is fail; a missing baseline is warn in report mode and fail with `-Unattended`) |
 | 13 | SCRIPT_FINGERPRINT | Scripts referenced by the flow + the baseline `scripts`/`external` sections | Matches the baseline | `FINGERPRINT_*` / `SCRIPT_FINGERPRINT_LEGACY` | `PadFingerprint.psm1` (a missing or legacy baseline is always warn; FINGERPRINT gates first) |
 | 14 | INTENT | Node `intent` / `tags` | Generic actions such as `RunDOSCommand` and `RunVBScript` must carry a semantic tag that policy can match | `MISSING_INTENT` | `pad-admit.ps1` (a missing intent is fail; policy supports `when.intent`) |
-| 15 | TRIGGER | The `trigger` block in `flow.json` | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation | `TRIGGER_*` (see 2.2) | `pad-admit.ps1` (an undeclared trigger is warn during the observation period) |
+| 15 | TRIGGER | The `trigger` block in `flow.json` + node reversibility + script destructive declarations | Kind domain, required fields, directory must come from a config reference, unattended runs may not require human confirmation; `RunDOSCommand`/`RunVBScript` must declare `reversible` and `intent_destructive` | `TRIGGER_*` (see 2.2, 2.2b) | `pad-admit.ps1` (an undeclared trigger is warn during the observation period; script nodes missing `reversible` or `intent_destructive` are ask) |
 | 16 | INPUT | Node-level `inputs` declaration + `config` | Directory must come from a config reference; `required` declared explicitly; a required file with 0 candidates fails; ≥2 candidates is always ambiguous | `INPUT_*` (see 2.3) | `pad-admit.ps1` (undeclared is warn, for backward compatibility) |
 
 ### 2.1 Fingerprint (FINGERPRINT) result codes
@@ -68,7 +68,7 @@ does not query the local scheduled-task registration state.
 | `TRIGGER_PATH_LITERAL` | fail | `file.dir` hard-codes a path instead of using a `{{config.<KEY>}}` reference |
 | `TRIGGER_UNATTENDED_CONFIRM` | fail | A non-`manual` trigger with a `run_mode=confirm` node, without `assisted=true` |
 | `TRIGGER_UNATTENDED_IRREVERSIBLE` | warn | A non-`manual` trigger with a `reversible=false` node (the consequence cannot be withdrawn); evidence lists the node id and `reversibility_note` |
-| `TRIGGER_MISSING_REVERSIBILITY` | warn | A node has `idempotent=false` but declares no `reversible`; the declaration must be added (never filled in by default) |
+| `TRIGGER_MISSING_REVERSIBILITY` | **ask** (script nodes) / warn (other nodes) | A `RunDOSCommand`/`RunVBScript` node declares no `reversible` — the gate cannot tell a read script from a delete script from `pad_hint` alone, so it asks for the declaration (ask). For non-script nodes with `idempotent=false` and no `reversible`, it is a warn |
 | `TRIGGER_UNATTENDED_NONIDEMPOTENT` | warn (compatibility alias, **narrowed**) | The name is kept only while existing cases/callers still reference the old code; the decision is no longer triggered by `idempotent=false` but by the two reversibility rules above |
 | `TRIGGER_NO_GATE` | warn | `schedule` without `gate`; it would still run on holidays |
 | `TRIGGER_AMBIGUOUS` | fail | The task name is already taken by another flow under `business/flows` |
@@ -77,6 +77,23 @@ does not query the local scheduled-task registration state.
 
 Switch-over order: first let existing flows add `trigger` while `$script:TriggerMode` stays `warn` during the
 observation period, then flip to `fail` in a separate commit once no reports are missed.
+
+### 2.2b Script-node destructive declaration (INTENT_DESTRUCTIVE_*)
+
+`intent_destructive` is a boolean field on `Scripting.RunDOSCommand*` / `Scripting.RunVBScript*` nodes. It is the
+**primary** signal for "this script deletes or overwrites data"; `pad_hint` alone cannot tell a read script from a
+delete script, so the field must be declared explicitly. The old `^(File|Folder)\.Delete$` regex was anchored with
+`$` and missed `File.Move`, `File.RenameFiles.*`, `Folder.Move`, `Folder.Rename`, and every destructive action
+outside the File/Folder modules (Excel, FTP, Outlook, PowerPoint, …). It is now an explicit alternation of every
+actionId verified to exist in `pad-robin-action-kb/PAD_Robin_ActionKB.json`.
+
+| Result code | Level | Meaning |
+|---|---|---|
+| `INTENT_DESTRUCTIVE_MISSING` | ask | A script node has an `intent` but no `intent_destructive`; declare whether the script deletes or overwrites data |
+| `INTENT_DESTRUCTIVE_INVALID` | fail | `intent_destructive` is not a boolean (`true`/`false`) |
+| `INTENT_DESTRUCTIVE_NO_NOTE` | fail | `intent_destructive=true` without a `reversibility_note` explaining how the deleted/overwritten data is recovered (regenerated, re-exported, …) |
+| `INTENT_DESTRUCTIVE_CONFLICT` | fail | The same `intent` value declares different `intent_destructive` on different nodes |
+| `INTENT_DESTRUCTIVE_DOWNGRADED` | fail | A known posting intent (`sap-migo`, `posting`) declares `intent_destructive=false`; posting creates documents that can only be reversed by another posting |
 
 `FINGERPRINT_NO_BASELINE` means "not seeded yet", not "tampered with": `pad-admit` downgrades it to `warn` in
 report mode and puts the ready-to-run seeding command directly in the message (including `-FlowName` /

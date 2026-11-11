@@ -261,7 +261,7 @@ Describe 'pad-admit TRIGGER (observation period warns)' {
     It 'every node has reversible=true: no reversibility warning' {
         $nodes = @(
             [pscustomobject]@{ id = '3'; pad_hint = 'Outlook.RetrieveEmailMessages.RetrieveEmailsAndSaveAttachments'; run_mode = 'auto'; idempotent = $false; reversible = $true },
-            [pscustomobject]@{ id = '46'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'; idempotent = $false; reversible = $true }
+            [pscustomobject]@{ id = '46'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'; idempotent = $false; reversible = $true; intent = 'mb51-export'; intent_destructive = $false }
         )
         $trg = [pscustomobject]@{ kind = 'schedule'; time = '09:00'; gate = 'workday' }
         $f = [pscustomobject]@{ nodes = $nodes; trigger = $trg }
@@ -418,5 +418,74 @@ Describe 'pad-admit no longer defaults to a concrete business flow' {
         # It must fail before the flow definition is read, so the summary of 14 admission checks must not be printed
         $text | Should Not Match '"total":14'
         $text | Should Not Match 'POLICY_'
+    }
+}
+
+Describe 'pad-admit intent_destructive (script nodes that delete or overwrite data)' {
+    function New-Flow($nodes, $trg = [pscustomobject]@{ kind = 'manual' }) {
+        return [pscustomobject]@{ nodes = $nodes; trigger = $trg }
+    }
+
+    It 'script node with intent but no intent_destructive: ask + INTENT_DESTRUCTIVE_MISSING' {
+        $nodes = @(
+            [pscustomobject]@{ id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
+                idempotent = $true; reversible = $true; intent = 'clean-attachments' }
+        )
+        $r = @(Invoke-TriggerCheck -Flow (New-Flow $nodes) -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'INTENT_DESTRUCTIVE_MISSING' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'ask'
+        ($hit[0].evidence -join ' ') | Should Match 'node 1'
+        ($hit[0].evidence -join ' ') | Should Match 'clean-attachments'
+    }
+
+    It 'intent_destructive=true with a reversibility_note: no INTENT_DESTRUCTIVE_NO_NOTE' {
+        $nodes = @(
+            [pscustomobject]@{ id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
+                idempotent = $true; reversible = $false; intent = 'clean-attachments'
+                intent_destructive = $true; reversibility_note = '删的是历史运行目录，重跑流程即可按同一批邮件重新落盘' }
+        )
+        $r = @(Invoke-TriggerCheck -Flow (New-Flow $nodes) -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'INTENT_DESTRUCTIVE_NO_NOTE' })
+        $hit.Count | Should Be 0
+    }
+
+    It 'intent_destructive=true without a reversibility_note: fail + INTENT_DESTRUCTIVE_NO_NOTE' {
+        $nodes = @(
+            [pscustomobject]@{ id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
+                idempotent = $true; reversible = $false; intent = 'clean-attachments'
+                intent_destructive = $true }
+        )
+        $r = @(Invoke-TriggerCheck -Flow (New-Flow $nodes) -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'INTENT_DESTRUCTIVE_NO_NOTE' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'fail'
+        ($hit[0].evidence -join ' ') | Should Match 'node 1'
+    }
+
+    It 'destructive actionId widening: File.Move marked reversible=true fails (the old anchored regex missed it)' {
+        $nodes = @(
+            [pscustomobject]@{ id = '1'; pad_hint = 'File.Move.MoveFile'; run_mode = 'auto'
+                idempotent = $true; reversible = $true }
+        )
+        $r = @(Invoke-TriggerCheck -Flow (New-Flow $nodes) -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'REVERSIBLE_MISLABELED' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'fail'
+        ($hit[0].evidence -join ' ') | Should Match 'node 1'
+        ($hit[0].evidence -join ' ') | Should Match 'File.Move'
+    }
+
+    It 'script node missing reversible: ask + TRIGGER_MISSING_REVERSIBILITY (regardless of idempotency)' {
+        $nodes = @(
+            [pscustomobject]@{ id = '1'; pad_hint = 'Scripting.RunDOSCommand.RunDOSCommand'; run_mode = 'auto'
+                idempotent = $true; intent = 'mb51-export' }
+        )
+        $r = @(Invoke-TriggerCheck -Flow (New-Flow $nodes) -FlowName 'demo-flow' -Repo $repo -SelfFile 'x')
+        $hit = @($r | Where-Object { $_.code -eq 'TRIGGER_MISSING_REVERSIBILITY' })
+        $hit.Count | Should Be 1
+        $hit[0].status | Should Be 'ask'
+        ($hit[0].evidence -join ' ') | Should Match 'node 1'
+        ($hit[0].evidence -join ' ') | Should Match 'RunDOSCommand'
     }
 }
