@@ -1,9 +1,9 @@
 {
-  "_warning": "【敏感文件】真实版本只保存在本地工作区、不入库，永远不得推送到公开仓库。",
-  "_note": "本文件只放占位与结构性规则；真实业务名、真实路径、真实流程名、账号请写入同目录的 public-safe.denylist.local.json（已被 .gitignore 忽略，脚本会自动合并）。分类键即规则分类：businessName / realPath / flowName / accountOrServer / privateIdentifier。regex=false 按字面量匹配并自动转义，regex=true 按正则匹配；caseSensitive 默认 false；enabled 默认 true。",
+  "_warning": "SENSITIVE FILE: the real version lives only in the local working copy and is never committed; it must never be pushed to the public repository.",
+  "_note": "This file holds placeholders and structural rules only. Real business names, real paths, real flow names and accounts belong in public-safe.denylist.local.json in the same directory (ignored by .gitignore; the script merges it automatically). The category key is the rule category: businessName / realPath / flowName / accountOrServer / privateIdentifier. regex=false matches literally and is escaped automatically; regex=true matches as a regular expression. caseSensitive defaults to false; enabled defaults to true.",
   "version": 1,
   "allowlist": {
-    "_note": "保留域白名单：命中文本里出现这些明确用于示例/工具的域名时不判违规；enabled=false 可整体关闭。真实域名、真实邮箱域仍按 categories 里的规则拦截。",
+    "_note": "Reserved-domain allowlist: a hit whose text contains one of these domains, which are explicitly reserved for examples and tooling, is not a violation; enabled=false turns the whole check off. Real domains and real mail domains are still caught by the rules under categories.",
     "enabled": true,
     "domains": [
       "example.com",
@@ -15,7 +15,7 @@
   },
   "categories": {
     "businessName": {
-      "_note": "业务名（客户、产品、报表等）。真实词只放本地覆盖文件，本文件保持为空或占位。",
+      "_note": "Business names (customers, products, reports and so on). Real terms belong only in the local override file; this file stays empty or holds placeholders.",
       "rules": [
         {
           "id": "placeholder-literal",
@@ -23,12 +23,12 @@
           "regex": false,
           "enabled": false,
           "caseSensitive": false,
-          "reason": "占位示例：演示字面量规则格式，默认关闭"
+          "reason": "Placeholder example: shows the literal-rule format; disabled by default"
         }
       ]
     },
     "realPath": {
-      "_note": "真实路径用正则表达，避免在词表里写出具体目录名。",
+      "_note": "Real paths are written as regular expressions, so no concrete directory name ends up in the word list.",
       "rules": [
         {
           "id": "path-pad-root",
@@ -36,7 +36,7 @@
           "regex": true,
           "enabled": true,
           "caseSensitive": false,
-          "reason": "PAD 部署/工作根目录下的真实路径"
+          "reason": "A real path under the PAD deployment or working root"
         },
         {
           "id": "path-unc",
@@ -44,12 +44,12 @@
           "regex": true,
           "enabled": true,
           "caseSensitive": false,
-          "reason": "UNC 网络共享路径：主机名至少 2 个字符、共享名不以点开头，避免把正则字面量（双反斜杠 + 单字符）当成路径"
+          "reason": "UNC network share path: the host name is at least 2 characters and the share name does not start with a dot, so a regex literal (double backslash plus a single character) is not mistaken for a path"
         }
       ]
     },
     "flowName": {
-      "_note": "真实流程名无法结构化枚举，只能由本地覆盖文件逐条登记。",
+      "_note": "Real flow names cannot be enumerated structurally, so they are registered one by one in the local override file.",
       "rules": [
         {
           "id": "placeholder-flow",
@@ -57,12 +57,12 @@
           "regex": false,
           "enabled": false,
           "caseSensitive": false,
-          "reason": "占位示例：演示真实流程名登记格式，默认关闭"
+          "reason": "Placeholder example: shows how a real flow name is registered; disabled by default"
         }
       ]
     },
     "accountOrServer": {
-      "_note": "账号与服务器：用结构化模式识别，不写具体主机名。",
+      "_note": "Accounts and servers: detected by structural patterns, with no concrete host name written down.",
       "rules": [
         {
           "id": "host-internal-suffix",
@@ -70,12 +70,12 @@
           "regex": true,
           "enabled": true,
           "caseSensitive": false,
-          "reason": "疑似内网主机名（内部域名后缀）"
+          "reason": "Probable intranet host name (internal domain suffix)"
         }
       ]
     },
     "privateIdentifier": {
-      "_note": "私人标识：邮箱、手机号。",
+      "_note": "Private identifiers: mail addresses and mobile numbers.",
       "rules": [
         {
           "id": "email-address",
@@ -83,7 +83,7 @@
           "regex": true,
           "enabled": true,
           "caseSensitive": false,
-          "reason": "邮箱地址属于私人标识"
+          "reason": "A mail address is a private identifier"
         },
         {
           "id": "mobile-number",
@@ -91,7 +91,7 @@
           "regex": true,
           "enabled": true,
           "caseSensitive": false,
-          "reason": "疑似中国大陆手机号"
+          "reason": "Probable mainland-China mobile number"
         }
       ]
     }

@@ -1,9 +1,6 @@
 {
   "_comment": "Files where Chinese is a value rather than prose. check-public-lang.ps1 allows Chinese only here and fails on stale or missing entries. Grouped by the reason the Chinese has to stay; each path appears exactly once.",
   "reasons": {
-    "denylist business words": [
-      "tools/publish/public-safe.denylist.json"
-    ],
     "excel and calendar contracts": [
       "tools/xlsx/xlsx_io.py",
       "tools/workday/workday.py"
