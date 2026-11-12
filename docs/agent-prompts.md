@@ -393,7 +393,7 @@ VARIABLES:
 - A variable must be produced by an earlier action's output before it is used.
   Launch/open actions produce handles (ExcelInstance, Browser, OutlookInstance).
 - Close what you open.
-DO NOT USE records marked needs_ui_selector unless the user supplies the recorded element selector.
+DO NOT USE records marked needs_ui_selector: neither the generator nor admission accepts a hand-filled selector. For a web page, use the DOM lane in docs/engine-selection.md section 3.1 (LaunchEdge -> GoToWebPage -> ExecuteJavascript); when the DOM is unreachable, a human records the element in PAD and the node is not generated.
 OUTPUT: only the Robin script, one action per line, no header lines, no markdown, no explanation.
 ```
 

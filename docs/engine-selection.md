@@ -19,7 +19,7 @@ PAD flow already exists for the neighbouring steps.
 |---|---|---|---|
 | **Python (`py`)** | Reading and writing workbooks, joining and comparing data sets, arithmetic, rule evaluation, producing output files | Parse files with a library, compute, write results, return a non-zero exit code on failure | Drive a GUI, wait for a window, close another application, hold a session open waiting for a human |
 | **PowerShell (`ps1`)** | The operating-system surface: windows, modal dialogs, files locked by another process, process start/stop | Find a window by title, dismiss or drive a modal dialog through UI Automation, release a lock, wait for a file to become readable | Contain business rules or money arithmetic; parse and reconcile business workbooks |
-| **PAD** | A desktop client that has to be clicked and exposes no scriptable API | Click, type, navigate, read a value off the screen | Compute, decide business rules, keep a blocking dialog in an unattended run, or act as a scheduler |
+| **PAD** | A desktop client that has to be clicked and exposes no scriptable API | Click, type, navigate, read a value off the screen; on a web page, prefer DOM-driven interaction (section 3.1) before recording anything | Compute, decide business rules, keep a blocking dialog in an unattended run, or act as a scheduler |
 
 Two boundaries follow from the table and are easy to get wrong:
 
@@ -41,6 +41,33 @@ Apply it per step, before choosing a tool. The first matching row wins.
 
 A step that satisfies row 1 *and* row 3 is split, not assigned wholesale: PAD performs the click, the script
 performs the computation, and the flow passes data between them through a file or a command-line argument.
+
+### 3.1 Web interaction: ask for the DOM first
+
+A web page is not a blind desktop client. Before proposing a recording, answer one question: **can the page be
+reached in the browser and queried through its DOM?** The answer picks one of two lanes.
+
+| Lane | When it applies | What runs |
+|---|---|---|
+| **DOM lane** | The page loads in the browser and the interaction can be written in JavaScript | `WebAutomation.LaunchEdge.LaunchEdge` → `WebAutomation.GoToWebPage.GoToWebPage` → `WebAutomation.ExecuteJavascript`. All three have `needs_ui_selector=false`, so every node generates; `ExecuteJavascript` takes `BrowserInstance` (`WebBrowserInstanceHandle`) and `Javascript`, and returns `Result` |
+| **Recording lane** | The DOM cannot be reached (cases listed below) | A human records the element in the PAD designer. The node does not generate: the action's `needs_ui_selector` is `true` |
+
+`LaunchChrome.*` and `LaunchFirefox.*` are interchangeable with `LaunchEdge.*` here; the lane is the same. Read a
+value, click a button, fill a field or check state from inside the single `ExecuteJavascript` node instead of
+emitting one recorded action per control.
+
+The DOM is genuinely unavailable in these cases, so each one needs the recording lane:
+
+- a native file-picker dialog, and a download confirmation the browser owns rather than the page
+- a cross-origin iframe whose document the page's own JavaScript cannot read
+- an operating-system dialog raised by the browser or by another application
+- the browser's own chrome: address bar, menu, tab strip, extension popup
+
+**Last resort: coordinate clicks.** `MouseAndKeyboard.SendMouseClick.ClickAt` has `needs_ui_selector=false` and
+therefore generates, but it addresses the screen rather than the page: X and Y are pixels, so the flow breaks
+whenever the window moves or is resized, the display resolution or scaling changes, or a banner shifts the layout.
+Use it only when the element cannot be located through the DOM and recording is not acceptable, and state that
+cost when proposing it.
 
 ## 4. Flow-level composition
 
@@ -66,8 +93,9 @@ criterion today; this document adds none, and changing either gate is out of sco
 Implementing the rule needs three decisions that do not exist yet:
 
 1. **Which actions count as UI-class.** The reviewed list has to come from the action knowledge base, not from a
-   guess. It must say, per action, whether it touches a real application surface (web automation, window/mouse/
-   keyboard automation, a client application's controls) or only computes and moves data.
+   guess. It must say, per action, whether it touches a real application surface (web automation that needs a
+   recorded element, window/mouse/keyboard automation, a client application's controls) or only computes and
+   moves data.
 2. **Where `Display.ShowMessageDialog` belongs.** It talks to a human, not to an application. The natural reading is
    "human confirmation, not UI automation", so it should not by itself justify PAD — but that has to be decided
    explicitly, because it is the most common node in a thin wrapper flow.

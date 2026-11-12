@@ -53,6 +53,7 @@ the overall process, split it into nodes and ask again.
 | 3 | With multiple files written to disk and old files to clean up, how do you tell "this run's artifacts" apart | `yes` use a run-timestamp directory / `no` describe which reliable marker you use instead | this run's output directory + the selection condition of the cleanup node |
 | 4 | Which input files must exist before this step starts | `none` / for each file: directory (config key), filename wildcard, `true` required / `false` optional | node-level `inputs[]` (see "Input file declarations" below) |
 | 5 | How is this flow triggered | `manual` / `schedule` (`time` + `days` + `gate=workday|last-workday`) / `file` (`dir` must be `{{config.<KEY>}}`) | top-level `trigger`; fields and values in `docs/trigger-adapter-design.md`; `assisted=true` requires `timeout_sec` |
+| 6 | For a node that interacts with a web page: can this interaction be located through the DOM? | `yes` write the interaction as JavaScript in a `WebAutomation.ExecuteJavascript` node (section 3.1 of `docs/engine-selection.md`) / `no` state why, and the step goes to manual recording instead of generation | none; the answer decides whether the node is generated at all |
 
 Decision criteria:
 - **`idempotent` and `reversible` are two orthogonal axes; neither substitutes for the other**:

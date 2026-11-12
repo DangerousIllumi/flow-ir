@@ -19,7 +19,7 @@
 |---|---|---|---|---|---|
 | 1 | REGISTRY | Node `pad_hint` in `flow.json` | Every action exists in the KB | `UNKNOWN_ACTION` | `flow-to-robin.js` safety gate |
 | 2 | ARGS | Node `params` | Parameter names exist, required ones present, types match | `UNKNOWN_PARAM` / `MISSING_PARAM` / `TYPE_MISMATCH` | `flow-to-robin.js` |
-| 3 | SELECTOR | Action metadata | Actions needing a UI selector must be explicitly allowlisted | `UI_SELECTOR` | `flow-to-robin.js` |
+| 3 | SELECTOR | Action metadata | No action in the flow has `needs_ui_selector: true`. There is no allowlist and no exemption, so the result is only pass or fail | `UI_SELECTOR` | `flow-to-robin.js`, `pad-admit.ps1` |
 | 4 | STATIC | `.robin` | `check-flows.js` reports 0 errors | `STATIC_SYNTAX` | `tools/pad-robin/check.js` |
 | 5 | EDGE | `flow.json` | `edges` covers everything derived from `next/branch`, with no dangling or duplicate edges | `EDGE_DRIFT` / `EDGE_DANGLING` / `EDGE_DUPLICATE` | `tools/flow-drawio/check-flow.js` |
 | 6 | BOUNDED | `flow.json` | Loops have an explicit upper bound; no unbounded `LOOP WHILE` | `UNBOUNDED_LOOP` | Partial (manual review) |
