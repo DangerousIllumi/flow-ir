@@ -36,7 +36,8 @@ My requirement:
 
 ## Ready-made samples you can copy
 
-`tests/eval/fixtures/` contains 17 copy-ready `flow.json` files (10 flows, 6 triggers and 1 reversibility
+`tests/eval/fixtures/` contains 18 copy-ready `flow.json` files (11 flows, 6 triggers and 1 reversibility
 counterexample):
 foreach iteration, a three-way switch, guard plus mail, a bounded loop with break, file read/write, Excel
-read/write, an HTTP call, multi-condition AND, and early exit with no match.
+read/write, an HTTP call, multi-condition AND, early exit with no match, and a DOM web-interaction lane
+(launch Edge → open the page → run JavaScript, no recorded UI element).

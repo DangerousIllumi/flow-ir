@@ -1,0 +1,53 @@
+{
+  "flow": "tests/eval/fixtures/web-js.json",
+  "description": "Requirement: read a value off a web page through the DOM with JavaScript instead of a recorded click",
+  "cases": [
+    {
+      "id": "dom-lane-actions",
+      "requirement": "The whole interaction stays in the DOM lane: launch Edge, open the page, run JavaScript - no recorded click anywhere",
+      "expect": [
+        { "op": "action", "id": "1", "padHint": "WebAutomation.LaunchEdge.LaunchEdge" },
+        { "op": "action", "id": "2", "padHint": "WebAutomation.GoToWebPage.GoToWebPage" },
+        { "op": "action", "id": "3", "padHint": "WebAutomation.ExecuteJavascript" },
+        { "op": "nodeCount", "equals": 5 }
+      ]
+    },
+    {
+      "id": "js-reads-page-title",
+      "requirement": "The JavaScript node only reads the page (document.title) and passes the browser handle in, so it needs no recorded UI element",
+      "expect": [
+        { "op": "param", "id": "3", "name": "BrowserInstance", "equals": "{{1.BrowserInstance}}" },
+        { "op": "param", "id": "3", "name": "Javascript", "equals": "function ExecuteScript() { return document.title; }" },
+        { "op": "outputMapEquals", "id": "3", "name": "Result", "equals": "PageTitle" }
+      ]
+    },
+    {
+      "id": "browser-handle-threaded",
+      "requirement": "The browser handle produced by the launch node is reused by every later browser action instead of being re-launched",
+      "expect": [
+        { "op": "outputMapEquals", "id": "1", "name": "BrowserInstance", "equals": "Browser" },
+        { "op": "param", "id": "2", "name": "BrowserInstance", "equals": "{{1.BrowserInstance}}" },
+        { "op": "param", "id": "4", "name": "BrowserInstance", "equals": "{{1.BrowserInstance}}" },
+        { "op": "edge", "from": "3", "to": "4" }
+      ]
+    },
+    {
+      "id": "read-only-so-reversible",
+      "requirement": "Read-only page interaction: every node runs automatically, is idempotent and reversible, with a note for reversible=true",
+      "expect": [
+        { "op": "nodeDeclaration", "id": "1", "runMode": "auto", "idempotent": true },
+        { "op": "nodeDeclaration", "id": "2", "runMode": "auto", "idempotent": true },
+        { "op": "nodeDeclaration", "id": "3", "runMode": "auto", "idempotent": true },
+        { "op": "field", "id": "3", "name": "reversible", "equals": true }
+      ]
+    },
+    {
+      "id": "no-recording-lane-action",
+      "requirement": "Actions that require a human recording (Click / Focus / TakeScreenshotOfElement) are not used by this lane",
+      "expect": [
+        { "op": "absentMatch", "pattern": "^WebAutomation\\.(Click\\.|Focus\\.|TakeScreenshot\\.TakeScreenshotOfElement)" },
+        { "op": "trigger" }
+      ]
+    }
+  ]
+}

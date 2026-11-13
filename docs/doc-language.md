@@ -87,6 +87,6 @@ Machine-consumed output keeps its ASCII anchor; see
 - [ ] Who is the reader of this document? Pick the language per section 1 and do not mix languages.
 - [ ] Is any fact restated from somewhere else? Delete the copy and replace it with a link.
 - [ ] Do newly added outputs, logs and assertions carry an ASCII anchor?
-- [ ] Do the numbers match the code: 16 admission checks, 17 public samples (10 flows + 6 triggers +
-      1 reversibility counterexample), 11 `*.cases.json` files, the CI step order and names.
+- [ ] Do the numbers match the code: 16 admission checks, 18 public samples (11 flows + 6 triggers +
+      1 reversibility counterexample), 12 `*.cases.json` files, the CI step order and names.
 - [ ] Are identifiers, parameter names, rule ids and exit codes still English?

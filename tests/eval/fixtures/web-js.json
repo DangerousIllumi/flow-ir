@@ -1,0 +1,108 @@
+{
+  "name": "web-js-dom-lane",
+  "description": "Read a value off a web page through the DOM with JavaScript instead of a recorded click (synthetic sample)",
+  "trigger": { "kind": "manual" },
+  "budget": { "maxLoop": 1 },
+  "variables": [
+    { "name": "PageUrl", "type": "string", "default": "https://example.com" },
+    { "name": "PageTitle", "type": "string", "default": "" }
+  ],
+  "edges": [
+    { "from": "1", "to": "2" },
+    { "from": "2", "to": "3" },
+    { "from": "3", "to": "4" },
+    { "from": "4", "to": "5" }
+  ],
+  "nodes": [
+    {
+      "id": "1",
+      "label": "Launch Edge browser",
+      "type": "action",
+      "pad_hint": "WebAutomation.LaunchEdge.LaunchEdge",
+      "params": {
+        "Url": "{{variables.PageUrl}}",
+        "WindowState": "Normal",
+        "ClearCache": false,
+        "ClearCookies": false,
+        "WaitForPageToLoadTimeout": 60,
+        "Timeout": 60,
+        "TargetDesktop": "",
+        "PiPUserDataFolderMode": "AutomaticProfile"
+      },
+      "output_map": { "BrowserInstance": "Browser" },
+      "next": ["2"],
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true,
+      "idempotency_note": "Only launches the browser and opens a read-only page; a rerun yields the same instance and the same page",
+      "reversibility_note": "Launching the browser changes no remote state; closing the browser returns to the state before execution"
+    },
+    {
+      "id": "2",
+      "label": "Open the target page",
+      "type": "action",
+      "pad_hint": "WebAutomation.GoToWebPage.GoToWebPage",
+      "params": {
+        "BrowserInstance": "{{1.BrowserInstance}}",
+        "Url": "{{variables.PageUrl}}",
+        "WaitForPageToLoadTimeout": 60
+      },
+      "next": ["3"],
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true,
+      "idempotency_note": "Navigating to the same URL is read-only; a rerun lands on the same page",
+      "reversibility_note": "Navigation only loads the page and submits no data; going back or closing restores it"
+    },
+    {
+      "id": "3",
+      "label": "Read the page title through the DOM",
+      "type": "action",
+      "pad_hint": "WebAutomation.ExecuteJavascript",
+      "params": {
+        "BrowserInstance": "{{1.BrowserInstance}}",
+        "Javascript": "function ExecuteScript() { return document.title; }"
+      },
+      "output_map": { "Result": "PageTitle" },
+      "next": ["4"],
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true,
+      "idempotency_note": "Only reads document.title and writes neither to the page nor to the remote side",
+      "reversibility_note": "Reading the DOM changes nothing, so no rollback is needed"
+    },
+    {
+      "id": "4",
+      "label": "Close the browser",
+      "type": "action",
+      "pad_hint": "WebAutomation.CloseWebBrowser",
+      "params": {
+        "BrowserInstance": "{{1.BrowserInstance}}"
+      },
+      "next": ["5"],
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true,
+      "idempotency_note": "Closing an already-open browser instance has no side effect when repeated",
+      "reversibility_note": "Closing a local browser window changes no remote data"
+    },
+    {
+      "id": "5",
+      "label": "Show the read result",
+      "type": "action",
+      "pad_hint": "Display.ShowMessageDialog.ShowMessage",
+      "params": {
+        "Message": "{{variables.PageTitle}}",
+        "Title": "Page title",
+        "Icon": "Information",
+        "Buttons": "OK",
+        "DefaultButton": "Button1",
+        "IsTopMost": true
+      },
+      "output_map": { "ButtonPressed": "OkButton" },
+      "run_mode": "auto",
+      "idempotent": true,
+      "reversible": true
+    }
+  ]
+}

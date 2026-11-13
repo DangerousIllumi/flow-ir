@@ -3,7 +3,7 @@
 > This document answers two questions:
 > 1. What does "requirement → flow.json → checks pass → paste into PAD" actually look like?
 > 2. When an agent generates several requirements in one go, how do you quantify whether it is reliable?
->    (The public sample set currently holds 10 flow samples + 6 trigger samples.)
+>    (The public sample set currently holds 11 flow samples + 6 trigger samples.)
 
 ---
 
@@ -108,8 +108,8 @@
      # open the file, change "flow" to "business/flows/copy-text.json", and add or remove assertions to match your requirement
      ```
 
-> **Boundary between samples and business cases**: `tests/eval/fixtures` (17 neutral synthetic samples:
-> 10 flows + 6 triggers + 1 reversibility counterexample) and `tests/eval/*.cases.json` (11 case files
+> **Boundary between samples and business cases**: `tests/eval/fixtures` (18 neutral synthetic samples:
+> 11 flows + 6 triggers + 1 reversibility counterexample) and `tests/eval/*.cases.json` (12 case files
 > containing structural assertions) ship
 > with the repository for demos and CI. Assertions for real flows always live in `business/tests/eval/`
 > (that directory is never committed). Both share the same format and the same command: `eval-flow.js` accepts
@@ -161,12 +161,12 @@ Finally: create a new PAD flow → paste `out.robin` → fill in UI elements (th
 
 ## 2. Batch scoring: measure "generation quality", not "whether this one run worked"
 
-The fixed requirement set is `tests/eval/*.cases.json` (11 files: assertions for 10 flow samples plus 1 trigger
+The fixed requirement set is `tests/eval/*.cases.json` (12 files: assertions for 11 flow samples plus 1 trigger
 assertion). The `flow` field in each case file points at the `flow.json` under test.
 
 **Scoring procedure**
 
-1. Give the original text of the 10 flow requirements to Agent A and require each output to land in
+1. Give the original text of the 11 flow requirements to Agent A and require each output to land in
    `candidates/<requirement id>.json`
 2. Prepare scoring rules per requirement (reuse the existing `*.cases.json` and repoint `flow` at the candidate file)
 3. Run four things per candidate: **structural assertions → generate → static check → admission**
